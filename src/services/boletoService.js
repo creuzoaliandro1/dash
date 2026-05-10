@@ -624,7 +624,7 @@ export const getContaInfo = async (contaId) => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista, conta_corrente, convenio, cpf_cnpj, cedente, cnab400, email, logo, tipo')
+            .select('*')
             .eq('id', contaId)
             .single()
 

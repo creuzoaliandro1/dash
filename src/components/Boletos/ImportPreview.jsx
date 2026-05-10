@@ -150,14 +150,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-6xl w-full max-h-[90vh] flex flex-col">
-        <div className="border-b border-[#1f1f1f] p-6">
-          <h2 className="text-xl font-semibold text-white mb-2">Visualizar dados para importação</h2>
-          <p className="text-sm text-[#666666]">
+        <div className="border-b border-[#1f1f1f] px-5 py-3">
+          <h2 className="text-base font-semibold text-white">Visualizar dados para importação</h2>
+          <p className="text-xs text-[#666666]">
             Revise os registros e selecione quais deseja importar ({selectedRows.size} de {getTotalRecords()} selecionado(s))
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-2">
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
           {dataWithInstalments.map((item, itemIdx) => {
             const firstRecord = item._records[0]
             const firstRowId = `${itemIdx}-0`
@@ -168,127 +168,178 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             return (
               <div key={`group-${itemIdx}`} className="border border-[#1f1f1f] rounded-lg overflow-hidden">
                 {/* Sacado Information Section - Always at top */}
-                <div className="bg-[#0f0f0f] p-6 space-y-4 border-b border-[#1f1f1f]">
-                  <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#0f0f0f] px-4 py-2 border-b border-[#1f1f1f] flex flex-col gap-1">
+
+                  {/* Linha 1: Nome + CPF/CNPJ + Telefone + Email */}
+                  <div className="flex gap-3">
+                    {/* Nome */}
                     <div
-                      className="cursor-pointer hover:opacity-80 transition"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_NOME', firstRecord.SACADO_NOME || '')}
                     >
-                      <p className="text-xs text-[#666666] uppercase font-semibold">Nome do Sacado</p>
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Nome</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_NOME` ? (
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={inlineEditValue}
+                        <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_NOME')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_NOME')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm mt-1"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
                         />
                       ) : (
-                        <p className="text-white text-sm">{firstRecord.SACADO_NOME || '—'}</p>
+                        <p className="text-white text-xs truncate">{firstRecord.SACADO_NOME || '—'}</p>
                       )}
                     </div>
+                    {/* CPF/CNPJ */}
                     <div
-                      className="cursor-pointer hover:opacity-80 transition"
+                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIC', firstRecord.SACADO_CIC || '')}
                     >
-                      <p className="text-xs text-[#666666] uppercase font-semibold">CPF/CNPJ</p>
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">CPF/CNPJ</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CIC` ? (
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={inlineEditValue}
+                        <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIC')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIC')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm mt-1"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
                         />
                       ) : (
-                        <p className="text-white text-sm font-mono">{firstRecord.SACADO_CIC || '—'}</p>
+                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_CIC || '—'}</p>
+                      )}
+                    </div>
+                    {/* Telefone */}
+                    <div
+                      className="w-28 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_TELEFONE', firstRecord.SACADO_TELEFONE || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Telefone</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_TELEFONE` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_TELEFONE')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_TELEFONE')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs">{firstRecord.SACADO_TELEFONE || '—'}</p>
+                      )}
+                    </div>
+                    {/* Email */}
+                    <div
+                      className="w-48 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_EMAIL', firstRecord.SACADO_EMAIL || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Email</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_EMAIL` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_EMAIL')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_EMAIL')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="border-t border-[#1f1f1f] pt-4">
+                  {/* Linha 2: Endereço completo em uma linha */}
+                  <div className="flex gap-2">
+                    {/* Endereço */}
                     <div
-                      className="cursor-pointer hover:opacity-80 transition"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_ENDERECO', firstRecord.SACADO_ENDERECO || '')}
                     >
-                      <p className="text-xs text-[#666666] uppercase font-semibold mb-2">Endereço</p>
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Endereço</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_ENDERECO` ? (
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={inlineEditValue}
+                        <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_ENDERECO')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_ENDERECO')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
                         />
                       ) : (
-                        <>
-                          <p className="text-white text-sm">
-                            {firstRecord.SACADO_ENDERECO}
-                            {firstRecord.SACADO_BAIRRO && `, ${firstRecord.SACADO_BAIRRO}`}
-                          </p>
-                          <p className="text-[#a3a3a3] text-sm mt-1">
-                            {firstRecord.SACADO_CEP && `${firstRecord.SACADO_CEP}`}
-                            {firstRecord.SACADO_CIDADE && ` - ${firstRecord.SACADO_CIDADE}`}
-                            {firstRecord.SACADO_UF && ` - ${firstRecord.SACADO_UF}`}
-                          </p>
-                        </>
+                        <p className="text-white text-xs truncate">{firstRecord.SACADO_ENDERECO || '—'}</p>
+                      )}
+                    </div>
+                    {/* Bairro */}
+                    <div
+                      className="w-32 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_BAIRRO', firstRecord.SACADO_BAIRRO || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Bairro</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_BAIRRO` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_BAIRRO')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_BAIRRO')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs truncate">{firstRecord.SACADO_BAIRRO || '—'}</p>
+                      )}
+                    </div>
+                    {/* CEP */}
+                    <div
+                      className="w-20 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CEP', firstRecord.SACADO_CEP || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">CEP</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_CEP` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CEP')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CEP')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_CEP || '—'}</p>
+                      )}
+                    </div>
+                    {/* Cidade */}
+                    <div
+                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIDADE', firstRecord.SACADO_CIDADE || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Cidade</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_CIDADE` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIDADE')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIDADE')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs truncate">{firstRecord.SACADO_CIDADE || '—'}</p>
+                      )}
+                    </div>
+                    {/* UF */}
+                    <div
+                      className="w-10 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_UF', firstRecord.SACADO_UF || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">UF</p>
+                      {inlineEditingCell === `${itemIdx}-0-SACADO_UF` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_UF')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_UF')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_UF || '—'}</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="border-t border-[#1f1f1f] pt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div
-                        className="cursor-pointer hover:opacity-80 transition"
-                        onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_TELEFONE', firstRecord.SACADO_TELEFONE || '')}
-                      >
-                        <p className="text-xs text-[#666666] uppercase font-semibold">Telefone</p>
-                        {inlineEditingCell === `${itemIdx}-0-SACADO_TELEFONE` ? (
-                          <input
-                            ref={inputRef}
-                            type="text"
-                            value={inlineEditValue}
-                            onChange={(e) => setInlineEditValue(e.target.value)}
-                            onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_TELEFONE')}
-                            onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_TELEFONE')}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm mt-1"
-                          />
-                        ) : (
-                          <p className="text-white text-sm">{firstRecord.SACADO_TELEFONE || '—'}</p>
-                        )}
-                      </div>
-                      <div
-                        className="cursor-pointer hover:opacity-80 transition"
-                        onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_EMAIL', firstRecord.SACADO_EMAIL || '')}
-                      >
-                        <p className="text-xs text-[#666666] uppercase font-semibold">Email</p>
-                        {inlineEditingCell === `${itemIdx}-0-SACADO_EMAIL` ? (
-                          <input
-                            ref={inputRef}
-                            type="text"
-                            value={inlineEditValue}
-                            onChange={(e) => setInlineEditValue(e.target.value)}
-                            onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_EMAIL')}
-                            onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_EMAIL')}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm mt-1"
-                          />
-                        ) : (
-                          <p className="text-white text-sm">{firstRecord.SACADO_EMAIL || '—'}</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
                 </div>
 
                 {/* Parcels Section - Below Sacado */}
@@ -305,7 +356,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                           isSelected ? 'border-white/30 bg-[#111111]' : 'border-[#1f1f1f] bg-[#0f0f0f]'
                         }`}
                       >
-                        <div className="flex items-center gap-3 p-4 group">
+                        <div className="flex items-center gap-3 px-4 py-1.5 group">
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -468,7 +519,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           })}
         </div>
 
-        <div className="border-t border-[#1f1f1f] p-6 flex gap-3 justify-between items-center">
+        <div className="border-t border-[#1f1f1f] px-5 py-3 flex gap-3 justify-between items-center">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"

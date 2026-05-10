@@ -137,11 +137,14 @@ const getTipoPessoa = (cic) => {
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
 // ============================================================
 const buildHeader = (conta, nextSeq) => {
-    const nomeEmpresa = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
-    const cedente = cleanNum(conta.cedente || '0')
-    const cedenteFmt = padLeft('1' + cedente, 18, '0')
-    const now = new Date()
-    const headerDate = String(now.getDate()).padStart(2, '0') +
+    // Dados do beneficiario/cedente vindos de CONTAS
+    const nomeEmpresa  = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
+    const cpfCnpjConta = cleanNum(conta.cpf_cnpj || conta.cic || '0')
+    // Codigo cedente: usa campo 'cedente' se disponivel; fallback para convenio ou cpf_cnpj
+    const cedenteCod   = cleanNum(conta.cedente || conta.convenio || cpfCnpjConta || '0')
+    const cedenteFmt   = padLeft('1' + cedenteCod, 18, '0')
+    const now          = new Date()
+    const headerDate   = String(now.getDate()).padStart(2, '0') +
           String(now.getMonth() + 1).padStart(2, '0') +
           String(now.getFullYear()).substring(2)
 
@@ -153,7 +156,7 @@ const buildHeader = (conta, nextSeq) => {
     line += padRight('COBRANCA', 15)               // pos 012-026 - tipo servico
     line += cedenteFmt                             // pos 027-044 - codigo cedente (18)
     line += '09'                                   // pos 045-046 - codigo banco
-    line += padRight(nomeEmpresa, 30)              // pos 047-076 - nome cedente
+    line += padRight(nomeEmpresa, 30)              // pos 047-076 - nome cedente (CONTAS.nome_correntista)
     line += '274'                                  // pos 077-079 - codigo banco BMP
     line += padRight('BMP MONEY PLUS', 15)         // pos 080-094 - nome banco
     line += headerDate                             // pos 095-100 - data geracao DDMMAA
@@ -197,8 +200,12 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
     // --- Numero do titulo (Seu Numero) ---
     const tituloNum = cleanNum(boleto.numero_documento || boleto.nosso_numero || '')
 
-    // --- Conta corrente do cedente (CONTAS) ---
-    const contaCorrente = padLeft(cleanNum(conta?.conta_corrente || '0'), 8, '0')
+    // --- Dados do cedente (CONTAS) ---
+    const contaCorrente  = padLeft(cleanNum(conta?.conta_corrente || '0'), 8, '0')
+    // CPF/CNPJ do cedente — pode ser usado em instrucoes ou identificacao interna
+    const cpfCnpjCedente = cleanNum(conta?.cpf_cnpj || conta?.cic || '0')
+    // Convenio: numero do contrato/convenio com o banco (usado quando cedente nao estiver preenchido)
+    const convenio       = cleanNum(conta?.convenio || conta?.cedente || cpfCnpjCedente || '0')
 
     // --- Datas ---
     const dtVenc = fmtDate(boleto.data_vencimento)
@@ -487,31 +494,71 @@ const montarEnderecoSacado = (boleto) => {
 // ============================================================
 // PDF - Renderiza parte superior: fatura / demonstrativo
 // ============================================================
+// Extrai e normaliza dados do beneficiário (CONTAS) para uso no PDF
+const extrairDadosBeneficiario = (contaData) => {
+    const c = contaData || {}
+    const nome      = c.nome_correntista || ''
+    const cpfCnpj   = c.cpf_cnpj || c.cic || ''
+    const email     = c.email || ''
+    const telefone  = c.telefone || c.fone || c.tel || ''
+    const logoUrl   = c.logo || null
+    const conta     = c.conta_corrente || ''
+    const convenio  = c.convenio || ''
+
+    // Endereço — tenta múltiplos nomes de campo que diferentes setups podem usar
+    const logradouro  = c.logradouro || c.endereco || c.rua || ''
+    const numero      = c.numero || ''
+    const complemento = c.complemento || ''
+    const bairro      = c.bairro || ''
+    const cidade      = c.cidade || c.municipio || ''
+    const uf          = c.uf || c.estado || ''
+    const cep         = c.cep || ''
+
+    // Monta linha de endereço
+    let endParts = []
+    if (logradouro) {
+        endParts.push(numero ? `${logradouro}, ${numero}` : logradouro)
+    }
+    if (complemento) endParts.push(complemento)
+    if (bairro)      endParts.push(bairro)
+    const cidadeUf = [cidade, uf].filter(Boolean).join(' - ')
+    if (cidadeUf)    endParts.push(cidadeUf)
+    if (cep)         endParts.push(`CEP: ${cep}`)
+    const enderecoCompleto = endParts.join(', ')
+
+    return { nome, cpfCnpj, email, telefone, logoUrl, conta, convenio,
+             logradouro, numero, complemento, bairro, cidade, uf, cep, enderecoCompleto }
+}
+
 const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
     const M = 10, CW = 190
 
-    const nomeCorrentista = contaData?.nome_correntista || ''
-    const cicCorrentista  = contaData?.cpf_cnpj || contaData?.cic || ''
-    const emailCorrentista = contaData?.email || ''
-    const logoUrl = contaData?.logo || null
+    const benef = extrairDadosBeneficiario(contaData)
 
-    const sacadoNome = boleto.sacado_nome || ''
-    const sacadoCic  = boleto.sacado_cic  || ''
-    const sacadoEnd  = montarEnderecoSacado(boleto)
-    const sacadoCep  = boleto.sacado_cep  || ''
-    const emissao    = boleto.data_emissao
-    const vencimento = boleto.data_vencimento
-    const valor      = boleto.valor
-    const numDoc     = boleto.numero_documento || ''
-    const descricao  = boleto.descricao || ''
+    const sacadoNome    = boleto.sacado_nome     || ''
+    const sacadoCic     = boleto.sacado_cic      || ''
+    const sacadoEnd     = boleto.sacado_endereco || ''
+    const sacadoBairro  = boleto.sacado_bairro   || ''
+    const sacadoCep     = boleto.sacado_cep      || ''
+    const sacadoCidade  = boleto.sacado_cidade   || ''
+    const sacadoUf      = boleto.sacado_uf       || ''
+    const emissao       = boleto.data_emissao
+    const vencimento    = boleto.data_vencimento
+    const valor         = boleto.valor
+    const numDoc        = boleto.numero_documento || ''
+    const descricao     = boleto.descricao || ''
 
-    let y = 15
+    // Logo começa um pouco mais acima para alinhar melhor com o texto da empresa
+    let y = 10
 
-    // --- Cabecalho: logo + dados empresa + FATURA ---
-    const LOGO_W = 38.87, LOGO_H = 38.87
+    // --- Layout: zona esquerda (logo + empresa) | zona direita (FATURA + data) ---
+    // Zona esquerda: M ate ~140mm / Zona direita: 145mm ate M+CW=200mm
+    const LOGO_W = 36, LOGO_H = 36
+    const DADOS_X  = M + LOGO_W + 2   // empresa começa logo apos o logo (menos gap)
+    const DADOS_MAX_W = 88             // largura maxima dos dados para nao sobrepor a data
 
-    if (logoUrl) {
-        const compressed = await compressImageForPDF(logoUrl, 300, 0.7)
+    if (benef.logoUrl) {
+        const compressed = await compressImageForPDF(benef.logoUrl, 300, 0.7)
         doc.addImage(compressed, 'JPEG', M, y, LOGO_W, LOGO_H)
     } else {
         doc.setDrawColor(180); doc.setLineWidth(0.3)
@@ -522,34 +569,51 @@ const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
         doc.setTextColor(0, 0, 0)
     }
 
-    const dadosX = M + LOGO_W + 5
-    let dadosY = y + 7
+    // Dados da empresa (beneficiario) — coluna esquerda
+    let dadosY = y + 4
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-    doc.text(nomeCorrentista, dadosX, dadosY); dadosY += 5
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
-    if (cicCorrentista)  { doc.text(cicCorrentista,  dadosX, dadosY); dadosY += 4 }
-    if (emailCorrentista){ doc.text(emailCorrentista, dadosX, dadosY); dadosY += 4 }
+    doc.text(benef.nome, DADOS_X, dadosY); dadosY += 4.5
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
+    if (benef.cpfCnpj)         { doc.text(`CNPJ/CPF: ${benef.cpfCnpj}`, DADOS_X, dadosY); dadosY += 3.8 }
+    // Endereco da empresa em uma linha (maxWidth limita area para nao sobrepor data)
+    if (benef.enderecoCompleto) {
+        doc.text(benef.enderecoCompleto, DADOS_X, dadosY, { maxWidth: DADOS_MAX_W }); dadosY += 3.8
+    }
+    if (benef.telefone)        { doc.text(`Tel: ${benef.telefone}`, DADOS_X, dadosY); dadosY += 3.8 }
+    if (benef.email)           { doc.text(benef.email, DADOS_X, dadosY); dadosY += 3.8 }
 
-    // FATURA + data de emissao (direita)
+    // FATURA + data de emissao — coluna direita
     doc.setFontSize(14); doc.setFont('helvetica', 'bold')
     doc.text('FATURA', M + CW, y + 6, { align: 'right' })
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal')
     doc.text(`Data de Emissão: ${formatDate(emissao)}`, M + CW, y + 12, { align: 'right' })
 
-    y += Math.max(LOGO_H, dadosY - 15) + 5
+    y += Math.max(LOGO_H, dadosY - y) + 5
 
     // Linha divisoria
     doc.setDrawColor(0); doc.setLineWidth(0.2)
-    doc.line(M, y, M + CW, y); y += 2
+    doc.line(M, y, M + CW, y); y += 3
 
-    // Dados do cliente
+    // --- DADOS DO CLIENTE (sacado / pagador) ---
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0, 0, 0)
-    doc.text('DADOS DO CLIENTE', M, y + 5)
+    doc.text('DADOS DO CLIENTE', M, y); y += 4.5
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
-    doc.text(sacadoNome, M, y + 10)
-    doc.text(`CPF/CNPJ: ${sacadoCic}`, M, y + 14)
-    const endLine = `${sacadoEnd}${sacadoCep ? ' ' + sacadoCep : ''}`
-    doc.text(endLine, M, y + 18); y += 20
+
+    if (sacadoNome) { doc.text(sacadoNome, M, y); y += 4 }
+    if (sacadoCic)  { doc.text(`CPF/CNPJ: ${sacadoCic}`, M, y); y += 4 }
+
+    // Endereco do sacado: logradouro + bairro numa linha; cidade + uf + cep na seguinte
+    if (sacadoEnd) {
+        const endBairro = sacadoBairro ? `${sacadoEnd}, ${sacadoBairro}` : sacadoEnd
+        doc.text(endBairro, M, y); y += 4
+    }
+    const cidadeUfCep = [
+        sacadoCidade && sacadoUf ? `${sacadoCidade} - ${sacadoUf}` : (sacadoCidade || sacadoUf),
+        sacadoCep ? `CEP: ${sacadoCep}` : ''
+    ].filter(Boolean).join('   ')
+    if (cidadeUfCep) { doc.text(cidadeUfCep, M, y); y += 4 }
+
+    y += 2
 
     doc.setLineWidth(0.2); doc.line(M, y, M + CW, y); y += 5
 
@@ -612,10 +676,11 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     const M = 10, CW = 190
     const ROW_H = 6.5, INST_H = 25
 
-    const nomeCorrentista = contaData?.nome_correntista || ''
-    const cicCorrentista  = contaData?.cpf_cnpj || contaData?.cic || ''
-    const contaCorrente   = contaData?.conta_corrente || ''
-    const logoUrl = contaData?.logo || null
+    const benef = extrairDadosBeneficiario(contaData)
+    const nomeCorrentista = benef.nome
+    const cicCorrentista  = benef.cpfCnpj
+    const contaCorrente   = benef.conta
+    const logoUrl         = benef.logoUrl
 
     const sacadoNome = boleto.sacado_nome || ''
     const sacadoCic  = boleto.sacado_cic  || ''
@@ -748,22 +813,51 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     doc.line(M, lY + INST_H, M + CW, lY + INST_H); lY += INST_H
 
     // Pagador
+    const pagadorAvailW = rightX - M - 3   // largura disponivel no lado esquerdo
     doc.setFontSize(6)
     doc.text('Pagador', M + 1, lY + 2.5)
     doc.text('(+) Outros acréscimos', rightX + 1, lY + 2.5)
     doc.line(rightX, lY + 8, M + CW, lY + 8)
     doc.text('(=) Valor Cobrado', rightX + 1, lY + 10.5)
+
+    let pY = lY + 6
     doc.setFontSize(8); doc.setFont('helvetica', 'bold')
-    doc.text(sacadoNome, M + 1, lY + 6)
+    if (sacadoNome) { doc.text(sacadoNome, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
     doc.setFont('helvetica', 'normal')
-    doc.text(`${sacadoEnd}${sacadoCep ? ' ' + sacadoCep : ''}`, M + 1, lY + 10)
-    doc.text(`CPF/CNPJ: ${sacadoCic}`, M + 1, lY + 14)
-    lY += 20
+    if (sacadoCic)  { doc.text(`CPF/CNPJ: ${sacadoCic}`, M + 1, pY); pY += 4 }
+
+    // Endereco + bairro na mesma linha
+    const sacEndBairro = [boleto.sacado_endereco, boleto.sacado_bairro].filter(Boolean).join(', ')
+    if (sacEndBairro) { doc.text(sacEndBairro, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
+
+    // Cidade - UF + CEP na linha seguinte
+    const sacCidade = boleto.sacado_cidade || ''
+    const sacUf     = boleto.sacado_uf     || ''
+    const cidUfCep  = [
+        sacCidade && sacUf ? `${sacCidade} - ${sacUf}` : (sacCidade || sacUf),
+        sacadoCep ? `CEP: ${sacadoCep}` : ''
+    ].filter(Boolean).join('   ')
+    if (cidUfCep) { doc.text(cidUfCep, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
+
+    lY = Math.max(lY + 20, pY + 2)
 
     doc.line(M, lY, M + CW, lY)
     doc.setFontSize(6)
     doc.text('Sacador/Avalista', M + 1, lY + 2.5)
-    lY += 5
+
+    // Dados do avalista (quando presentes)
+    const avalistaNome = boleto.avalista_nome || ''
+    const avalistaCic  = boleto.avalista_cic  || ''
+    if (avalistaNome || avalistaCic) {
+        let aY = lY + 6
+        doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+        if (avalistaNome) { doc.text(avalistaNome, M + 1, aY, { maxWidth: pagadorAvailW }); aY += 4 }
+        doc.setFont('helvetica', 'normal')
+        if (avalistaCic)  { doc.text(`CPF/CNPJ: ${avalistaCic}`, M + 1, aY); aY += 4 }
+        lY = aY
+    } else {
+        lY += 7
+    }
 
     // Codigo de barras
     try {
