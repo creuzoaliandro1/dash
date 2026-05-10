@@ -618,3 +618,36 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
     }
   }
 }
+
+// Buscar dados da conta para gerar CNAB400 (campos necessarios: nome_correntista, cedente, cnab400, etc.)
+export const getContaInfo = async (contaId) => {
+    try {
+          const { data, error } = await supabase
+            .from('CONTAS')
+            .select('id, nome_correntista, conta_corrente, convenio, cpf_cnpj, cedente, cnab400')
+            .eq('id', contaId)
+            .single()
+
+      if (error) throw error
+          return { data, error: null }
+    } catch (err) {
+          console.error('Erro ao buscar conta:', err)
+          return { data: null, error: err }
+    }
+}
+
+// Incrementar contador cnab400 da conta apos gerar remessa
+export const incrementContaCnab400 = async (contaId, nextSeq) => {
+    try {
+          const { error } = await supabase
+            .from('CONTAS')
+            .update({ cnab400: nextSeq })
+            .eq('id', contaId)
+
+      if (error) throw error
+          return { error: null }
+    } catch (err) {
+          console.error('Erro ao atualizar cnab400 da conta:', err)
+          return { error: err }
+    }
+}
