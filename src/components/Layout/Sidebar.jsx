@@ -1,7 +1,37 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
-export default function Sidebar({ currentPage, setCurrentPage }) {
+export default function Sidebar({ currentPage, setCurrentPage, allContas = [], onContaSwitch }) {
   const [expandedMenu, setExpandedMenu] = useState(null)
+
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const isMaster = user.tipo === 'M'
+
+  const [activeContaId, setActiveContaId] = useState(
+    () => localStorage.getItem('activeContaId') || String(user.id) || ''
+  )
+
+  // Sincronizar quando outro componente dispara contaSwitched
+  useEffect(() => {
+    const sync = () => {
+      setActiveContaId(localStorage.getItem('activeContaId') || String(user.id) || '')
+    }
+    window.addEventListener('contaSwitched', sync)
+    return () => window.removeEventListener('contaSwitched', sync)
+  }, [user.id])
+
+  const handleContaChange = (e) => {
+    const contaId = e.target.value
+    setActiveContaId(contaId)
+    localStorage.setItem('activeContaId', contaId)
+    // NÃO dispara contaSwitched aqui — MainLayout faz isso após atualizar localStorage.user
+    if (onContaSwitch) onContaSwitch(contaId)
+  }
+
+  const activeConta = allContas.find(c => String(c.id) === String(activeContaId))
+  const activeNome = activeConta?.nome_correntista || user.nome || user.name || ''
+  const initials = activeNome
+    ? activeNome.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
+    : 'CA'
 
   const navItems = [
     {
@@ -60,10 +90,24 @@ export default function Sidebar({ currentPage, setCurrentPage }) {
         </div>
       </div>
 
-      {/* Section Label */}
+      {/* Perfil Ativo */}
       <div className="px-4 py-3 mt-4">
-        <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider">Perfil Ativo</p>
-        <p className="text-xs text-[#a3a3a3] mt-1">CAPT ADMINISTRAÇÃO DE PAG</p>
+        <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-2">Perfil Ativo</p>
+        {allContas.length > 0 ? (
+          <select
+            value={activeContaId}
+            onChange={handleContaChange}
+            className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-[#444] outline-none transition cursor-pointer"
+          >
+            {allContas.map(conta => (
+              <option key={conta.id} value={String(conta.id)}>
+                {conta.nome_correntista}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-xs text-[#a3a3a3] truncate">{activeNome || 'Carregando...'}</p>
+        )}
       </div>
 
       {/* Navigation */}
@@ -105,7 +149,6 @@ export default function Sidebar({ currentPage, setCurrentPage }) {
             </svg>
           </button>
 
-          {/* Submenu */}
           {expandedMenu === 'importar' && (
             <div className="pl-4 flex flex-col gap-1">
               <button
@@ -136,12 +179,12 @@ export default function Sidebar({ currentPage, setCurrentPage }) {
       {/* Footer */}
       <div className="mt-auto px-3 py-3 border-t border-[#1f1f1f]">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-[#1a1a1a] border border-[#2a2a2a] rounded-full flex items-center justify-center text-white text-xs font-semibold">
-            CA
+          <div className="w-7 h-7 bg-[#1a1a1a] border border-[#2a2a2a] rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+            {initials}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-white font-medium truncate">CAPT ADMINISTR...</p>
-            <p className="text-xs text-[#666666] truncate">Master</p>
+            <p className="text-xs text-white font-medium truncate">{activeNome || 'Usuário'}</p>
+            <p className="text-xs text-[#666666] truncate">{isMaster ? 'Master' : 'Usuário'}</p>
           </div>
         </div>
       </div>

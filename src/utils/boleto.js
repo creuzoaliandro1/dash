@@ -1,6 +1,13 @@
 import { jsPDF } from 'jspdf'
 import JsBarcode from 'jsbarcode'
 
+// URL publica da logomarca ContaCapt DIGITAL (Supabase Storage)
+const CONTACAPT_LOGO_URL =
+  'https://nkqiurrgrylrwvreybzh.supabase.co/storage/v1/object/sign/logo/logoboleto.png' +
+  '?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV9jMjMwODVjNS1hYzIzLTQxMzAtYjc3YS1hMWU1ZDU1OTc0YzMiLCJhbGciOiJIUzI1NiJ9' +
+  '.eyJ1cmwiOiJsb2dvL2xvZ29ib2xldG8ucG5nIiwiaWF0IjoxNzc4NDU0MDMxLCJleHAiOjMzMzE0NDU0MDMxfQ' +
+  '.jhzGKWef0IbfL2mfdMBPwJtILNBE_1bDbeuNiFlXOu8'
+
 // Formatador de moeda
 const formatMoeda = (value) => {
     if (value === undefined || value === null) return '0,00'
@@ -48,7 +55,7 @@ const cleanStr = (str) => {
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toUpperCase()
-      .replace(/[^A-Z0-9 ]/g, '')
+      .replace(/[^A-Z0-9 ]/g, ' ')
 }
 
 // Remove tudo exceto digitos
@@ -150,97 +157,99 @@ const buildHeader = (conta, nextSeq) => {
     line += '274'                                  // pos 077-079 - codigo banco BMP
     line += padRight('BMP MONEY PLUS', 15)         // pos 080-094 - nome banco
     line += headerDate                             // pos 095-100 - data geracao DDMMAA
-    line += '       '                              // pos 101-107 - brancos
-    line += 'MX'                                   // pos 108-109 - identificador
-    line += padLeft(nextSeq, 7)                    // pos 110-116 - sequencial remessa
+    line += '        '                             // pos 101-108 - brancos (8 espacos)
+    line += 'MX'                                   // pos 109-110 - identificador sistema
+    line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
 
-    // Brancos ate pos 394, depois sequencial final
+    // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '
-    line += padLeft(nextSeq, 6)                    // pos 395-400 - parte sequencial
+    line += '000001'                               // pos 395-400 - nr sequencial registro
 
     return line.substring(0, 400)
 }
 
 // ============================================================
-// CNAB400 - Registro DETALHE Linha 1 (1 por titulo)
+// CNAB400 - Registro DETALHE Linha 1 (Tipo 1) - 400 caracteres
+// Conforme documentacao BMP 274 / FEBRABAN CNAB400
 // ============================================================
-const buildDetalhe1 = (boleto, lineSeq) => {
-    // Dados do sacado
-    const sacadoCic = cleanNum(boleto.sacado_cic || '')
-    const tipoPessoa = getTipoPessoa(sacadoCic)
-    const sNome = cleanStr(boleto.sacado_nome || '')
-    const sEnd = cleanStr(boleto.sacado_endereco || '')
-    const sCep = cleanNum(boleto.sacado_cep || '')
-    const sBairro = cleanStr(boleto.sacado_bairro || '')
-    const sCidade = cleanStr(boleto.sacado_cidade || '')
-    const sUf = padRight(cleanStr(boleto.sacado_uf || ''), 2)
+const buildDetalhe1 = (boleto, conta, lineSeq) => {
+    // --- Sacado ---
+    const sacadoCic  = cleanNum(boleto.sacado_cic || '')
+    const tipoPessoa = getTipoPessoa(sacadoCic)           // '01' CPF / '02' CNPJ
+    const sNome      = cleanStr(boleto.sacado_nome || '')
+    const sEnd       = cleanStr(boleto.sacado_endereco || '')
+    const sCep       = cleanNum(boleto.sacado_cep || '')
 
-    // Avalista
-    const avalistaCic = cleanNum(boleto.avalista_cic || '')
+    // --- Avalista ---
+    const avalistaCic  = cleanNum(boleto.avalista_cic || '')
     const avalistaNome = cleanStr(boleto.avalista_nome || '')
-    const avalistaTipo = avalistaCic ? getTipoPessoa(avalistaCic) : '0'
+    // '1' CPF / '2' CNPJ / ' ' sem avalista
+    const avalistaTipo = avalistaCic
+        ? (avalistaCic.length <= 11 ? '1' : '2')
+        : ' '
 
-    // Nosso numero e titulo
-    const nossoNum = cleanNum(boleto.nosso_numero || '')
-    const digitoNN = calcNNDV(nossoNum)
-    const tituloNum = boleto.numero_documento || boleto.nosso_numero || ''
+    // --- Nosso Numero: DB guarda numero completo com DV como ultimo digito ---
+    const nossoCompleto = cleanNum(boleto.nosso_numero || '')
+    const nossoBase     = nossoCompleto.length > 1 ? nossoCompleto.slice(0, -1) : nossoCompleto
+    const dvNN          = nossoCompleto.length > 1 ? nossoCompleto.slice(-1) : '0'
+    const nossoFmt      = padLeft(nossoBase, 11, '0')     // 11 digitos
 
-    // Datas
+    // --- Numero do titulo (Seu Numero) ---
+    const tituloNum = cleanNum(boleto.numero_documento || boleto.nosso_numero || '')
+
+    // --- Conta corrente do cedente (CONTAS) ---
+    const contaCorrente = padLeft(cleanNum(conta?.conta_corrente || '0'), 8, '0')
+
+    // --- Datas ---
     const dtVenc = fmtDate(boleto.data_vencimento)
     const dtEmis = fmtDate(boleto.data_emissao)
 
-    // Valor
+    // --- Valor e juros (0,2% ao dia) ---
     const valorNum = typeof boleto.valor === 'string'
-      ? parseFloat(boleto.valor.replace(/\./g, '').replace(',', '.'))
-          : Number(boleto.valor || 0)
+        ? parseFloat(boleto.valor.replace(/\./g, '').replace(',', '.'))
+        : Number(boleto.valor || 0)
+    const jurosNum = valorNum * 0.002
 
     let line = ''
-    line += digitoNN                               // pos 001 - DV nosso numero
-    line += '0000000000'                           // pos 002-011 - zeros reservado
-    line += '2'                                    // pos 012 - codigo registro
-    line += 'N'                                    // pos 013 - indicador
-    line += '           '                          // pos 014-024 - brancos (11)
-    line += '0'                                    // pos 025 - tipo impressao
-    line += ' '                                    // pos 026 - branco
-    line += '01'                                   // pos 027-028 - codigo carteira
-    line += padRight(cleanStr(tituloNum).substring(0, 10), 10) // pos 029-038 - nosso numero 10 dig
-    line += dtVenc                                 // pos 039-044 - vencimento DDMMAA
-    line += fmtValor(valorNum)                     // pos 045-057 - valor 13 dig
-    line += '0'                                    // pos 058 - banco cobrador
-    line += '000000002N'                           // pos 059-067 - zeros + id (9)
-    line += ' '                                    // pos 068 - branco
-    line += dtEmis                                 // pos 069-074 - emissao DDMMAA
-    line += '0000'                                 // pos 075-078 - instrucao
-    line += fmtValor(0)                            // pos 079-091 - taxa mora 13 dig
-    line += '0'                                    // pos 092 - tipo desconto
-    line += '0'.repeat(45)                         // pos 093-137 - zeros (45)
-    line += tipoPessoa                             // pos 138-139 - tipo pessoa (2 dig) [138-151 na doc tem 14]
+    line += '1'                                    // pos 001        - tipo registro
+    line += '00000'                                // pos 002-006    - agencia (zeros)
+    line += ' '                                    // pos 007        - digito agencia (espaco)
+    line += '000000000000'                         // pos 008-019    - razao da conta (12 zeros)
+    line += ' '                                    // pos 020        - espaco
+    line += '000900001'                            // pos 021-029    - carteira + variacao
+    line += contaCorrente                          // pos 030-037    - conta corrente (8 dig)
+    line += padLeft(tituloNum, 15)                 // pos 038-052    - numero do titulo (15)
+    line += '          '                           // pos 053-062    - brancos (10)
+    line += '00000000'                             // pos 063-070    - zeros (8)
+    line += nossoFmt                               // pos 071-081    - nosso numero (11)
+    line += dvNN                                   // pos 082        - digito verificador
+    line += '0000000000'                           // pos 083-092    - zeros (10)
+    line += '2'                                    // pos 093        - tipo impressao (banco emite)
+    line += 'N'                                    // pos 094        - identificacao emissao
+    line += '           '                          // pos 095-105    - brancos (11)
+    line += '0'                                    // pos 106        - operacao banco
+    line += '  '                                   // pos 107-108    - brancos (2)
+    line += '01'                                   // pos 109-110    - codigo ocorrencia (entrada)
+    line += padRight(tituloNum.slice(0, 10), 10)   // pos 111-120    - seu numero (10)
+    line += dtVenc                                 // pos 121-126    - vencimento DDMMAA
+    line += fmtValor(valorNum)                     // pos 127-139    - valor (13 centavos)
+    line += '0'                                    // pos 140        - carteira
+    line += '000000002N'                           // pos 141-150    - id operacao (10)
+    line += dtEmis                                 // pos 151-156    - emissao DDMMAA
+    line += '0000'                                 // pos 157-160    - primeira instrucao
+    line += fmtValor(jurosNum)                     // pos 161-173    - juros mora 0,2%/dia (13)
+    line += '0'.repeat(45)                         // pos 174-218    - zeros (45)
+    line += tipoPessoa                             // pos 219-220    - tipo sacado (2)
+    line += padLeft(sacadoCic, 14)                 // pos 221-234    - CPF/CNPJ sacado (14)
+    line += padRight(sNome, 40)                    // pos 235-274    - nome sacado (40)
+    line += padRight(sEnd, 40)                     // pos 275-314    - endereco sacado (40)
+    line += '            '                         // pos 315-326    - brancos (12)
+    line += padLeft(sCep, 8)                       // pos 327-334    - CEP (8)
+    line += avalistaTipo                           // pos 335        - tipo avalista (1)
+    line += padRight(avalistaCic, 15)              // pos 336-350    - CPF/CNPJ avalista (15)
+    line += padRight(avalistaNome, 44)             // pos 351-394    - nome avalista (44)
+    line += padLeft(lineSeq, 6)                    // pos 395-400    - nr sequencial linha (6)
 
-    // Ajuste: na doc pos 138-151 tem 14 chars: tipoPessoa (2) + CIC padLeft (14) = 16 -> correto conforme tabela
-    // Pos 138-139: tipoPessoa (2)
-    // Pos 140-153: sacadoCic padLeft 14
-    // Pos 154-193: sNome padRight 40
-    // Pos 194-233: sEnd padRight 40
-    // Pos 234-245: brancos 12
-    // Pos 246-253: sCep padLeft 8
-    // Pos 254: avalistaTipo 1
-    // Pos 255-269: avalistaCic padRight 15
-    // Pos 270-313: avalistaNome padRight 44
-    // Pos 314-319: lineSeq padLeft 6
-
-    // Build from tipoPessoa that was already appended above
-    line += padLeft(sacadoCic, 14)                 // pos 140-153 - CIC sacado 14 dig
-    line += padRight(sNome, 40)                    // pos 154-193 - nome sacado 40
-    line += padRight(sEnd, 40)                     // pos 194-233 - endereco 40
-    line += '            '                          // pos 234-245 - brancos 12
-    line += padLeft(sCep, 8)                       // pos 246-253 - CEP 8 dig
-    line += avalistaTipo                           // pos 254 - tipo avalista 1
-    line += padRight(avalistaCic, 15)              // pos 255-269 - CIC avalista 15
-    line += padRight(avalistaNome, 44)             // pos 270-313 - nome avalista 44
-    line += padLeft(lineSeq, 6)                    // pos 314-319 - sequencial linha 6
-
-    // Preenche ate 400
-    while (line.length < 400) line += ' '
     return line.substring(0, 400)
 }
 
@@ -249,17 +258,17 @@ const buildDetalhe1 = (boleto, lineSeq) => {
 // ============================================================
 const buildDetalhe2 = (boleto, lineSeq) => {
     const msgProtesto = padRight(
-          'BOLETO SUJEITO A PROTESTO E NEGATIVACAO APOS VENCIMENTO',
-          80
-        )
+        'BOLETO SUJEITO A PROTESTO E NEGATIVACAO APOS O VENCIMENTO DUVIDAS 85 3264 1850',
+        80
+    )
     const msgImportado = padRight(cleanStr(boleto.mensagem1 || boleto.descricao || ''), 80)
     const msgGarantia = padRight(
-          'O TITULO PODERA SER USADO COMO GARANTIA EM OPERACOES DE CREDITO',
-          80
-        )
+        'O TITULO PODERA SER USADO COMO GARANTIA OU CAUCAO EM OPERACOES DE CREDITO',
+        80
+    )
 
-    const sBairro = padLeft(cleanStr(boleto.sacado_bairro || ''), 20)
-    const sUf = padRight(cleanStr(boleto.sacado_uf || ''), 2)
+    const sBairro = padRight(cleanStr(boleto.sacado_bairro || ''), 20) // alinhado a esquerda
+    const sUf     = padRight(cleanStr(boleto.sacado_uf || ''), 2)
     const sCidade = padRight(cleanStr(boleto.sacado_cidade || ''), 30)
 
     let line = ''
@@ -324,7 +333,7 @@ export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq) => {
 
     // Detalhe (2 linhas por boleto)
     for (const boleto of boletos) {
-          lines.push(buildDetalhe1(boleto, lineSeq))
+          lines.push(buildDetalhe1(boleto, contaInfo, lineSeq))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
@@ -344,63 +353,468 @@ export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq) => {
 }
 
 // ============================================================
-// Geracao de PDF de boleto (mantida para compatibilidade)
+// PDF - Helpers para geracao de codigo de barras
 // ============================================================
 
-export const generateSingleBoletoPDF = async (record) => {
+const getValorForBarcode = (value) => {
+    let num = 0
+    if (typeof value === 'number') num = value
+    else if (typeof value === 'string') {
+        const normalized = value.replace(/\./g, '').replace(',', '.')
+        num = parseFloat(normalized)
+    }
+    if (isNaN(num)) return '0000000000'
+    return num.toFixed(2).replace('.', '').padStart(10, '0')
+}
+
+const calcularFatorVencimento = (vencimentoStr) => {
+    if (!vencimentoStr) return '0000'
+    const vencimento = new Date(vencimentoStr)
+    if (isNaN(vencimento.getTime())) return '0000'
+    const dataBase = new Date('1997-10-07T00:00:00Z')
+    const v = new Date(Date.UTC(vencimento.getUTCFullYear(), vencimento.getUTCMonth(), vencimento.getUTCDate()))
+    const b = new Date(Date.UTC(dataBase.getUTCFullYear(), dataBase.getUTCMonth(), dataBase.getUTCDate()))
+    let dias = Math.floor((v.getTime() - b.getTime()) / (1000 * 60 * 60 * 24))
+    if (dias >= 10000) dias = ((dias - 10000) % 9000) + 1000
+    if (dias < 0) return '0000'
+    return String(dias).padStart(4, '0')
+}
+
+const modulo10 = (numero) => {
+    let soma = 0, peso = 2
+    for (let i = numero.length - 1; i >= 0; i--) {
+        let termo = parseInt(numero.charAt(i)) * peso
+        if (termo > 9) termo = Math.floor(termo / 10) + (termo % 10)
+        soma += termo
+        peso = peso === 2 ? 1 : 2
+    }
+    const resto = soma % 10
+    return resto === 0 ? '0' : String(10 - resto)
+}
+
+const modulo11Barcode = (numero) => {
+    const pesos = [2, 3, 4, 5, 6, 7, 8, 9]
+    let soma = 0, pesoIndex = 0
+    for (let i = numero.length - 1; i >= 0; i--) {
+        soma += parseInt(numero.charAt(i)) * pesos[pesoIndex]
+        pesoIndex = (pesoIndex + 1) % pesos.length
+    }
+    const resto = soma % 11
+    const dv = 11 - resto
+    if (dv === 0 || dv === 10 || dv === 11) return '1'
+    return String(dv)
+}
+
+// Gera string de 44 digitos do codigo de barras BMP (banco 274)
+// usando campos diretos de capt_boletos + CONTAS
+const generateBarcodeFromBoleto = (boleto, contaData) => {
+    const banco = '274'
+    const moeda = '9'
+    const fator = calcularFatorVencimento(boleto.data_vencimento)
+    const valorStr = getValorForBarcode(boleto.valor)
+    const agencia = '0001'
+
+    // nosso_numero: ex "004025007598" (12 dig) → remove ultimo digito (DV) → "00402500759" (11 dig)
+    let nossoNumeroRaw = String(boleto.nosso_numero || '').replace(/[^0-9]/g, '')
+    let numeroBase = nossoNumeroRaw.slice(0, -1) || '0'
+    const nossoNumero = numeroBase.padStart(11, '0')
+
+    // conta_corrente: ex "09544156" (8 dig) → remove ultimo digito (DV) → "0954415" (7 dig) + "0"
+    let contaRaw = String(contaData?.conta_corrente || '0000000').replace(/[^0-9]/g, '')
+    if (contaRaw.length > 7) contaRaw = contaRaw.slice(0, 7)
+    const contaSemDV = contaRaw.padStart(7, '0')
+    const conta = contaSemDV + '0'
+
+    const freeField = `${agencia}09${nossoNumero}${conta}`
+    const block = `${banco}${moeda}${fator}${valorStr}${freeField}`
+    const dv = modulo11Barcode(block)
+    return `${banco}${moeda}${dv}${fator}${valorStr}${freeField}`
+}
+
+// Gera linha digitavel formatada (47 digitos)
+const formatLinhaDigitavel = (barcode) => {
+    const field1Raw = barcode.substring(0, 4) + barcode.substring(19, 24)
+    const dv1 = modulo10(field1Raw)
+    const field1 = `${field1Raw.substring(0, 5)}.${field1Raw.substring(5)}${dv1}`
+
+    const field2Raw = barcode.substring(24, 34)
+    const dv2 = modulo10(field2Raw)
+    const field2 = `${field2Raw.substring(0, 5)}.${field2Raw.substring(5)}${dv2}`
+
+    const field3Raw = barcode.substring(34, 44)
+    const dv3 = modulo10(field3Raw)
+    const field3 = `${field3Raw.substring(0, 5)}.${field3Raw.substring(5)}${dv3}`
+
+    const field4 = barcode.charAt(4)
+    const field5 = barcode.substring(5, 19) // fator(4) + valor(10) = 14 digitos
+
+    return `${field1} ${field2} ${field3} ${field4} ${field5}`
+}
+
+// Comprime imagem para reduzir tamanho do PDF
+const compressImageForPDF = (imageData, maxWidth = 400, quality = 0.7) => {
+    return new Promise((resolve) => {
+        try {
+            if (!imageData || imageData.length < 10000) { resolve(imageData); return }
+            const canvas = document.createElement('canvas')
+            const ctx = canvas.getContext('2d')
+            const img = new Image()
+            img.onload = () => {
+                const aspectRatio = img.height / img.width
+                canvas.width = Math.min(img.width, maxWidth)
+                canvas.height = canvas.width * aspectRatio
+                if (ctx) {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+                    resolve(canvas.toDataURL('image/jpeg', quality))
+                } else resolve(imageData)
+            }
+            img.onerror = () => resolve(imageData)
+            img.src = imageData
+        } catch { resolve(imageData) }
+    })
+}
+
+// Monta string de endereco do sacado a partir de campos de capt_boletos
+const montarEnderecoSacado = (boleto) => {
+    const partes = []
+    if (boleto.sacado_endereco) partes.push(boleto.sacado_endereco)
+    if (boleto.sacado_bairro) partes.push(boleto.sacado_bairro)
+    const cidUf = [boleto.sacado_cidade, boleto.sacado_uf].filter(Boolean).join(' / ')
+    if (cidUf) partes.push(cidUf)
+    return partes.join(', ')
+}
+
+// ============================================================
+// PDF - Renderiza parte superior: fatura / demonstrativo
+// ============================================================
+const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
+    const M = 10, CW = 190
+
+    const nomeCorrentista = contaData?.nome_correntista || ''
+    const cicCorrentista  = contaData?.cpf_cnpj || contaData?.cic || ''
+    const emailCorrentista = contaData?.email || ''
+    const logoUrl = contaData?.logo || null
+
+    const sacadoNome = boleto.sacado_nome || ''
+    const sacadoCic  = boleto.sacado_cic  || ''
+    const sacadoEnd  = montarEnderecoSacado(boleto)
+    const sacadoCep  = boleto.sacado_cep  || ''
+    const emissao    = boleto.data_emissao
+    const vencimento = boleto.data_vencimento
+    const valor      = boleto.valor
+    const numDoc     = boleto.numero_documento || ''
+    const descricao  = boleto.descricao || ''
+
+    let y = 15
+
+    // --- Cabecalho: logo + dados empresa + FATURA ---
+    const LOGO_W = 38.87, LOGO_H = 38.87
+
+    if (logoUrl) {
+        const compressed = await compressImageForPDF(logoUrl, 300, 0.7)
+        doc.addImage(compressed, 'JPEG', M, y, LOGO_W, LOGO_H)
+    } else {
+        doc.setDrawColor(180); doc.setLineWidth(0.3)
+        doc.rect(M, y, LOGO_W, LOGO_H)
+        doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(80, 80, 80)
+        doc.text('ContaCapt', M + LOGO_W / 2, y + LOGO_H / 2 - 2, { align: 'center' })
+        doc.text('DIGITAL',   M + LOGO_W / 2, y + LOGO_H / 2 + 2, { align: 'center' })
+        doc.setTextColor(0, 0, 0)
+    }
+
+    const dadosX = M + LOGO_W + 5
+    let dadosY = y + 7
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    doc.text(nomeCorrentista, dadosX, dadosY); dadosY += 5
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    if (cicCorrentista)  { doc.text(cicCorrentista,  dadosX, dadosY); dadosY += 4 }
+    if (emailCorrentista){ doc.text(emailCorrentista, dadosX, dadosY); dadosY += 4 }
+
+    // FATURA + data de emissao (direita)
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold')
+    doc.text('FATURA', M + CW, y + 6, { align: 'right' })
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
+    doc.text(`Data de Emissão: ${formatDate(emissao)}`, M + CW, y + 12, { align: 'right' })
+
+    y += Math.max(LOGO_H, dadosY - 15) + 5
+
+    // Linha divisoria
+    doc.setDrawColor(0); doc.setLineWidth(0.2)
+    doc.line(M, y, M + CW, y); y += 2
+
+    // Dados do cliente
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0, 0, 0)
+    doc.text('DADOS DO CLIENTE', M, y + 5)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    doc.text(sacadoNome, M, y + 10)
+    doc.text(`CPF/CNPJ: ${sacadoCic}`, M, y + 14)
+    const endLine = `${sacadoEnd}${sacadoCep ? ' ' + sacadoCep : ''}`
+    doc.text(endLine, M, y + 18); y += 20
+
+    doc.setLineWidth(0.2); doc.line(M, y, M + CW, y); y += 5
+
+    // Descricao dos servicos
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+    doc.text('DESCRIÇÃO DOS SERVIÇOS / PRODUTOS', M, y); y += 5
+
+    // Cabecalho tabela (cinza)
+    doc.setFillColor(209, 209, 209)
+    doc.rect(M, y, CW, 6, 'F')
+    doc.setFontSize(7); doc.setTextColor(0, 0, 0)
+    doc.text('ITEM / DESCRIÇÃO', M + 2, y + 4)
+    doc.text('VALOR', M + CW - 2, y + 4, { align: 'right' }); y += 6
+
+    // Linha do titulo
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    const descItem = `Título: ${numDoc} - Vencimento: ${formatDate(vencimento)}`
+    doc.text(descItem, M + 2, y + 4)
+    doc.text(formatMoeda(valor), M + CW - 2, y + 4, { align: 'right' })
+    doc.setLineWidth(0.2); doc.line(M, y + 6, M + CW, y + 6); y += 10
+
+    // Total a pagar
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+    doc.text('TOTAL A PAGAR', M + CW - 45, y)
+    doc.text(formatMoeda(valor), M + CW - 2, y, { align: 'right' }); y += 6
+
+    // Descricao/mensagem do boleto (campo descricao de capt_boletos)
+    if (descricao) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+        const descClean = String(descricao).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+        doc.text(descClean, M, y, { maxWidth: CW }); y += 5
+    }
+
+    // Observacoes (posicao fixa antes da linha de corte)
+    const obsY = boletoStartY - 20
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+    doc.text('OBSERVAÇÕES:', M, obsY)
+    doc.text(
+        'Esta fatura serve apenas como demonstrativo. Utilize o boleto abaixo para pagamento. ' +
+        'O título poderá ser usado como garantia ou caução em operações de crédito.',
+        M, obsY + 3.5, { maxWidth: CW }
+    )
+    doc.text(
+        'Em caso de dúvidas, entre em contato com a ContaCapt pelos canais oficiais de atendimento. (85)-3264.1850.',
+        M, obsY + 7, { maxWidth: CW }
+    )
+
+    // Linha de corte tracejada
+    doc.setDrawColor(0); doc.setLineDash([3, 3], 0)
+    doc.line(M, boletoStartY - 8, M + CW, boletoStartY - 8)
+    doc.setFontSize(6)
+    doc.text('Destaque aqui para pagamento', M + CW / 2, boletoStartY - 10, { align: 'center' })
+    doc.setLineDash([], 0)
+}
+
+// ============================================================
+// PDF - Renderiza ficha de compensacao (parte inferior)
+// ============================================================
+const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
+    const M = 10, CW = 190
+    const ROW_H = 6.5, INST_H = 25
+
+    const nomeCorrentista = contaData?.nome_correntista || ''
+    const cicCorrentista  = contaData?.cpf_cnpj || contaData?.cic || ''
+    const contaCorrente   = contaData?.conta_corrente || ''
+    const logoUrl = contaData?.logo || null
+
+    const sacadoNome = boleto.sacado_nome || ''
+    const sacadoCic  = boleto.sacado_cic  || ''
+    const sacadoEnd  = montarEnderecoSacado(boleto)
+    const sacadoCep  = boleto.sacado_cep  || ''
+    const vencimento = boleto.data_vencimento
+    const emissao    = boleto.data_emissao
+    const valor      = boleto.valor
+    const nossoNum   = boleto.nosso_numero || ''
+    const numDoc     = boleto.numero_documento || ''
+    const descricao  = boleto.descricao || ''
+
+    const barcodeStr     = generateBarcodeFromBoleto(boleto, contaData)
+    const linhaDigitavel = formatLinhaDigitavel(barcodeStr)
+
+    const valorNum = typeof valor === 'number'
+        ? valor
+        : parseFloat(String(valor).replace(/\./g, '').replace(',', '.')) || 0
+    const moraStr = (valorNum * 0.002).toFixed(2).replace('.', ',')
+
+    let bY = startY
+
+    // --- Cabecalho: logo ContaCapt DIGITAL | 274 | linha digitavel ---
+    // Tenta carregar logomarca do Supabase; fallback em texto se falhar
     try {
-          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-          doc.setFontSize(10)
-          doc.text('BOLETO BANCARIO', 105, 15, { align: 'center' })
-          doc.setFontSize(8)
+        const logoData = await compressImageForPDF(CONTACAPT_LOGO_URL, 400, 0.95)
+        // Imagem: fundo branco, alinhada a direita dentro dos 40mm (x=M, w=40, h=8)
+        doc.addImage(logoData, 'JPEG', M, bY, 40, 8)
+    } catch (_e) {
+        // Fallback: texto preto, alinhado a direita
+        doc.setTextColor(0, 0, 0)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(10.5)
+        doc.text('ContaCapt', M + 40, bY + 4.5, { align: 'right' })
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(6)
+        doc.text('by BMP', M + 40, bY + 7.5, { align: 'right' })
+    }
+    doc.line(M + 42, bY, M + 42, bY + 8)
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold')
+    doc.text('274', M + 45, bY + 6)
+    doc.line(M + 60, bY, M + 60, bY + 8)
+    doc.setFontSize(10)
+    doc.text(linhaDigitavel, M + CW, bY + 6, { align: 'right' })
+    doc.line(M, bY + 9, M + CW, bY + 9)
 
-      const fields = [
-              ['Sacado:', record.sacado_nome || ''],
-              ['CPF/CNPJ:', record.sacado_cic || ''],
-              ['Endereco:', record.sacado_endereco || ''],
-              ['Cidade/UF:', `${record.sacado_cidade || ''} / ${record.sacado_uf || ''}`],
-              ['CEP:', record.sacado_cep || ''],
-              ['Vencimento:', formatDate(record.data_vencimento)],
-              ['Valor:', `R$ ${formatMoeda(record.valor)}`],
-              ['Nosso Numero:', record.nosso_numero || ''],
-              ['Numero Documento:', record.numero_documento || ''],
-              ['Emissao:', formatDate(record.data_emissao)],
-            ]
+    let lY = bY + 9
+    const rightX = M + CW - 45
+    const rightW = 45
+    const leftW  = CW - 45
+    const colW   = leftW / 5
 
-      let y = 30
-          fields.forEach(([label, value]) => {
-                  doc.setFont(undefined, 'bold')
-                  doc.text(label, 15, y)
-                  doc.setFont(undefined, 'normal')
-                  doc.text(String(value), 55, y)
-                  y += 8
-          })
+    // Linha 1: Local de Pagamento / Vencimento
+    const vLineH = (ROW_H * 4) + INST_H + 16
+    doc.line(rightX, lY, rightX, lY + vLineH)
 
-      if (record.codigo_barras) {
-              try {
-                        const canvas = document.createElement('canvas')
-                        JsBarcode(canvas, record.codigo_barras, { format: 'CODE128', width: 1.5, height: 40, displayValue: false })
-                        const imgData = canvas.toDataURL('image/png')
-                        doc.addImage(imgData, 'PNG', 15, y + 5, 180, 20)
-                        y += 30
-              } catch (e) {
-                        console.warn('[PDF] Erro ao gerar codigo de barras:', e)
-              }
-      }
+    doc.setFontSize(6); doc.setFont('helvetica', 'normal')
+    doc.text('Local de Pagamento', M + 1, lY + 2.5)
+    doc.setFontSize(8)
+    doc.text('PAGÁVEL EM QUALQUER BANCO ATÉ O VENCIMENTO', M + 1, lY + 5.5)
+    doc.setFontSize(6)
+    doc.text('Vencimento', rightX + 1, lY + 2.5)
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+    doc.text(formatDate(vencimento), rightX + rightW - 1, lY + 5.5, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    doc.line(M, lY + ROW_H, M + CW, lY + ROW_H); lY += ROW_H
 
-      const pdfBlob = doc.output('blob')
-          return pdfBlob
-    } catch (error) {
-          console.error('[PDF] Erro ao gerar PDF:', error)
-          throw error
+    // Linha 2: Beneficiario / Agencia-Codigo
+    doc.setFontSize(6)
+    doc.text('Beneficiário', M + 1, lY + 2.5)
+    doc.setFontSize(8)
+    const benefText = cicCorrentista
+        ? `${nomeCorrentista} - ${cicCorrentista}`
+        : nomeCorrentista
+    doc.text(benefText, M + 1, lY + 5.5)
+    doc.setFontSize(6)
+    doc.text('Agência/Código Beneficiário', rightX + 1, lY + 2.5)
+    doc.setFontSize(8)
+    doc.text(`0001 / ${contaCorrente}`, rightX + rightW - 1, lY + 5.5, { align: 'right' })
+    doc.line(M, lY + ROW_H, M + CW, lY + ROW_H); lY += ROW_H
+
+    // Linha 3: Datas / Nosso Numero
+    doc.setFontSize(6)
+    doc.text('Data Documento',     M + 1,           lY + 2.5)
+    doc.text('Nº do Documento',    M + colW + 1,    lY + 2.5)
+    doc.text('Espécie Doc.',       M + colW * 2 + 1, lY + 2.5)
+    doc.text('Aceite',             M + colW * 3 + 1, lY + 2.5)
+    doc.text('Data Processamento', M + colW * 4 + 1, lY + 2.5)
+    doc.setFontSize(8)
+    doc.text(formatDate(emissao),       M + 1,           lY + 5.5)
+    doc.text(String(numDoc),            M + colW + 1,    lY + 5.5)
+    doc.text('DM',                      M + colW * 2 + 1, lY + 5.5)
+    doc.text('N',                       M + colW * 3 + 1, lY + 5.5)
+    doc.text(formatDate(new Date()),    M + colW * 4 + 1, lY + 5.5)
+    doc.setFontSize(6)
+    doc.text('Nosso Número', rightX + 1, lY + 2.5)
+    doc.setFontSize(8)
+    doc.text(String(nossoNum), rightX + rightW - 1, lY + 5.5, { align: 'right' })
+    doc.line(M, lY + ROW_H, M + CW, lY + ROW_H); lY += ROW_H
+
+    // Linha 4: Carteira / Especie / Valor
+    doc.setFontSize(6)
+    doc.text('Carteira', M + colW + 1,    lY + 2.5)
+    doc.text('Espécie',  M + colW * 2 + 1, lY + 2.5)
+    doc.setFontSize(8)
+    doc.text('09', M + colW + 1,    lY + 5.5)
+    doc.text('R$', M + colW * 2 + 1, lY + 5.5)
+    doc.setFontSize(6)
+    doc.text('(=) Valor do Documento', rightX + 1, lY + 2.5)
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+    doc.text(formatMoeda(valor), rightX + rightW - 1, lY + 5.5, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    doc.line(M, lY + ROW_H, M + CW, lY + ROW_H); lY += ROW_H
+
+    // Instrucoes / colunas de valores
+    doc.setFontSize(6)
+    doc.text('Instruções (Texto de responsabilidade do beneficiário)', M + 1, lY + 2.5)
+    doc.setFontSize(7)
+    doc.text(`APÓS VENCIMENTO COBRAR MORA DE R$ ${moraStr} POR DIA`, M + 1, lY + 6)
+    if (descricao) {
+        const msgClean = String(descricao).replace(/[\r\n]+/g, ' ').trim()
+        doc.text(msgClean, M + 1, lY + 9.5, { maxWidth: leftW - 2 })
+    }
+    doc.line(rightX, lY + 8,  M + CW, lY + 8)
+    doc.setFontSize(6)
+    doc.text('(-) Desconto / Abatimento', rightX + 1, lY + 2.5)
+    doc.line(rightX, lY + 16, M + CW, lY + 16)
+    doc.text('(-) Outras deduções',       rightX + 1, lY + 10.5)
+    doc.text('(+) Mora / Multa',          rightX + 1, lY + 18.5)
+    doc.line(M, lY + INST_H, M + CW, lY + INST_H); lY += INST_H
+
+    // Pagador
+    doc.setFontSize(6)
+    doc.text('Pagador', M + 1, lY + 2.5)
+    doc.text('(+) Outros acréscimos', rightX + 1, lY + 2.5)
+    doc.line(rightX, lY + 8, M + CW, lY + 8)
+    doc.text('(=) Valor Cobrado', rightX + 1, lY + 10.5)
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+    doc.text(sacadoNome, M + 1, lY + 6)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${sacadoEnd}${sacadoCep ? ' ' + sacadoCep : ''}`, M + 1, lY + 10)
+    doc.text(`CPF/CNPJ: ${sacadoCic}`, M + 1, lY + 14)
+    lY += 20
+
+    doc.line(M, lY, M + CW, lY)
+    doc.setFontSize(6)
+    doc.text('Sacador/Avalista', M + 1, lY + 2.5)
+    lY += 5
+
+    // Codigo de barras
+    try {
+        const canvas = document.createElement('canvas')
+        const scale = 1.5
+        canvas.width  = 1200 * scale
+        canvas.height = 150 * scale
+        const ctx = canvas.getContext('2d')
+        if (ctx) ctx.scale(scale, scale)
+        JsBarcode(canvas, barcodeStr, {
+            format: 'ITF', displayValue: false,
+            width: 3, height: 120, margin: 10,
+            fontSize: 0, background: '#ffffff', lineColor: '#000000',
+        })
+        doc.addImage(canvas.toDataURL('image/png', 0.85), 'PNG', M + 5, lY, CW - 10, 15)
+    } catch (e) {
+        console.error('[PDF] Erro ao gerar barcode:', e)
     }
 }
 
-export const generateMultipleBoletoPDFs = async (records) => {
+// ============================================================
+// PDF - Funcoes exportadas (usam capt_boletos + CONTAS)
+// Assinatura: generateSingleBoletoPDF(boleto, contaData)
+//   boleto    = registro de capt_boletos (snake_case)
+//   contaData = registro de CONTAS (nome_correntista, cpf_cnpj,
+//               conta_corrente, cedente, email, logo?)
+// ============================================================
+
+const BOLETO_START_Y = 190 // Posicao Y da linha de corte (mm)
+
+export const generateSingleBoletoPDF = async (boleto, contaData) => {
+    try {
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+        await renderFatura(doc, boleto, contaData, BOLETO_START_Y)
+        await renderFichaCompensacao(doc, boleto, contaData, BOLETO_START_Y)
+        return doc.output('blob')
+    } catch (error) {
+        console.error('[PDF] Erro ao gerar PDF:', error)
+        throw error
+    }
+}
+
+export const generateMultipleBoletoPDFs = async (boletos, contaData) => {
     const blobs = []
-        for (const record of records) {
-              const blob = await generateSingleBoletoPDF(record)
-              blobs.push({ blob, filename: `boleto_${record.numero_documento || record.id || 'doc'}.pdf` })
+    for (const boleto of boletos) {
+        try {
+            const blob = await generateSingleBoletoPDF(boleto, contaData)
+            blobs.push({ blob, filename: `boleto_${boleto.numero_documento || boleto.id || 'doc'}.pdf` })
+        } catch (error) {
+            console.error('[PDF] Erro ao gerar PDF para boleto:', boleto.numero_documento, error)
         }
+    }
     return blobs
 }

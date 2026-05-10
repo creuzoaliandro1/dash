@@ -23,8 +23,9 @@ export const signIn = async (cic, pass) => {
     const user = {
       id: data.id,
       cic: data.cic,
-      name: data.name || data.cic,
+      name: data.name || data.nome_correntista || data.cic,
       email: data.email || null,
+      tipo: data.tipo || null,
     }
 
     localStorage.setItem('user', JSON.stringify(user))

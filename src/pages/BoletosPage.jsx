@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
@@ -22,27 +22,56 @@ export default function BoletosPage() {
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
+  const [contaData, setContaData] = useState(null)
 
-  // Obter user da sessão
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  // Lê o ID ativo sempre do localStorage (sem stale closure)
+  // Priorita activeContaId (usado quando tipo M troca de perfil), fallback para user.id
+  const getActiveContaId = useRef(() => {
+    const stored = localStorage.getItem('activeContaId')
+    if (stored) return stored
+    const u = JSON.parse(localStorage.getItem('user') || '{}')
+    return u.id
+  }).current
 
-  useEffect(() => {
-    if (user.id) {
-      loadBoletos()
-    }
-  }, [user.id])
+  const loadContaData = useCallback(async () => {
+    const activeId = getActiveContaId()
+    if (!activeId) return
+    const { data } = await getContaInfo(activeId)
+    setContaData(data || null)
+  }, [])
 
-  const loadBoletos = async () => {
+  const loadBoletos = useCallback(async () => {
     setLoading(true)
     try {
-      const resultado = await getBoletos(user.id)
+      const activeId = getActiveContaId()
+      console.log('[BoletosPage] loadBoletos para conta:', activeId)
+      const resultado = await getBoletos(activeId)
       setBoletos(resultado.data || [])
     } catch (err) {
       console.error('Erro ao carregar boletos:', err)
       setBoletos([])
     }
     setLoading(false)
-  }
+  }, [])
+
+  // Carregar na montagem
+  useEffect(() => {
+    const activeId = getActiveContaId()
+    if (activeId) {
+      loadBoletos()
+      loadContaData()
+    }
+  }, [])
+
+  // Recarregar quando usuario tipo M troca de perfil
+  useEffect(() => {
+    const handleContaSwitched = () => {
+      loadBoletos()
+      loadContaData()
+    }
+    window.addEventListener('contaSwitched', handleContaSwitched)
+    return () => window.removeEventListener('contaSwitched', handleContaSwitched)
+  }, [])
 
   const handleCreateNew = () => {
     setEditingBoleto(null)
@@ -56,20 +85,23 @@ export default function BoletosPage() {
 
   const handleSave = async (formData) => {
     setLoading(true)
+    const activeId = getActiveContaId()
+    console.log('[BoletosPage] handleSave para conta:', activeId)
+
     if (editingBoleto) {
       // Atualizar
       // await updateBoleto(editingBoleto.ID, formData)
     } else {
       // Criar novo
-      const { data, error } = await createBoleto(user.id, formData)
-      if (!error) {
-        setBoletos([...boletos, data])
-      } else {
+      const { error } = await createBoleto(activeId, formData)
+      if (error) {
         alert('Erro ao salvar boleto: ' + error.message)
+        setLoading(false)
+        return
       }
     }
     setShowModal(false)
-    loadBoletos()
+    await loadBoletos()  // aguardar para garantir que a tabela atualiza
     setLoading(false)
   }
 
@@ -159,7 +191,7 @@ export default function BoletosPage() {
 
       console.log('[Ações] Gerando ZIP para', boletosParaZip.length, 'boletos selecionados')
 
-      const pdfList = await generateMultipleBoletoPDFs(boletosParaZip)
+      const pdfList = await generateMultipleBoletoPDFs(boletosParaZip, contaData)
       await createAndDownloadZip(pdfList, 'boletos.zip')
 
       alert(`ZIP com ${pdfList.length} boleto(s) gerado com sucesso!`)
@@ -189,15 +221,16 @@ export default function BoletosPage() {
 
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
-      // Buscar dados da conta para gerar CNAB400 com informacoes corretas
-            const { data: contaData } = await getContaInfo(user.id)
-                    const nextSeq = contaData ? (Number(contaData.cnab400 || 0) + 1) : 1
-                      
-            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaData, nextSeq)
+      // Usar contaData ja carregado (ou recarregar se necessario)
+            const activeId = getActiveContaId()
+            const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
+            const nextSeq = contaParaRemessa ? (Number(contaParaRemessa.cnab400 || 0) + 1) : 1
+
+            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq)
 
             // Incrementar contador da remessa na conta
-            if (contaData) {
-                      await incrementContaCnab400(user.id, nextSeq)
+            if (contaParaRemessa) {
+                      await incrementContaCnab400(activeId, nextSeq)
             }
 
       // Generate filename: CB[DDMM][SSSSSSS].REM
@@ -220,12 +253,12 @@ export default function BoletosPage() {
       // Track remittance in database
       const valorTotal = boletosParaRemessa.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
 
-      const { error: remessaError } = await createRemessa(user.id, {
+      const { error: remessaError } = await createRemessa(activeId, {
         filename,
         quantidadeBoletos: boletosParaRemessa.length,
         valorTotal,
-        conta: user.conta || '',
-        agencia: user.agencia || '',
+        conta: contaParaRemessa?.conta_corrente || '',
+        agencia: contaParaRemessa?.agencia || '',
       })
 
       if (remessaError) {
@@ -234,7 +267,7 @@ export default function BoletosPage() {
       }
 
       // Update conta's remittance filename
-      const { error: contaError } = await updateContaLastRemessaDate(user.id, filename)
+      const { error: contaError } = await updateContaLastRemessaDate(activeId, filename)
       if (contaError) {
         console.error('[CNAB400] Erro ao atualizar data da conta:', contaError)
       }
@@ -250,7 +283,7 @@ export default function BoletosPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -283,7 +316,7 @@ export default function BoletosPage() {
 
       {/* Upload Area */}
       <FileUpload
-        userId={user.id}
+        userId={getActiveContaId()}
         onShowPreview={handleShowPreview}
         onImportError={handleImportError}
       />
@@ -342,13 +375,16 @@ export default function BoletosPage() {
         </div>
       </div>
 
-      {/* Tabela de Boletos */}
-      <BoletoTable
-        boletos={getFilteredBoletos()}
-        onEdit={handleEdit}
-        selectedRows={selectedRows}
-        onSelectedRowsChange={setSelectedRows}
-      />
+      {/* Tabela de Boletos — overflow-auto gerencia x+y; header da tabela usa sticky top-0 */}
+      <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+        <BoletoTable
+          boletos={getFilteredBoletos()}
+          onEdit={handleEdit}
+          selectedRows={selectedRows}
+          onSelectedRowsChange={setSelectedRows}
+          contaData={contaData}
+        />
+      </div>
 
       {/* Modal de Formulário */}
       {showModal && (
@@ -363,7 +399,7 @@ export default function BoletosPage() {
       {showPreview && previewData.length > 0 && (
         <ImportPreview
           previewData={previewData}
-          userId={user.id}
+          userId={getActiveContaId()}
           onImportComplete={handleImportPreviewComplete}
           onCancel={handleCancelPreview}
         />

@@ -36,7 +36,7 @@ const formatCurrency = (value) => {
   })
 }
 
-export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelectedRows, onSelectedRowsChange }) {
+export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData }) {
   console.log('[BoletoTable] Renderizando com', boletos?.length || 0, 'boletos')
 
   // Se não recebeu selectedRows (compatibilidade com versão anterior), usar estado local
@@ -175,34 +175,9 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
     console.log('[PDF] Clique no botão 2ª via - iniciando...')
     try {
       console.log('[PDF] Boleto recebido:', boleto)
-
-      // Preparar dados no formato esperado pela função generateSingleBoletoPDF
-      const boletoData = {
-        // Dados do beneficiário (padrão Capt)
-        NOME_CORRENTISTA: 'CAPT SOLUÇÕES FINANCEIRAS LTDA',
-        CIC: '00.000.000/0000-00',
-        ENDERECO: 'RUA DAS FINANÇAS, 1000',
-        BAIRRO: 'CENTRO',
-        CIDADE: 'SÃO PAULO',
-        UF: 'SP',
-        CEP: '01310-100',
-
-        // Dados do boleto (do banco de dados)
-        NUM_TITULO: boleto.numero_documento,
-        EMISSAO: boleto.data_emissao,
-        VENCIMENTO: boleto.data_vencimento,
-        VALOR: boleto.valor,
-        NOSSO_NUMERO: boleto.nosso_numero,
-
-        // Dados do sacado (do banco de dados)
-        SACADO_NOME: boleto.sacado_nome,
-        SACADO_CIC: boleto.sacado_cic,
-        SACADO_ENDERECO: boleto.sacado_endereco,
-        SACADO_CEP: boleto.sacado_cep,
-      }
-
-      console.log('[PDF] Chamando generateSingleBoletoPDF...')
-      const pdfBlob = await generateSingleBoletoPDF(boletoData)
+      // generateSingleBoletoPDF agora usa diretamente o registro capt_boletos (snake_case)
+      // e contaData (CONTAS) passado como prop
+      const pdfBlob = await generateSingleBoletoPDF(boleto, contaData)
       console.log('[PDF] PDF gerado, tamanho:', pdfBlob?.size, 'bytes')
 
       // Criar link para download
@@ -230,7 +205,7 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
 
   if (boletos.length === 0) {
     return (
-      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-8 text-center">
+      <div className="p-8 text-center">
         <p className="text-[#a3a3a3] text-sm font-medium">Nenhum boleto emitido ainda</p>
         <p className="text-[#666666] text-xs mt-2">Clique em "Emitir boleto" para começar</p>
       </div>
@@ -238,9 +213,9 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
   }
 
   return (
-    <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg overflow-hidden">
-      <div className="overflow-x-auto">
-        {/* Header */}
+    <div className="min-w-max w-full">
+      {/* Header — sticky dentro do container overflow-auto do pai */}
+      <div className="sticky top-0 z-10">
         <div className="flex items-center gap-4 bg-[#111111] border-b border-[#1f1f1f] px-4 py-3">
           <input
             type="checkbox"
@@ -260,9 +235,10 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
             <div style={{ flex: '0.5' }} className="text-center">Ações</div>
           </div>
         </div>
+      </div>{/* fim sticky */}
 
-        {/* Rows */}
-        <div className="divide-y divide-[#1f1f1f]">
+      {/* Rows */}
+      <div className="divide-y divide-[#1f1f1f]">
           {sortedBoletos.map((boleto, index) => (
             <div
               key={index}
@@ -349,7 +325,6 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
             </div>
           ))}
         </div>
-      </div>
     </div>
   )
 }

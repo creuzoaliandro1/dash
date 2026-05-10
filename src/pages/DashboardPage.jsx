@@ -127,7 +127,7 @@ export default function DashboardPage() {
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-semibold text-white">Visão geral</h1>

@@ -619,12 +619,12 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
   }
 }
 
-// Buscar dados da conta para gerar CNAB400 (campos necessarios: nome_correntista, cedente, cnab400, etc.)
+// Buscar dados completos da conta (incluindo logo, email, tipo)
 export const getContaInfo = async (contaId) => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista, conta_corrente, convenio, cpf_cnpj, cedente, cnab400')
+            .select('id, nome_correntista, conta_corrente, convenio, cpf_cnpj, cedente, cnab400, email, logo, tipo')
             .eq('id', contaId)
             .single()
 
@@ -633,6 +633,22 @@ export const getContaInfo = async (contaId) => {
     } catch (err) {
           console.error('Erro ao buscar conta:', err)
           return { data: null, error: err }
+    }
+}
+
+// Buscar todas as contas (usado pelo combobox de troca de perfil para usuarios tipo M)
+export const getAllContas = async () => {
+    try {
+          const { data, error } = await supabase
+            .from('CONTAS')
+            .select('id, nome_correntista')
+            .order('nome_correntista', { ascending: true })
+
+      if (error) throw error
+          return { data: data || [], error: null }
+    } catch (err) {
+          console.error('Erro ao buscar contas:', err)
+          return { data: [], error: err }
     }
 }
 

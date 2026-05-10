@@ -646,7 +646,7 @@ export default function EfactorPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
