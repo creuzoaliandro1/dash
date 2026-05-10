@@ -115,7 +115,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError }) {
           </div>
           <h3 className="text-white font-semibold text-lg mb-2">Importar boletos em lote</h3>
           <p className="text-[#a3a3a3] text-sm mb-4">
-            Arraste arquivos ou clique para selecionar • Excel (.xlsx, .xls), CSV (.csv), TXT (.txt) ou nota fiscal XML (NFe, NFSe, CTe, MDFe) • vários ao mesmo tempo
+            Arraste Excel (.xlsx, .xls), CSV (.csv), TXT (.txt) ou nota fiscal XML (NFe, NFSe, CTe, MDFe) • vários ao mesmo tempo
           </p>
 
           <label className="inline-block">
