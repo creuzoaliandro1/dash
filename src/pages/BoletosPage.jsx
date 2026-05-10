@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate } from '../services/boletoService'
+import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, getContaInfo, incrementContaCnab400 } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
@@ -189,7 +189,16 @@ export default function BoletosPage() {
 
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
-      const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa)
+      // Buscar dados da conta para gerar CNAB400 com informacoes corretas
+            const { data: contaData } = await getContaInfo(user.id)
+                    const nextSeq = contaData ? (Number(contaData.cnab400 || 0) + 1) : 1
+                      
+            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaData, nextSeq)
+
+            // Incrementar contador da remessa na conta
+            if (contaData) {
+                      await incrementContaCnab400(user.id, nextSeq)
+            }
 
       // Generate filename: CB[DDMM][SSSSSSS].REM
       const now = new Date()
