@@ -1,0 +1,12 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[user]
+	email = creuzoaliandro@gmail.com
+	name = Lio
+
+[remote "origin"]
+	url = https://github.com/creuzoaliandro/dash.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
