@@ -1,14 +1,17 @@
 import { supabase } from '../lib/supabase'
 
-// Calcula DV do nosso numero - algoritmo BMP (modulo 11, pesos 2..9 ciclicos da direita)
+// Calcula DV do nosso numero - algoritmo BMP274 CNAB400
+// Pesos [2,3,4,5,6,7,8,9,2,3,4], esquerda para direita sobre os 11 digitos da base.
+// Se resto < 2: DV = 0. Senao: DV = 11 - resto.
 const calcNossoNumeroDV = (nossoBase) => {
-  const digits = String(nossoBase).padStart(11, '0').split('').reverse()
-  const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3]
-  let sum = 0
-  digits.forEach((d, i) => { sum += parseInt(d) * weights[i % weights.length] })
-  const rem = sum % 11
-  if (rem === 0 || rem === 1) return '0'
-  return String(11 - rem)
+  const base  = String(nossoBase || '').replace(/\D/g, '').padStart(11, '0').slice(0, 11)
+  const pesos = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4]
+  let soma = 0
+  for (let i = 0; i < 11; i++) {
+    soma += parseInt(base.charAt(i), 10) * pesos[i]
+  }
+  const resto = soma % 11
+  return resto < 2 ? '0' : String(11 - resto)
 }
 
 // Função auxiliar para converter data DD/MM/YYYY para YYYY-MM-DD
@@ -100,20 +103,36 @@ export const getNextNossoNumero = async (contaId) => {
   }
 }
 
+// Garante que um nosso_numero tenha o DV correto anexado.
+// Trata o valor recebido como BASE (sem DV) e calcula + anexa o DV.
+const appendDV = (nossoNumeroBase) => {
+  const base = String(nossoNumeroBase || '').replace(/\D/g, '')
+  if (!base) return ''
+  const basePad = base.padStart(11, '0').slice(0, 11)
+  const dv = calcNossoNumeroDV(basePad)
+  return base + dv
+}
+
 // Criar novo boleto
 export const createBoleto = async (contaId, boletoData) => {
   try {
-    // Se nosso_numero nao foi fornecido (boleto novo, NFe, NFSe, etc.),
-    // gerar a partir de CONTAS.nnumero e calcular DV pelo padrao BMP
-    let nossoNumeroFinal = boletoData.NOSSO_NUMERO || ''
-    if (!nossoNumeroFinal) {
+    let nossoNumeroFinal
+
+    if (boletoData.NOSSO_NUMERO) {
+      // Importação: nosso_numero já existe (registrado no BMP).
+      // Trata o valor como BASE e garante que o DV seja calculado e anexado.
+      nossoNumeroFinal = appendDV(boletoData.NOSSO_NUMERO)
+      console.log('[BoletoService] nosso_numero (import + DV):', nossoNumeroFinal)
+    } else {
+      // Novo boleto via formulário: gera do contador CONTAS.nnumero.
       const { nossoNumero: gerado, error: nnErr } = await getNextNossoNumero(contaId)
-      if (nnErr) {
-        console.error('[BoletoService] Erro ao gerar nosso_numero:', nnErr)
-      } else {
-        nossoNumeroFinal = gerado || ''
-        console.log('[BoletoService] nosso_numero gerado automaticamente:', nossoNumeroFinal)
+      if (nnErr || !gerado) {
+        const msg = nnErr?.message || 'erro desconhecido'
+        console.error('[BoletoService] Erro ao gerar nosso_numero:', msg)
+        throw new Error('Falha ao gerar nosso número da conta: ' + msg)
       }
+      nossoNumeroFinal = gerado
+      console.log('[BoletoService] nosso_numero gerado:', nossoNumeroFinal)
     }
 
     // Mapear dados para as colunas corretas da tabela capt_boletos

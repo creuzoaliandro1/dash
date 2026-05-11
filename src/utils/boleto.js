@@ -111,19 +111,18 @@ const padRight = (text, size, char = ' ') => {
     return s.padEnd(size, char)
 }
 
-// Calcula digito verificador do Nosso Numero - algoritmo BMP
+// Calcula digito verificador do Nosso Numero - algoritmo BMP274 (CNAB400)
+// Pesos [2,3,4,5,6,7,8,9,2,3,4], esquerda para direita sobre os 11 digitos da base.
+// Se resto < 2: DV = 0. Senao: DV = 11 - resto.
 export const calcNNDV = (nossoNumero) => {
-    const nn = cleanNum(nossoNumero)
-    if (!nn) return '0'
-    const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3]
-    let sum = 0
-    const digits = nn.split('').reverse()
-    digits.forEach((d, i) => {
-          sum += parseInt(d) * (weights[i % weights.length])
-    })
-    const remainder = sum % 11
-    if (remainder === 0 || remainder === 1) return '0'
-    return String(11 - remainder)
+    const base = String(nossoNumero || '').replace(/\D/g, '').padStart(11, '0').slice(0, 11)
+    const pesos = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4]
+    let soma = 0
+    for (let i = 0; i < 11; i++) {
+        soma += parseInt(base.charAt(i), 10) * pesos[i]
+    }
+    const resto = soma % 11
+    return resto < 2 ? '0' : String(11 - resto)
 }
 
 // Determina tipo pessoa pelo CIC: '01' CPF (11 dig), '02' CNPJ (14 dig)
