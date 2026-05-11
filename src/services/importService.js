@@ -58,6 +58,7 @@ function processExcelFile(file, resolve, reject) {
           SACADO_EMAIL: String(row['Email do pagador'] || '').trim(),
           CODIGO_BARRAS: String(row['Linha digitável'] || '').trim(),
           AVALISTA_NOME: String(row['Beneficiário final (sacador avalista)'] || '').trim(),
+          AVALISTA_CIC: String(row['Documento federal do avalista'] || row['CPF/CNPJ do avalista'] || row['CIC do avalista'] || '').replace(/\D/g, ''),
           VALOR_PAGAMENTO: parseFloat(String(row['Valor pago'] || '0').replace(/[^\d,.-]/g, '').replace(',', '.')),
           DATA_PAGAMENTO: formatarData(row['Data de pagamento']),
           DESCRICAO: String(row['Descrição'] || row['Descricao'] || '').trim(),

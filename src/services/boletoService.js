@@ -1,5 +1,16 @@
 import { supabase } from '../lib/supabase'
 
+// Calcula DV do nosso numero - algoritmo BMP (modulo 11, pesos 2..9 ciclicos da direita)
+const calcNossoNumeroDV = (nossoBase) => {
+  const digits = String(nossoBase).padStart(11, '0').split('').reverse()
+  const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3]
+  let sum = 0
+  digits.forEach((d, i) => { sum += parseInt(d) * weights[i % weights.length] })
+  const rem = sum % 11
+  if (rem === 0 || rem === 1) return '0'
+  return String(11 - rem)
+}
+
 // Função auxiliar para converter data DD/MM/YYYY para YYYY-MM-DD
 const convertDateToPG = (dateStr) => {
   if (!dateStr) return new Date().toISOString().split('T')[0]
@@ -31,7 +42,7 @@ export const getBoletos = async (contaId) => {
 
       const { data, error } = await supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic')
         .eq('conta_id', contaId)
         .order('created_at', { ascending: false })
         .range(start, end)
@@ -55,9 +66,56 @@ export const getBoletos = async (contaId) => {
   }
 }
 
+// Buscar proximo nosso_numero da conta, calcular DV e incrementar CONTAS.nnumero
+// Retorna string no formato: String(nnumero) + DV  (ex: nnumero=50007, DV=2 → "500072")
+// No CNAB: base = tudo exceto ultimo char, padded a 11; pos82 = ultimo char (DV)
+export const getNextNossoNumero = async (contaId) => {
+  try {
+    const { data: conta, error } = await supabase
+      .from('CONTAS')
+      .select('nnumero, nnumero_dv')
+      .eq('id', contaId)
+      .single()
+
+    if (error) throw error
+
+    const base    = Number(conta.nnumero || 1)
+    const basePad = String(base).padStart(11, '0')    // padded apenas para calculo do DV
+    const dv      = calcNossoNumeroDV(basePad)         // calcula DV pelo padrao BMP
+
+    // Incrementa nnumero e pre-calcula o DV do proximo para cache em nnumero_dv
+    const nextBase = base + 1
+    const nextDv   = calcNossoNumeroDV(String(nextBase).padStart(11, '0'))
+    await supabase
+      .from('CONTAS')
+      .update({ nnumero: nextBase, nnumero_dv: nextDv })
+      .eq('id', contaId)
+
+    // Armazena como String(base)+DV — sem padding, ex: "500072"
+    // CNAB usa: base = slice(0,-1) padded a 11; DV = slice(-1)
+    return { nossoNumero: String(base) + dv, error: null }
+  } catch (err) {
+    console.error('Erro ao gerar nosso numero:', err)
+    return { nossoNumero: null, error: err }
+  }
+}
+
 // Criar novo boleto
 export const createBoleto = async (contaId, boletoData) => {
   try {
+    // Se nosso_numero nao foi fornecido (boleto novo, NFe, NFSe, etc.),
+    // gerar a partir de CONTAS.nnumero e calcular DV pelo padrao BMP
+    let nossoNumeroFinal = boletoData.NOSSO_NUMERO || ''
+    if (!nossoNumeroFinal) {
+      const { nossoNumero: gerado, error: nnErr } = await getNextNossoNumero(contaId)
+      if (nnErr) {
+        console.error('[BoletoService] Erro ao gerar nosso_numero:', nnErr)
+      } else {
+        nossoNumeroFinal = gerado || ''
+        console.log('[BoletoService] nosso_numero gerado automaticamente:', nossoNumeroFinal)
+      }
+    }
+
     // Mapear dados para as colunas corretas da tabela capt_boletos
     const dataToInsert = {
       conta_id: contaId,
@@ -66,7 +124,7 @@ export const createBoleto = async (contaId, boletoData) => {
       data_emissao: convertDateToPG(boletoData.EMISSAO || boletoData.DATA_EMISSAO),
       data_vencimento: convertDateToPG(boletoData.VENCIMENTO || boletoData.DATA_VENCIMENTO),
       valor: parseFloat(boletoData.VALOR || 0),
-      nosso_numero: boletoData.NOSSO_NUMERO || '',
+      nosso_numero: nossoNumeroFinal,
       status: boletoData.STATUS || 'pendente',
       situacao: boletoData.SITUACAO || 'Registrado',
       sacado_cic: boletoData.SACADO_CIC || '',
@@ -79,6 +137,7 @@ export const createBoleto = async (contaId, boletoData) => {
       sacado_email: boletoData.SACADO_EMAIL || '',
       codigo_barras: boletoData.CODIGO_BARRAS || '',
       avalista_nome: boletoData.AVALISTA_NOME || '',
+      avalista_cic:  boletoData.AVALISTA_CIC  || '',
       valor_pagamento: parseFloat(boletoData.VALOR_PAGAMENTO || 0),
       data_pagamento: boletoData.DATA_PAGAMENTO ? convertDateToPG(boletoData.DATA_PAGAMENTO) : null,
       descricao: boletoData.DESCRICAO || '',
@@ -649,6 +708,23 @@ export const getAllContas = async () => {
     } catch (err) {
           console.error('Erro ao buscar contas:', err)
           return { data: [], error: err }
+    }
+}
+
+// Contar quantas remessas ja foram geradas para uma conta (pelo cedente)
+// Usado como fallback quando cnab400 esta corrompido/nulo
+export const getContaRemessaCount = async (cedente) => {
+    try {
+        if (!cedente) return { count: 0, error: null }
+        const { count, error } = await supabase
+            .from('REMESSAS')
+            .select('*', { count: 'exact', head: true })
+            .eq('CONTA', cedente)
+        if (error) throw error
+        return { count: count || 0, error: null }
+    } catch (err) {
+        console.error('Erro ao contar remessas:', err)
+        return { count: 0, error: err }
     }
 }
 

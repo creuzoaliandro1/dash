@@ -112,7 +112,7 @@ const padRight = (text, size, char = ' ') => {
 }
 
 // Calcula digito verificador do Nosso Numero - algoritmo BMP
-const calcNNDV = (nossoNumero) => {
+export const calcNNDV = (nossoNumero) => {
     const nn = cleanNum(nossoNumero)
     if (!nn) return '0'
     const weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3]
@@ -191,21 +191,23 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
         ? (avalistaCic.length <= 11 ? '1' : '2')
         : ' '
 
-    // --- Nosso Numero: DB guarda numero completo com DV como ultimo digito ---
+    // --- Nosso Numero: campo armazenado = String(CONTAS.nnumero) + DV ---
+    // Formato: ultimo char = DV; demais chars = base numerica (sem padding no banco).
+    // CNAB: pos 071-081 = base padded a 11 zeros; pos 082 = DV.
     const nossoCompleto = cleanNum(boleto.nosso_numero || '')
     const nossoBase     = nossoCompleto.length > 1 ? nossoCompleto.slice(0, -1) : nossoCompleto
-    const dvNN          = nossoCompleto.length > 1 ? nossoCompleto.slice(-1) : '0'
-    const nossoFmt      = padLeft(nossoBase, 11, '0')     // 11 digitos
+    const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante 11 digitos na posicao 71-81
+    const dvNN          = nossoCompleto.length > 1 ? nossoCompleto.slice(-1) : calcNNDV(nossoBaseFull)
+    const nossoFmt      = nossoBaseFull                    // 11 digitos
 
     // --- Numero do titulo (Seu Numero) ---
     const tituloNum = cleanNum(boleto.numero_documento || boleto.nosso_numero || '')
 
     // --- Dados do cedente (CONTAS) ---
-    const contaCorrente  = padLeft(cleanNum(conta?.conta_corrente || '0'), 8, '0')
+    // pos 030-037: CONTAS.conta (8 chars, zeros a esquerda) — conta corrente + DV
+    const contaField     = padLeft(cleanNum(conta?.conta || '0'), 8, '0')
     // CPF/CNPJ do cedente — pode ser usado em instrucoes ou identificacao interna
     const cpfCnpjCedente = cleanNum(conta?.cpf_cnpj || conta?.cic || '0')
-    // Convenio: numero do contrato/convenio com o banco (usado quando cedente nao estiver preenchido)
-    const convenio       = cleanNum(conta?.convenio || conta?.cedente || cpfCnpjCedente || '0')
 
     // --- Datas ---
     const dtVenc = fmtDate(boleto.data_vencimento)
@@ -224,7 +226,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
     line += '000000000000'                         // pos 008-019    - razao da conta (12 zeros)
     line += ' '                                    // pos 020        - espaco
     line += '000900001'                            // pos 021-029    - carteira + variacao
-    line += contaCorrente                          // pos 030-037    - conta corrente (8 dig)
+    line += contaField                             // pos 030-037    - CONTAS.conta (8 dig)
     line += padLeft(tituloNum, 15)                 // pos 038-052    - numero do titulo (15)
     line += '          '                           // pos 053-062    - brancos (10)
     line += '00000000'                             // pos 063-070    - zeros (8)
@@ -274,7 +276,7 @@ const buildDetalhe2 = (boleto, lineSeq) => {
         80
     )
 
-    const sBairro = padRight(cleanStr(boleto.sacado_bairro || ''), 20) // alinhado a esquerda
+    const sBairro = padLeft(cleanStr(boleto.sacado_bairro || ''), 20, ' ')  // alinhado a direita (padrao BMP)
     const sUf     = padRight(cleanStr(boleto.sacado_uf || ''), 2)
     const sCidade = padRight(cleanStr(boleto.sacado_cidade || ''), 30)
 
@@ -548,47 +550,60 @@ const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
     const numDoc        = boleto.numero_documento || ''
     const descricao     = boleto.descricao || ''
 
-    // Logo começa um pouco mais acima para alinhar melhor com o texto da empresa
-    let y = 10
+    // Logo encostado no topo; textos da empresa com recuo normal
+    const logoY  = 1    // borda superior do logo rente ao topo da pagina
+    let y        = 10   // base para textos e calculo de altura (mesma distancia anterior)
 
     // --- Layout: zona esquerda (logo + empresa) | zona direita (FATURA + data) ---
-    // Zona esquerda: M ate ~140mm / Zona direita: 145mm ate M+CW=200mm
     const LOGO_W = 36, LOGO_H = 36
-    const DADOS_X  = M + LOGO_W + 2   // empresa começa logo apos o logo (menos gap)
-    const DADOS_MAX_W = 88             // largura maxima dos dados para nao sobrepor a data
+    const DADOS_X = M + LOGO_W + 3   // empresa logo apos o logo
 
     if (benef.logoUrl) {
         const compressed = await compressImageForPDF(benef.logoUrl, 300, 0.7)
-        doc.addImage(compressed, 'JPEG', M, y, LOGO_W, LOGO_H)
+        doc.addImage(compressed, 'JPEG', M, logoY, LOGO_W, LOGO_H)
     } else {
         doc.setDrawColor(180); doc.setLineWidth(0.3)
-        doc.rect(M, y, LOGO_W, LOGO_H)
+        doc.rect(M, logoY, LOGO_W, LOGO_H)
         doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(80, 80, 80)
-        doc.text('ContaCapt', M + LOGO_W / 2, y + LOGO_H / 2 - 2, { align: 'center' })
-        doc.text('DIGITAL',   M + LOGO_W / 2, y + LOGO_H / 2 + 2, { align: 'center' })
+        doc.text('ContaCapt', M + LOGO_W / 2, logoY + LOGO_H / 2 - 2, { align: 'center' })
+        doc.text('DIGITAL',   M + LOGO_W / 2, logoY + LOGO_H / 2 + 2, { align: 'center' })
         doc.setTextColor(0, 0, 0)
     }
 
-    // Dados da empresa (beneficiario) — coluna esquerda
+    // Dados da empresa (beneficiario) — coluna esquerda, endereco em 2 linhas sem quebra
     let dadosY = y + 4
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
     doc.text(benef.nome, DADOS_X, dadosY); dadosY += 4.5
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-    if (benef.cpfCnpj)         { doc.text(`CNPJ/CPF: ${benef.cpfCnpj}`, DADOS_X, dadosY); dadosY += 3.8 }
-    // Endereco da empresa em uma linha (maxWidth limita area para nao sobrepor data)
-    if (benef.enderecoCompleto) {
-        doc.text(benef.enderecoCompleto, DADOS_X, dadosY, { maxWidth: DADOS_MAX_W }); dadosY += 3.8
-    }
-    if (benef.telefone)        { doc.text(`Tel: ${benef.telefone}`, DADOS_X, dadosY); dadosY += 3.8 }
-    if (benef.email)           { doc.text(benef.email, DADOS_X, dadosY); dadosY += 3.8 }
+    if (benef.cpfCnpj) { doc.text(`CNPJ/CPF: ${benef.cpfCnpj}`, DADOS_X, dadosY); dadosY += 3.8 }
 
-    // FATURA + data de emissao — coluna direita
+    // Linha 1 do endereco: logradouro + numero (sem quebra)
+    const endL1Parts = []
+    if (benef.logradouro) endL1Parts.push(benef.numero ? `${benef.logradouro}, ${benef.numero}` : benef.logradouro)
+    if (benef.complemento) endL1Parts.push(benef.complemento)
+    const endL1 = endL1Parts.join(' - ')
+    if (endL1) { doc.text(endL1, DADOS_X, dadosY); dadosY += 3.8 }
+
+    // Linha 2 do endereco: bairro, cidade - UF, CEP (sem quebra)
+    const endL2Parts = []
+    if (benef.bairro) endL2Parts.push(benef.bairro)
+    const cidUfBenef = [benef.cidade, benef.uf].filter(Boolean).join(' - ')
+    if (cidUfBenef) endL2Parts.push(cidUfBenef)
+    if (benef.cep) endL2Parts.push(`CEP: ${benef.cep}`)
+    const endL2 = endL2Parts.join(', ')
+    if (endL2) { doc.text(endL2, DADOS_X, dadosY); dadosY += 3.8 }
+
+    if (benef.telefone) { doc.text(`Tel: ${benef.telefone}`, DADOS_X, dadosY); dadosY += 3.8 }
+    if (benef.email)    { doc.text(benef.email, DADOS_X, dadosY); dadosY += 3.8 }
+
+    // FATURA + data de emissao — coluna direita, alinhada com base dos textos
     doc.setFontSize(14); doc.setFont('helvetica', 'bold')
     doc.text('FATURA', M + CW, y + 6, { align: 'right' })
     doc.setFontSize(8.5); doc.setFont('helvetica', 'normal')
     doc.text(`Data de Emissão: ${formatDate(emissao)}`, M + CW, y + 12, { align: 'right' })
 
-    y += Math.max(LOGO_H, dadosY - y) + 5
+    // Linha divisoria abaixo do maior entre: logo (logoY+LOGO_H) ou bloco de texto (dadosY)
+    y = Math.max(logoY + LOGO_H, dadosY) + 5
 
     // Linha divisoria
     doc.setDrawColor(0); doc.setLineWidth(0.2)
@@ -599,21 +614,19 @@ const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
     doc.text('DADOS DO CLIENTE', M, y); y += 4.5
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
 
-    if (sacadoNome) { doc.text(sacadoNome, M, y); y += 4 }
+    if (sacadoNome) { doc.text(sacadoNome.toUpperCase(), M, y); y += 4 }
     if (sacadoCic)  { doc.text(`CPF/CNPJ: ${sacadoCic}`, M, y); y += 4 }
 
     // Endereco do sacado: logradouro + bairro numa linha; cidade + uf + cep na seguinte
     if (sacadoEnd) {
         const endBairro = sacadoBairro ? `${sacadoEnd}, ${sacadoBairro}` : sacadoEnd
-        doc.text(endBairro, M, y); y += 4
+        doc.text(endBairro.toUpperCase(), M, y); y += 4
     }
     const cidadeUfCep = [
         sacadoCidade && sacadoUf ? `${sacadoCidade} - ${sacadoUf}` : (sacadoCidade || sacadoUf),
         sacadoCep ? `CEP: ${sacadoCep}` : ''
     ].filter(Boolean).join('   ')
-    if (cidadeUfCep) { doc.text(cidadeUfCep, M, y); y += 4 }
-
-    y += 2
+    if (cidadeUfCep) { doc.text(cidadeUfCep.toUpperCase(), M, y); y += 4 }
 
     doc.setLineWidth(0.2); doc.line(M, y, M + CW, y); y += 5
 
@@ -674,7 +687,7 @@ const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
 // ============================================================
 const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     const M = 10, CW = 190
-    const ROW_H = 6.5, INST_H = 25
+    const ROW_H = 6.5, INST_H = ROW_H * 3  // 3 sub-linhas direita, mesma altura das demais
 
     const benef = extrairDadosBeneficiario(contaData)
     const nomeCorrentista = benef.nome
@@ -804,12 +817,12 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
         const msgClean = String(descricao).replace(/[\r\n]+/g, ' ').trim()
         doc.text(msgClean, M + 1, lY + 9.5, { maxWidth: leftW - 2 })
     }
-    doc.line(rightX, lY + 8,  M + CW, lY + 8)
+    doc.line(rightX, lY + ROW_H,       M + CW, lY + ROW_H)
     doc.setFontSize(6)
     doc.text('(-) Desconto / Abatimento', rightX + 1, lY + 2.5)
-    doc.line(rightX, lY + 16, M + CW, lY + 16)
-    doc.text('(-) Outras deduções',       rightX + 1, lY + 10.5)
-    doc.text('(+) Mora / Multa',          rightX + 1, lY + 18.5)
+    doc.line(rightX, lY + ROW_H * 2,   M + CW, lY + ROW_H * 2)
+    doc.text('(-) Outras deduções',       rightX + 1, lY + ROW_H + 2.5)
+    doc.text('(+) Mora / Multa',          rightX + 1, lY + ROW_H * 2 + 2.5)
     doc.line(M, lY + INST_H, M + CW, lY + INST_H); lY += INST_H
 
     // Pagador
@@ -817,18 +830,18 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     doc.setFontSize(6)
     doc.text('Pagador', M + 1, lY + 2.5)
     doc.text('(+) Outros acréscimos', rightX + 1, lY + 2.5)
-    doc.line(rightX, lY + 8, M + CW, lY + 8)
-    doc.text('(=) Valor Cobrado', rightX + 1, lY + 10.5)
+    doc.line(rightX, lY + ROW_H,     M + CW, lY + ROW_H)
+    doc.text('(=) Valor Cobrado',     rightX + 1, lY + ROW_H + 2.5)
 
     let pY = lY + 6
     doc.setFontSize(8); doc.setFont('helvetica', 'bold')
-    if (sacadoNome) { doc.text(sacadoNome, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
+    if (sacadoNome) { doc.text(sacadoNome.toUpperCase(), M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
     doc.setFont('helvetica', 'normal')
     if (sacadoCic)  { doc.text(`CPF/CNPJ: ${sacadoCic}`, M + 1, pY); pY += 4 }
 
     // Endereco + bairro na mesma linha
     const sacEndBairro = [boleto.sacado_endereco, boleto.sacado_bairro].filter(Boolean).join(', ')
-    if (sacEndBairro) { doc.text(sacEndBairro, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
+    if (sacEndBairro) { doc.text(sacEndBairro.toUpperCase(), M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
 
     // Cidade - UF + CEP na linha seguinte
     const sacCidade = boleto.sacado_cidade || ''
@@ -837,7 +850,7 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
         sacCidade && sacUf ? `${sacCidade} - ${sacUf}` : (sacCidade || sacUf),
         sacadoCep ? `CEP: ${sacadoCep}` : ''
     ].filter(Boolean).join('   ')
-    if (cidUfCep) { doc.text(cidUfCep, M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
+    if (cidUfCep) { doc.text(cidUfCep.toUpperCase(), M + 1, pY, { maxWidth: pagadorAvailW }); pY += 4 }
 
     lY = Math.max(lY + 20, pY + 2)
 
@@ -886,7 +899,7 @@ const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
 //               conta_corrente, cedente, email, logo?)
 // ============================================================
 
-const BOLETO_START_Y = 190 // Posicao Y da linha de corte (mm)
+const BOLETO_START_Y = 183 // Posicao Y da ficha de compensacao (mm); A4=297mm, ficha ~110mm
 
 export const generateSingleBoletoPDF = async (boleto, contaData) => {
     try {

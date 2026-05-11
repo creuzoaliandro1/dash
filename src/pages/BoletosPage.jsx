@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, getContaInfo, incrementContaCnab400 } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
@@ -89,8 +89,34 @@ export default function BoletosPage() {
     console.log('[BoletosPage] handleSave para conta:', activeId)
 
     if (editingBoleto) {
-      // Atualizar
-      // await updateBoleto(editingBoleto.ID, formData)
+      // Mapear chaves UPPERCASE do formulário para snake_case do banco
+      const updates = {
+        numero_documento:  formData.NUM_TITULO     || '',
+        data_emissao:      formData.EMISSAO        || null,
+        data_vencimento:   formData.VENCIMENTO     || null,
+        valor:             parseFloat(formData.VALOR) || 0,
+        nosso_numero:      formData.NOSSO_NUMERO   || '',
+        sacado_nome:       formData.SACADO_NOME    || '',
+        sacado_cic:        formData.SACADO_CIC     || '',
+        sacado_cep:        formData.SACADO_CEP     || '',
+        sacado_endereco:   formData.SACADO_ENDERECO|| '',
+        sacado_bairro:     formData.SACADO_BAIRRO  || '',
+        sacado_cidade:     formData.SACADO_CIDADE  || '',
+        sacado_uf:         formData.SACADO_UF      || '',
+        avalista_nome:     formData.AVALISTA        || '',
+        avalista_cic:      formData.AVALISTA_CIC   || '',
+        descricao:         formData.DESCRICAO      || '',
+        status:            formData.STATUS         || 'pendente',
+        situacao:          formData.SITUACAO       || '',
+        valor_pagamento:   parseFloat(formData.VALOR_PAGO) || 0,
+        data_pagamento:    formData.DATA_PAGO      || null,
+      }
+      const { error } = await updateBoleto(editingBoleto.id, updates)
+      if (error) {
+        alert('Erro ao atualizar boleto: ' + error.message)
+        setLoading(false)
+        return
+      }
     } else {
       // Criar novo
       const { error } = await createBoleto(activeId, formData)
@@ -101,7 +127,7 @@ export default function BoletosPage() {
       }
     }
     setShowModal(false)
-    await loadBoletos()  // aguardar para garantir que a tabela atualiza
+    await loadBoletos()
     setLoading(false)
   }
 
@@ -224,7 +250,19 @@ export default function BoletosPage() {
       // Usar contaData ja carregado (ou recarregar se necessario)
             const activeId = getActiveContaId()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
-            const nextSeq = contaParaRemessa ? (Number(contaParaRemessa.cnab400 || 0) + 1) : 1
+
+            // nextSeq: usa o contador cnab400 se for numero valido (>= 1);
+            // se estiver corrompido (null, string de filename, NaN), conta as remessas ja geradas
+            const cnab400Raw = contaParaRemessa?.cnab400
+            const cnab400Num = Number(cnab400Raw)
+            let nextSeq
+            if (!isNaN(cnab400Num) && cnab400Num >= 1) {
+                nextSeq = cnab400Num + 1
+            } else {
+                const { count } = await getContaRemessaCount(contaParaRemessa?.cedente || '')
+                nextSeq = count + 1
+                console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
+            }
 
             const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq)
 
@@ -233,11 +271,11 @@ export default function BoletosPage() {
                       await incrementContaCnab400(activeId, nextSeq)
             }
 
-      // Generate filename: CB[DDMM][SSSSSSS].REM
+      // Nome do arquivo: CB[DD][MM][SSSSSSS].REM  (padrao BMP274 - ex: CB11050000001.REM)
       const now = new Date()
       const day = String(now.getDate()).padStart(2, '0')
       const month = String(now.getMonth() + 1).padStart(2, '0')
-      const sequence = String(Math.floor(Math.random() * 9999999)).padStart(7, '0')
+      const sequence = String(nextSeq).padStart(7, '0')
       const filename = `CB${day}${month}${sequence}.REM`
 
       // Download the file
@@ -257,7 +295,7 @@ export default function BoletosPage() {
         filename,
         quantidadeBoletos: boletosParaRemessa.length,
         valorTotal,
-        conta: contaParaRemessa?.conta_corrente || '',
+        conta: contaParaRemessa?.cedente || '',
         agencia: contaParaRemessa?.agencia || '',
       })
 
@@ -266,14 +304,10 @@ export default function BoletosPage() {
         // Continue anyway - file was generated
       }
 
-      // Update conta's remittance filename
-      const { error: contaError } = await updateContaLastRemessaDate(activeId, filename)
-      if (contaError) {
-        console.error('[CNAB400] Erro ao atualizar data da conta:', contaError)
-      }
-
       alert(`Remessa CNAB400 "${filename}" gerada com sucesso!`)
       setSelectedRows(new Set())
+      await loadContaData()
+      await loadBoletos()
     } catch (error) {
       console.error('[CNAB400] Erro ao gerar remessa:', error)
       alert('Erro ao gerar remessa CNAB400: ' + error.message)

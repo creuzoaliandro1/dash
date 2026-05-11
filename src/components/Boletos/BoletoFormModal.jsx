@@ -1,29 +1,45 @@
 import { useState } from 'react'
 
+// Converte registro snake_case do banco para chaves UPPERCASE do formulário
+const boletoToFormData = (b) => ({
+  EMISSAO:        b.data_emissao     || '',
+  NUM_TITULO:     b.numero_documento || '',
+  VENCIMENTO:     b.data_vencimento  || '',
+  VALOR:          b.valor            ?? '',
+  NOSSO_NUMERO:   b.nosso_numero     || '',
+  SACADO_NOME:    b.sacado_nome      || '',
+  SACADO_CIC:     b.sacado_cic       || '',
+  SACADO_CEP:     b.sacado_cep       || '',
+  SACADO_ENDERECO:b.sacado_endereco  || '',
+  SACADO_BAIRRO:  b.sacado_bairro    || '',
+  SACADO_NUMERO:  '',
+  SACADO_CIDADE:  b.sacado_cidade    || '',
+  SACADO_UF:      b.sacado_uf        || '',
+  AVALISTA:       b.avalista_nome    || '',
+  AVALISTA_CIC:   b.avalista_cic     || '',
+  JUROS_VALOR:    '',
+  DESCONTO_VALOR: '',
+  DESCONTO_DATA:  '',
+  VALOR_PAGO:     b.valor_pagamento  ?? '',
+  DATA_PAGO:      b.data_pagamento   || '',
+  DESCRICAO:      b.descricao        || '',
+  STATUS:         b.status           || 'pendente',
+  SITUACAO:       b.situacao         || '',
+})
+
+const emptyFormData = {
+  EMISSAO: '', NUM_TITULO: '', VENCIMENTO: '', VALOR: '', NOSSO_NUMERO: '',
+  SACADO_NOME: '', SACADO_CIC: '', SACADO_CEP: '', SACADO_ENDERECO: '',
+  SACADO_BAIRRO: '', SACADO_NUMERO: '', SACADO_CIDADE: '', SACADO_UF: '',
+  AVALISTA: '', AVALISTA_CIC: '', JUROS_VALOR: '', DESCONTO_VALOR: '',
+  DESCONTO_DATA: '', VALOR_PAGO: '', DATA_PAGO: '', DESCRICAO: '',
+  STATUS: 'pendente', SITUACAO: '',
+}
+
 export default function BoletoFormModal({ boleto, onSave, onClose }) {
-  const [formData, setFormData] = useState(boleto || {
-    EMISSAO: '',
-    NUM_TITULO: '',
-    VENCIMENTO: '',
-    VALOR: '',
-    NOSSO_NUMERO: '',
-    SACADO_NOME: '',
-    SACADO_CIC: '',
-    SACADO_CEP: '',
-    SACADO_ENDERECO: '',
-    SACADO_NUMERO: '',
-    SACADO_CIDADE: '',
-    SACADO_UF: '',
-    AVALISTA: '',
-    JUROS_VALOR: '',
-    DESCONTO_VALOR: '',
-    DESCONTO_DATA: '',
-    VALOR_PAGO: '',
-    DATA_PAGO: '',
-    DESCRICAO: '',
-    STATUS: 'pendente',
-    SITUACAO: '',
-  })
+  const [formData, setFormData] = useState(
+    boleto ? boletoToFormData(boleto) : emptyFormData
+  )
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -185,16 +201,29 @@ export default function BoletoFormModal({ boleto, onSave, onClose }) {
                   />
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">ENDEREÇO</label>
-                <input
-                  type="text"
-                  name="SACADO_ENDERECO"
-                  value={formData.SACADO_ENDERECO}
-                  onChange={handleChange}
-                  placeholder="Rua..."
-                  className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
-                />
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">ENDEREÇO</label>
+                  <input
+                    type="text"
+                    name="SACADO_ENDERECO"
+                    value={formData.SACADO_ENDERECO}
+                    onChange={handleChange}
+                    placeholder="Rua..."
+                    className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">BAIRRO</label>
+                  <input
+                    type="text"
+                    name="SACADO_BAIRRO"
+                    value={formData.SACADO_BAIRRO}
+                    onChange={handleChange}
+                    placeholder="Centro"
+                    className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-4 gap-4">
                 <div>
@@ -238,14 +267,30 @@ export default function BoletoFormModal({ boleto, onSave, onClose }) {
           {/* Seção: Avalista */}
           <div>
             <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Avalista</h3>
-            <input
-              type="text"
-              name="AVALISTA"
-              value={formData.AVALISTA}
-              onChange={handleChange}
-              placeholder="Nome do avalista"
-              className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">NOME</label>
+                <input
+                  type="text"
+                  name="AVALISTA"
+                  value={formData.AVALISTA}
+                  onChange={handleChange}
+                  placeholder="Nome do avalista"
+                  className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">CIC / CNPJ</label>
+                <input
+                  type="text"
+                  name="AVALISTA_CIC"
+                  value={formData.AVALISTA_CIC}
+                  onChange={handleChange}
+                  placeholder="CPF ou CNPJ"
+                  className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Seção: Descontos e Abatimentos */}
