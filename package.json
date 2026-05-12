@@ -14,13 +14,16 @@
     "chart.js": "^4.4.1",
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
+    "jsbarcode": "^3.11.5",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.5.31",
-    "jsbarcode": "^3.11.5",
     "jszip": "^3.10.1",
+    "multer": "^2.1.1",
+    "pg": "^8.20.0",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.2.0",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",

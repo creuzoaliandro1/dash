@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
@@ -23,6 +23,21 @@ export default function BoletosPage() {
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [contaData, setContaData] = useState(null)
+
+  // Obter tipo de usuário e conta selecionada
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const userType = user.tipo || 'U'
+  const selectedContaId = localStorage.getItem('activeContaId') || user.id
+  const [allContas, setAllContas] = useState([])
+
+  // Carregar contas se for Master
+  useEffect(() => {
+    if (userType === 'M') {
+      getAllContas().then(({ data }) => {
+        if (data) setAllContas(data)
+      }).catch(err => console.error('[BoletosPage] Erro ao carregar contas:', err))
+    }
+  }, [userType])
 
   // Lê o ID ativo sempre do localStorage (sem stale closure)
   // Priorita activeContaId (usado quando tipo M troca de perfil), fallback para user.id
@@ -353,6 +368,8 @@ export default function BoletosPage() {
         userId={getActiveContaId()}
         onShowPreview={handleShowPreview}
         onImportError={handleImportError}
+        userType={userType}
+        selectedContaId={selectedContaId}
       />
 
       {/* Search and Filter */}
@@ -436,6 +453,8 @@ export default function BoletosPage() {
           userId={getActiveContaId()}
           onImportComplete={handleImportPreviewComplete}
           onCancel={handleCancelPreview}
+          userType={userType}
+          allContas={allContas}
         />
       )}
 

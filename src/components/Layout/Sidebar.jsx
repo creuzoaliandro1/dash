@@ -152,6 +152,16 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
           {expandedMenu === 'importar' && (
             <div className="pl-4 flex flex-col gap-1">
               <button
+                onClick={() => setCurrentPage('conta-capt')}
+                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                  currentPage === 'conta-capt'
+                    ? 'bg-[#1a1a1a] text-white'
+                    : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                }`}
+              >
+                Conta Capt
+              </button>
+              <button
                 onClick={() => setCurrentPage('efactor')}
                 className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
                   currentPage === 'efactor'

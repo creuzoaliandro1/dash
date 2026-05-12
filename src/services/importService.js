@@ -716,3 +716,134 @@ export async function importBoletos(files, userId) {
     results,
   }
 }
+
+/**
+ * Extrair código da conta do código de barras
+ * Pega as posições 24-30 do código de barras e remove o último dígito
+ */
+function extractContaFromBarcode(codigo_barras) {
+  if (!codigo_barras || codigo_barras.length < 30) return null
+  // Posições 24-30 em string (1-based) = índices 23-30 (0-based)
+  const codigoCompleto = codigo_barras.substring(23, 30) // 7 caracteres
+  const codigoSemDigito = codigoCompleto.substring(0, 6) // Remove último dígito = 6 caracteres
+  return codigoSemDigito
+}
+
+/**
+ * Processar arquivo Excel para página de boletos com validação de conta
+ * Se é Master: mostra todos os registros agrupados por conta
+ * Se não é Master: mostra apenas registros da conta selecionada
+ */
+export async function processContaCaptFileForBoletos(file, userType, selectedContaId) {
+  return new Promise((resolve, reject) => {
+    if (!window.XLSX) {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/xlsx/dist/xlsx.full.min.js'
+      document.head.appendChild(script)
+
+      script.onload = () => {
+        processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
+      }
+      script.onerror = () => {
+        reject(new Error('Erro ao carregar biblioteca Excel'))
+      }
+    } else {
+      processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
+    }
+  })
+}
+
+function processContaCaptExcel(file, userType, selectedContaId, resolve, reject) {
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result)
+      const workbook = window.XLSX.read(data, { type: 'array' })
+      const sheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[sheetName]
+      const jsonData = window.XLSX.utils.sheet_to_json(worksheet)
+
+      console.log(`[ContaCapt] Encontrado ${jsonData.length} linhas`)
+
+      // Processar cada linha
+      const processados = jsonData.map(row => {
+        const codigoBarras = String(row['Linha digitável'] || '').trim()
+        const contaCodigo = extractContaFromBarcode(codigoBarras)
+
+        return {
+          NUM_TITULO: String(row['Seu número'] || row['Número do documento'] || '').trim(),
+          SACADO_NOME: String(row['Nome do pagador'] || '').trim(),
+          SACADO_CIC: String(row['Documento federal do pagador'] || '').replace(/\D/g, ''),
+          EMISSAO: formatarData(row['Data de emissão']),
+          VENCIMENTO: formatarData(row['Data de vencimento']),
+          VALOR: parseFloat(String(row['Valor do título'] || '0').replace(/[^\d,.-]/g, '').replace(',', '.')),
+          NOSSO_NUMERO: String(row['Nosso número'] || '').trim(),
+          STATUS: mapStatus(String(row['Status do boleto'] || '')),
+          SACADO_ENDERECO: String(row['Logradouro do pagador'] || '').trim(),
+          SACADO_BAIRRO: String(row['Bairro do pagador'] || '').trim(),
+          SACADO_CIDADE: String(row['Cidade do pagador'] || '').trim(),
+          SACADO_UF: String(row['UF do pagador'] || '').substring(0, 2).toUpperCase(),
+          SACADO_CEP: String(row['CEP do pagador'] || '').replace(/\D/g, ''),
+          SACADO_TELEFONE: String(row['Telefone do pagador'] || '').trim(),
+          SACADO_EMAIL: String(row['Email do pagador'] || '').trim(),
+          CODIGO_BARRAS: codigoBarras,
+          CONTA_CODIGO: contaCodigo,
+          AVALISTA_NOME: String(row['Beneficiário final (sacador avalista)'] || '').trim(),
+          DESCRICAO: String(row['Descrição'] || '').trim(),
+        }
+      }).filter(b => b.SACADO_NOME && b.VALOR > 0)
+
+      // Filtrar conforme tipo de usuário
+      let filtrados = processados
+
+      if (userType !== 'M') {
+        // Não é Master: filtrar apenas registros da conta selecionada
+        // Converter selectedContaId para formato de 6 dígitos com zero à esquerda
+        const contaSelecionadaFormatada = String(selectedContaId).padStart(6, '0')
+        filtrados = processados.filter(b =>
+          b.CONTA_CODIGO && b.CONTA_CODIGO === contaSelecionadaFormatada
+        )
+
+        if (filtrados.length === 0) {
+          reject(new Error(`Nenhum boleto encontrado para a conta selecionada (${selectedContaId})`))
+          return
+        }
+      } else {
+        // É Master: agrupar por conta
+        // Manter informação de qual conta cada boleto pertence
+      }
+
+      if (filtrados.length === 0) {
+        reject(new Error('Nenhum boleto válido encontrado no arquivo'))
+        return
+      }
+
+      console.log(`[ContaCapt] ${filtrados.length} boleto(s) processado(s)`)
+      resolve({
+        data: filtrados,
+        total: filtrados.length,
+        userType,
+      })
+    } catch (error) {
+      console.error('[ContaCapt] Erro:', error)
+      reject(new Error('Erro ao processar arquivo: ' + error.message))
+    }
+  }
+
+  reader.onerror = () => {
+    reject(new Error('Erro ao ler arquivo'))
+  }
+
+  reader.readAsArrayBuffer(file)
+}
+
+function mapStatus(statusExcel) {
+  if (!statusExcel) return 'pendente'
+  const status = String(statusExcel).toLowerCase().trim()
+  if (status.includes('pago')) return 'pago'
+  if (status.includes('vencer')) return 'pendente'
+  if (status.includes('atraso')) return 'atrasado'
+  if (status.includes('cancel')) return 'cancelado'
+  return 'pendente'
+}

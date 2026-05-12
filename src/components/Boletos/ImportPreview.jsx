@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import { createBoleto } from '../../services/boletoService'
+import { createBoleto, getAllContas } from '../../services/boletoService'
 import InstalmentModal from './InstalmentModal'
 
-export default function ImportPreview({ previewData, userId, onImportComplete, onCancel }) {
+export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   const [dataWithInstalments, setDataWithInstalments] = useState(
     previewData.map(item => ({
       ...item,
@@ -123,18 +123,45 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     let imported = 0
     let errors = 0
 
+    // Se é Master, usar mapa de contas para vincular boletos
+    let contaMap = {}
+    if (userType === 'M' && allContas && allContas.length > 0) {
+      // Criar mapa: codigo (6 dígitos) -> conta id
+      allContas.forEach(conta => {
+        const codigo = String(conta.cedente || conta.id).padStart(6, '0')
+        contaMap[codigo] = conta.id
+      })
+    }
+
     for (const rowId of selectedRows) {
       const [itemIdx, recordIdx] = rowId.split('-').map(Number)
       const boletoData = dataWithInstalments[itemIdx]._records[recordIdx]
 
       try {
-        const { error } = await createBoleto(userId, boletoData)
+        // Determinar qual userId usar
+        let targetUserId = userId
+
+        if (userType === 'M' && boletoData.CONTA_CODIGO) {
+          // Master: procurar a conta correta
+          const contaId = contaMap[boletoData.CONTA_CODIGO]
+          if (contaId) {
+            targetUserId = contaId
+          } else {
+            // Conta não encontrada, pular este boleto
+            console.warn(`[ImportPreview] Conta não encontrada para código: ${boletoData.CONTA_CODIGO}`)
+            errors++
+            continue
+          }
+        }
+
+        const { error } = await createBoleto(targetUserId, boletoData)
         if (error) {
           errors++
         } else {
           imported++
         }
       } catch (err) {
+        console.error('[ImportPreview] Erro ao importar boleto:', err)
         errors++
       }
     }
@@ -246,7 +273,47 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                     </div>
                   </div>
 
-                  {/* Linha 2: Endereço completo em uma linha */}
+                  {/* Linha 2: Avalista */}
+                  <div className="flex gap-3">
+                    {/* Avalista Nome */}
+                    <div
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_NOME', firstRecord.AVALISTA_NOME || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista - Nome</p>
+                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_NOME` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_NOME')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_NOME')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs truncate">{firstRecord.AVALISTA_NOME || '—'}</p>
+                      )}
+                    </div>
+                    {/* Avalista CPF/CNPJ */}
+                    <div
+                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_CIC', firstRecord.AVALISTA_CIC || '')}
+                    >
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista - CPF/CNPJ</p>
+                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_CIC` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_CIC')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_CIC')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                        />
+                      ) : (
+                        <p className="text-white text-xs font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Linha 3: Endereço completo em uma linha */}
                   <div className="flex gap-2">
                     {/* Endereço */}
                     <div

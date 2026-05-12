@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { processFilesForPreview } from '../../services/importService'
+import { processFilesForPreview, processContaCaptFileForBoletos } from '../../services/importService'
 
-export default function FileUpload({ userId, onShowPreview, onImportError }) {
+export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId }) {
   const [isDragging, setIsDragging] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
@@ -55,12 +55,33 @@ export default function FileUpload({ userId, onShowPreview, onImportError }) {
     setUploadProgress({ current: 0, total: validFiles.length })
 
     try {
-      const result = await processFilesForPreview(validFiles)
+      let result = null
+
+      // Se há apenas um arquivo .xlsx e é provavelmente do Capt Capital
+      if (validFiles.length === 1 && validFiles[0].name.endsWith('.xlsx')) {
+        const file = validFiles[0]
+        try {
+          result = await processContaCaptFileForBoletos(file, userType, selectedContaId)
+          // Converter resultado para formato compatível
+          result = {
+            data: result.data,
+            errors: [],
+            total: result.total,
+          }
+        } catch (err) {
+          // Se falhar com processamento ContaCapt, tentar processamento genérico
+          console.warn('[FileUpload] Processamento ContaCapt falhou, tentando processamento genérico:', err)
+          result = await processFilesForPreview(validFiles)
+        }
+      } else {
+        // Usar processamento genérico para múltiplos arquivos ou outros formatos
+        result = await processFilesForPreview(validFiles)
+      }
 
       // Atualizar progresso
       setUploadProgress(null)
 
-      if (result.errors.length > 0) {
+      if (result.errors && result.errors.length > 0) {
         const errorMessages = result.errors
           .map(e => `${e.fileName}: ${e.message}`)
           .join('\n')
