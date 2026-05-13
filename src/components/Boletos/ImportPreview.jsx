@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { createBoleto, getAllContas } from '../../services/boletoService'
+import { verificarCodigoBarrasExistente, gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
@@ -24,6 +25,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const [instalmentModal, setInstalmentModal] = useState(null)
   const [inlineEditingCell, setInlineEditingCell] = useState(null)
   const [inlineEditValue, setInlineEditValue] = useState('')
+  const [errosImportacao, setErrosImportacao] = useState([])
+  const [relatorioPDF, setRelatorioPDF] = useState(null)
   const inputRef = useRef(null)
 
   useEffect(() => {
@@ -122,40 +125,77 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     setIsImporting(true)
     let imported = 0
     let errors = 0
+    const erros = [] // Rastrear detalhes dos erros
 
     // Se é Master, usar mapa de contas para vincular boletos
     let contaMap = {}
+    console.log(`[ImportPreview] DEBUG: userType="${userType}", allContas=${allContas ? allContas.length : 'null'}`)
     if (userType === 'M' && allContas && allContas.length > 0) {
-      // Criar mapa: codigo (6 dígitos) -> conta id
+      console.log('[ImportPreview] Criando mapa de contas. Total:', allContas.length)
       allContas.forEach(conta => {
-        const codigo = String(conta.cedente || conta.id).padStart(6, '0')
-        contaMap[codigo] = conta.id
+        const contaValue = String(conta.conta || '').trim()
+        if (contaValue) {
+          const contaFull = contaValue.padStart(8, '0')
+          const codigo = contaFull.substring(0, 7)
+          contaMap[codigo] = conta.id
+        }
       })
     }
+
+    let linhaAtual = 2 // Começar em 2 (linha 1 é header)
 
     for (const rowId of selectedRows) {
       const [itemIdx, recordIdx] = rowId.split('-').map(Number)
       const boletoData = dataWithInstalments[itemIdx]._records[recordIdx]
 
       try {
-        // Determinar qual userId usar
+        // 1. Verificar se código de barras já existe (DUPLICADO)
+        const codigoBarras = boletoData.CODIGO_BARRAS || ''
+        if (codigoBarras) {
+          const jáExiste = await verificarCodigoBarrasExistente(codigoBarras)
+          if (jáExiste) {
+            console.warn(`[ImportPreview] Código de barras duplicado: ${codigoBarras}`)
+            erros.push({
+              linha: linhaAtual,
+              numero_documento: boletoData.NUM_TITULO,
+              sacado_nome: boletoData.SACADO_NOME,
+              codigo_barras: codigoBarras,
+              valor: boletoData.VALOR,
+              motivo: 'duplicado'
+            })
+            errors++
+            linhaAtual++
+            continue
+          }
+        }
+
+        // 2. Determinar qual userId usar
         let targetUserId = userId
 
         if (userType === 'M' && boletoData.CONTA_CODIGO) {
           // Master: procurar a conta correta
           const contaId = contaMap[boletoData.CONTA_CODIGO]
-          if (contaId) {
-            targetUserId = contaId
-          } else {
-            // Conta não encontrada, pular este boleto
-            console.warn(`[ImportPreview] Conta não encontrada para código: ${boletoData.CONTA_CODIGO}`)
+          if (!contaId) {
+            console.warn(`[ImportPreview] Conta não encontrada para: ${boletoData.CONTA_CODIGO}`)
+            erros.push({
+              linha: linhaAtual,
+              numero_documento: boletoData.NUM_TITULO,
+              sacado_nome: boletoData.SACADO_NOME,
+              codigo_barras: codigoBarras,
+              valor: boletoData.VALOR,
+              motivo: 'conta_nao_encontrada'
+            })
             errors++
+            linhaAtual++
             continue
           }
+          targetUserId = contaId
         }
 
+        // 3. Importar boleto
         const { error } = await createBoleto(targetUserId, boletoData)
         if (error) {
+          console.error('[ImportPreview] Erro ao salvar boleto:', error)
           errors++
         } else {
           imported++
@@ -164,6 +204,15 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         console.error('[ImportPreview] Erro ao importar boleto:', err)
         errors++
       }
+
+      linhaAtual++
+    }
+
+    // Gerar relatório PDF se houver erros
+    if (erros.length > 0) {
+      const pdfBlob = gerarRelatorioPDFErros(erros)
+      setRelatorioPDF(pdfBlob)
+      setErrosImportacao(erros)
     }
 
     setIsImporting(false)
@@ -171,6 +220,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       imported,
       errors,
       total: selectedRows.size,
+      erros, // Passar erros detalhados
+      pdfRelatorio: erros.length > 0 ? relatorioPDF : null
     })
   }
 
@@ -598,6 +649,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           </label>
 
           <div className="flex gap-3">
+            {relatorioPDF && (
+              <button
+                onClick={() => downloadPDFRelatorio(relatorioPDF, `relatorio_importacao_${new Date().getTime()}.pdf`)}
+                className="px-6 py-2 bg-[#1a5490] text-white text-sm font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
+              >
+                📄 Baixar Relatório de Erros
+              </button>
+            )}
             <button
               onClick={onCancel}
               disabled={isImporting}

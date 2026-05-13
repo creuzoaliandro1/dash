@@ -34,7 +34,24 @@ export default function BoletosPage() {
   useEffect(() => {
     if (userType === 'M') {
       getAllContas().then(({ data }) => {
-        if (data) setAllContas(data)
+        console.log('[BoletosPage] getAllContas retornou:', data)
+        if (data && data.length > 0) {
+          console.log('[BoletosPage] PRIMEIRA CONTA - TODOS OS CAMPOS:')
+          console.log(JSON.stringify(data[0], null, 2))
+          console.log('[BoletosPage] Resumo das 3 primeiras contas:')
+          data.slice(0, 3).forEach((c, idx) => {
+            console.log(`  Conta ${idx}:`, {
+              id: c.id,
+              cedente: c.cedente,
+              conta: c.conta,
+              numero_conta: c.numero_conta,
+              agencia: c.agencia,
+              nome_correntista: c.nome_correntista,
+              all_keys: Object.keys(c)
+            })
+          })
+          setAllContas(data)
+        }
       }).catch(err => console.error('[BoletosPage] Erro ao carregar contas:', err))
     }
   }, [userType])

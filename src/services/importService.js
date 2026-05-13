@@ -719,13 +719,15 @@ export async function importBoletos(files, userId) {
 
 /**
  * Extrair código da conta do código de barras
- * Pega as posições 24-30 do código de barras e remove o último dígito
+ * Pega as posições 24-30 do código de barras e remove apenas o dígito de verificação (último)
+ * Retorna 7 dígitos para comparação com CONTAS.conta (sem o dígito de verificação)
  */
 function extractContaFromBarcode(codigo_barras) {
   if (!codigo_barras || codigo_barras.length < 30) return null
   // Posições 24-30 em string (1-based) = índices 23-30 (0-based)
   const codigoCompleto = codigo_barras.substring(23, 30) // 7 caracteres
-  const codigoSemDigito = codigoCompleto.substring(0, 6) // Remove último dígito = 6 caracteres
+  // Remove apenas o ÚLTIMO dígito (dígito de verificação) = 7 caracteres
+  const codigoSemDigito = codigoCompleto.substring(0, 7) // 0953880
   return codigoSemDigito
 }
 
@@ -799,11 +801,16 @@ function processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
 
       if (userType !== 'M') {
         // Não é Master: filtrar apenas registros da conta selecionada
-        // Converter selectedContaId para formato de 6 dígitos com zero à esquerda
-        const contaSelecionadaFormatada = String(selectedContaId).padStart(6, '0')
-        filtrados = processados.filter(b =>
-          b.CONTA_CODIGO && b.CONTA_CODIGO === contaSelecionadaFormatada
-        )
+        // selectedContaId vem como CONTAS.conta (ex: 09538802)
+        // Extrair 7 primeiros dígitos para comparar (remove dígito de verificação)
+        const contaSelecionadaFull = String(selectedContaId).padStart(8, '0')
+        const contaSelecionadaFormatada = contaSelecionadaFull.substring(0, 7)
+        console.log(`[ContaCapt] Filtrando para conta selecionada: ${selectedContaId} -> ${contaSelecionadaFormatada}`)
+        filtrados = processados.filter(b => {
+          const match = b.CONTA_CODIGO && b.CONTA_CODIGO === contaSelecionadaFormatada
+          console.log(`[ContaCapt] Boleto CONTA_CODIGO="${b.CONTA_CODIGO}" vs "${contaSelecionadaFormatada}" = ${match}`)
+          return match
+        })
 
         if (filtrados.length === 0) {
           reject(new Error(`Nenhum boleto encontrado para a conta selecionada (${selectedContaId})`))

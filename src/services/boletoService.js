@@ -719,7 +719,7 @@ export const getAllContas = async () => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista')
+            .select('id, nome_correntista, conta')
             .order('nome_correntista', { ascending: true })
 
       if (error) throw error
