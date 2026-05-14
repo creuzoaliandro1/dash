@@ -1,0 +1,196 @@
+═══════════════════════════════════════════════════════════════════════════════
+                       GUIA RÁPIDO - NOVO FILTRO DE DATAS
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ O QUE MUDOU
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ANTES:
+    • Botão 📅 Datas para expandir painel
+    • Filtro em painel separado
+    • Precisa clicar para ver opções
+
+  DEPOIS:
+    • Filtro SEMPRE VISÍVEL
+    • Tudo na mesma linha
+    • Acesso imediato
+
+
+COMO USAR (3 PASSOS SIMPLES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  ESCOLHER TIPO DE DATA
+    Clique no radio button:
+    ◉ Emissão (padrão) - quando o boleto foi criado
+    ○ Vencimento - quando o boleto vence
+
+2️⃣  SELECIONAR PERÍODO
+    Preencha as datas:
+    [Data inicial] [Data final]
+    
+    Clique no campo → calendário abre automaticamente
+    Selecione a data no calendário
+    
+    Dicas:
+    • Apenas "De:" = mostra a partir daquela data
+    • Apenas "Até:" = mostra até aquela data
+    • "De:" + "Até:" = mostra o intervalo
+
+3️⃣  FILTRAR (Automático ou Manual)
+    ✅ A tabela filtra AUTOMATICAMENTE em tempo real
+    📌 Botão 🔍 é opcional (apenas confirmação visual)
+
+
+EXEMPLO PRÁTICO - PASSO A PASSO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OBJETIVO: Ver boletos vencendo em junho/2026
+
+1. Na página de Boletos, procure a linha de filtros
+2. Veja: [Buscar...] [Status] ◉Emissão ○Vencimento [Data] [Data] [🔍]
+3. Clique no radio button "Vencimento"
+4. Clique no primeiro campo de data
+5. Calendário abre → selecione 2026-06-01
+6. Clique no segundo campo de data
+7. Calendário abre → selecione 2026-06-30
+8. ✅ PRONTO! Tabela mostra boletos vencendo em junho
+
+
+ELEMENTOS NA TELA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          LINHA DE FILTROS COMPLETA                          │
+│                                                                              │
+│ [Buscar...               ] [Status▼] ◉Emissão ○Vencimento [Data] [Data]   │
+│ [🔍] [Limpar datas] [Ações]                                                 │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. [Buscar...]          = Busca por texto (sempre primeiro)
+2. [Status▼]            = Filtro de status (Pendente, Pago, etc)
+3. ◉ Emissão            = Radio button para Data de Emissão
+4. ○ Vencimento         = Radio button para Data de Vencimento
+5. [Data]               = Campo da data inicial
+6. [Data]               = Campo da data final
+7. [🔍]                 = Botão lupa (filtrar/confirmar)
+8. [Limpar datas]       = Limpar filtro de datas
+9. [Ações]              = Menu de ações (segunda via, etc)
+
+
+DICAS & TRUQUES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 Combinar Filtros:
+   Busca "Cliente A" + Status "Pendente" + Vencimento "Jun/2026"
+   = RESULTADO: Boletos pendentes desse cliente vencendo em junho
+
+💡 Deixar um Campo Vazio:
+   De: 2026-05-01 | Até: [vazio]
+   = RESULTADO: Boletos a partir de 01/05 (até o final)
+
+💡 Mesmo Data em Ambos Campos:
+   De: 2026-05-15 | Até: 2026-05-15
+   = RESULTADO: Apenas boletos daquele dia específico
+
+💡 Trocar de Tipo:
+   Se muda de "Emissão" para "Vencimento" →
+   Campos anteriores são automaticamente zerados
+
+💡 Limpar Rápido:
+   Clique em "Limpar datas" para zerar todos os campos
+
+
+NAVEGAÇÃO DO CALENDÁRIO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Clique no campo de data
+   Calendário HTML5 nativo abre automaticamente
+
+2. Navegação:
+   • Mês anterior: seta < à esquerda
+   • Mês próximo: seta > à direita
+   • Ano: clique em cima do mês/ano
+   • Dia: clique no número do dia
+
+3. Confirmar:
+   Clique na data desejada
+   Calendário fecha automaticamente
+
+
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❌ Não vejo os filtros de data
+   → Faça Hard Refresh: Ctrl+Shift+R (ou Cmd+Shift+R no Mac)
+   → Recarregue a página
+
+❌ Calendário não abre
+   → Tente clicar diretamente no campo novamente
+   → Verifique navegador (Chrome, Firefox, Safari, Edge)
+   → Calendário é HTML5 nativo do navegador
+
+❌ Filtro não funciona
+   → Verifique console (F12 → Console)
+   → Procure por erros em vermelho
+   → Limpe cache e recarregue
+
+❌ Datas aparecem estranhas
+   → Formato é sempre YYYY-MM-DD (internacional)
+   → Calendário converte automaticamente
+
+
+COMPATIBILIDADE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Funciona com:
+   • Busca por texto
+   • Filtro de status
+   • Seleção de linhas (checkboxes)
+   • Todos os 3 filtros juntos
+
+✅ Navegadores:
+   • Chrome/Chromium ✓
+   • Firefox ✓
+   • Safari ✓
+   • Edge ✓
+   • Opera ✓
+
+✅ Responsividade:
+   • Desktop: 1 linha
+   • Tablet: 1-2 linhas
+   • Mobile: Adapta automaticamente
+
+
+ATALHOS ÚTEIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+F12                     = Abrir console (para debug)
+Ctrl+Shift+R (ou Cmd+Shift+R)   = Hard refresh
+Tab                     = Navegar entre campos
+Shift+Tab               = Voltar ao campo anterior
+Enter                   = Confirmar entrada
+Esc                     = Fechar calendário
+
+
+PRÓXIMAS MELHORIAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔮 Possíveis futuras:
+   • Presets rápidos (Hoje, Semana, Mês)
+   • Gráfico de distribuição por data
+   • Exportar filtrado para Excel
+   • Salvar filtros favoritos
+   • Shortcuts de teclado
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ PRONTO PARA USAR!
+
+Data: 14/05/2026
+Versão: 2.0
+Status: ✅ Implementado e testado
+
+═══════════════════════════════════════════════════════════════════════════════
+

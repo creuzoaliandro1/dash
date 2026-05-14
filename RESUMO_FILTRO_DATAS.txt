@@ -1,0 +1,94 @@
+═══════════════════════════════════════════════════════════════════════════════
+              FILTRO DE DATAS - PÁGINA DE BOLETOS
+═══════════════════════════════════════════════════════════════════════════════
+
+✨ NOVO RECURSO IMPLEMENTADO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  📅 Filtro por Data de Emissão
+  📅 Filtro por Data de Vencimento
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📍 LOCAIS DE USO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Página: /pages/BoletosPage.jsx
+  
+  Na barra de filtros, clique em "📅 Datas" para:
+    • Selecionar tipo de data (Emissão ou Vencimento)
+    • Definir data inicial (De:)
+    • Definir data final (Até:)
+    • Limpar filtros
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🔧 MUDANÇAS TÉCNICAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Arquivo: src/pages/BoletosPage.jsx
+  
+  ✅ Estados adicionados:
+     • showDateFilters       - Exibir/ocultar painel
+     • dataEmissaoInicio     - Data início emissão
+     • dataEmissaoFim        - Data fim emissão
+     • dataVencimentoInicio  - Data início vencimento
+     • dataVencimentoFim     - Data fim vencimento
+     • filterType            - Tipo ativo (emissao|vencimento)
+
+  ✅ Função atualizada:
+     • getFilteredBoletos()  - Agora inclui lógica de filtro por data
+
+  ✅ Nova função:
+     • handleClearDateFilters() - Limpa todos os filtros
+
+  ✅ UI atualizada:
+     • Botão "📅 Datas" para ativar/desativar painel
+     • Painel com radio buttons para tipo de data
+     • 2 campos de data (De e Até)
+     • Botão "Limpar datas"
+
+═══════════════════════════════════════════════════════════════════════════════
+
+💡 EXEMPLOS DE USO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Caso 1: Ver boletos emitidos em Maio/2026
+    1. Clique em "📅 Datas"
+    2. Selecione "Data de Emissão"
+    3. De: 2026-05-01
+    4. Até: 2026-05-31
+
+  Caso 2: Ver boletos vencendo em Junho/2026
+    1. Clique em "📅 Datas"
+    2. Selecione "Data de Vencimento"
+    3. De: 2026-06-01
+    4. Até: 2026-06-30
+
+  Caso 3: Combinar com outros filtros
+    • Busca: "Cliente X" + Status: "Pendente" + Datas: "Jun/2026"
+    • Resultado: apenas boletos pendentes desse cliente vencendo em junho
+
+═══════════════════════════════════════════════════════════════════════════════
+
+⚙️ COMPORTAMENTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✓ Ao trocar tipo de data: limpa campos anteriores automaticamente
+  ✓ Compatível com filtros de texto e status
+  ✓ Funciona em tempo real (sem recarregar página)
+  ✓ Formato ISO YYYY-MM-DD
+  ✓ Painel expansível (abre/fecha clicando no botão)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📄 DOCUMENTAÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  FILTRO_DATAS_BOLETOS.md  - Documentação completa com exemplos
+  RESUMO_FILTRO_DATAS.txt  - Este arquivo
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Data: 14/05/2026 | Status: ✅ IMPLEMENTADO
+

@@ -1,0 +1,152 @@
+═══════════════════════════════════════════════════════════════════════════════
+                      VISUAL DA INTERFACE - FILTRO DATAS
+═══════════════════════════════════════════════════════════════════════════════
+
+ESTADO 1: Painel de Filtros FECHADO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                   BOLETOS                                    │
+│         Emissão, consulta e gestão de títulos                              │
+│                                                                              │
+│ [Buscar texto...                     ] [Todos os status] [📅 Datas] [...]   │
+│                                                            ↑
+│                                                     Botão INATIVO (cinza)
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+ESTADO 2: Painel de Filtros ABERTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                   BOLETOS                                    │
+│         Emissão, consulta e gestão de títulos                              │
+│                                                                              │
+│ [Buscar texto...                     ] [Todos os status] [📅 Datas] [...]   │
+│                                                            ↑
+│                                                    Botão ATIVO (azul)
+│
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │                                                                           │ │
+│ │  ◉ Data de Emissão    ○ Data de Vencimento                Limpar datas  │ │
+│ │  ↑                                                                ↑      │ │
+│ │  Selecionado (primeira opção padrão)                    Link para limpar │ │
+│ │                                                                           │ │
+│ │  De:                           Até:                                      │ │
+│ │  [2026-05-01]                  [2026-05-31]                             │ │
+│ │  (campo de data)               (campo de data)                          │ │
+│ │                                                                           │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+│  Painel se abre aqui com opções de filtro
+│
+│ TABELA DE BOLETOS (filtra em tempo real enquanto digita)
+│ ┌───────────────────────────────────────────────────────────────────────────┐
+│ │ # │ Documento  │ Cliente          │ Emissão   │ Vencimento │ Valor        │
+│ │───┼────────────┼──────────────────┼───────────┼────────────┼──────────────│
+│ │ ✓ │ 000001     │ Empresa A        │ 2026-05-01│ 2026-06-15 │ R$ 1.250,00 │
+│ │ ✓ │ 000002     │ Empresa B        │ 2026-05-05│ 2026-06-20 │ R$ 2.500,00 │
+│ │   │ 000003     │ Empresa C        │ 2026-05-10│ 2026-06-25 │ R$ 1.800,00 │
+│ └───────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+ESTADO 3: Alternando para Data de Vencimento
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │                                                                           │ │
+│ │  ○ Data de Emissão    ◉ Data de Vencimento             Limpar datas     │ │
+│ │                        ↑                                                  │ │
+│ │                   Agora selecionado                                      │ │
+│ │                                                                           │ │
+│ │  De:                           Até:                                      │ │
+│ │  [2026-06-01]                  [2026-06-30]                             │ │
+│ │  (campos limpeza                (foram automáticos)                      │ │
+│ │   da anterior mudança)                                                   │ │
+│ │                                                                           │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+│
+│ TABELA ATUALIZADA (mostra apenas boletos de vencimento em junho)
+│ ┌───────────────────────────────────────────────────────────────────────────┐
+│ │ # │ Documento  │ Cliente          │ Emissão   │ Vencimento │ Valor        │
+│ │───┼────────────┼──────────────────┼───────────┼────────────┼──────────────│
+│ │ ✓ │ 000001     │ Empresa A        │ 2026-05-01│ 2026-06-15 │ R$ 1.250,00 │
+│ │   │ 000002     │ Empresa B        │ 2026-04-20│ 2026-06-20 │ R$ 2.500,00 │
+│ │   │ 000003     │ Empresa C        │ 2026-05-10│ 2026-06-25 │ R$ 1.800,00 │
+│ └───────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+CARACTERÍSTICAS DO PAINEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Painel expandível/colapsável (clique no botão 📅 Datas)
+
+✓ Radio buttons para selecionar tipo de filtro:
+  - Data de Emissão (quando o boleto foi criado)
+  - Data de Vencimento (quando o boleto vence)
+
+✓ Campos de data HTML5 (abre calendário ao clicar):
+  - De: data inicial
+  - Até: data final
+
+✓ Cores & Feedback:
+  - Botão INATIVO: cinza (#1a1a1a)
+  - Botão ATIVO: azul (#1a5490)
+  - Painel: fundo escuro (#0f0f0f)
+  - Inputs: fundo preto (#111111)
+
+✓ Auto-limpeza: ao trocar de filtro (emissão → vencimento),
+  os campos anteriores são automaticamente zerados
+
+✓ Compatível com:
+  - Busca por texto
+  - Filtro de status
+  - Seleção de linhas (checkboxes)
+
+✓ Atualização em tempo real:
+  - A tabela se atualiza conforme você muda as datas
+  - Sem necessidade de recarregar a página
+
+
+FLUXO DE USO RECOMENDADO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Abra o painel clicando em "📅 Datas"
+
+2. Escolha o tipo de data:
+   • "Data de Emissão" - para ver quando foram criados
+   • "Data de Vencimento" - para ver quando vencem
+
+3. Defina o intervalo:
+   • Clique em "De:" e selecione a data inicial
+   • Clique em "Até:" e selecione a data final
+
+4. Observe a tabela se atualizar em tempo real
+
+5. Para limpar, clique em "Limpar datas"
+
+
+ATALHOS & DICAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 Combinar filtros:
+   Busca: "Cliente A" + Status: "Pendente" + Datas: "Mai/2026"
+   → Só mostra boletos pendentes desse cliente emitidos em maio
+
+💡 Apenas data inicial:
+   De: 2026-05-01 | Até: (em branco)
+   → Mostra tudo a partir de 1º de maio
+
+💡 Apenas data final:
+   De: (em branco) | Até: 2026-05-31
+   → Mostra tudo até 31 de maio
+
+💡 Período específico:
+   De: 2026-05-15 | Até: 2026-05-25
+   → Mostra apenas boletos desse intervalo (11 dias)
+
+═══════════════════════════════════════════════════════════════════════════════
+

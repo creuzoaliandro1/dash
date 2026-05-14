@@ -1,0 +1,229 @@
+═══════════════════════════════════════════════════════════════════════════════
+                    NOVO LAYOUT - FILTRO DE DATAS NA LINHA
+═══════════════════════════════════════════════════════════════════════════════
+
+ANTES (Painel Expansível)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[Buscar...                           ] [Todos status] [📅 Datas] [Ações]
+
+Quando clica em 📅 Datas:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ◉ Data de Emissão   ○ Data de Vencimento                    Limpar datas   │
+│                                                                              │
+│ [2026-05-01]  [2026-05-31]                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Tabela abaixo...
+
+
+DEPOIS (Sempre Visível - Nova)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[Buscar por documento, cliente...      ] [Todos status] ◉Emissão ○Vencimento
+[2026-05-01] [2026-05-31] [🔍] [Limpar datas] [Ações]
+
+Uma única linha com tudo visível!
+
+
+DETALHAMENTO DO NOVO LAYOUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                               │
+│  ┌─────────────────────────────┐ ┌──────────┐ ┌────────────────────────────┐│
+│  │   BUSCA DE TEXTO (flex-1)   │ │  STATUS  │ │  FILTRO DE DATAS          ││
+│  │                             │ │          │ │                            ││
+│  │ [Buscar por doc, cli...  🔍 │ │▼ Todos   │ │ ◉Emissão ○Vencimento      ││
+│  │                             │ │  status  │ │ [2026-05-01] [2026-05-31] ││
+│  └─────────────────────────────┘ └──────────┘ │ [🔍] [Limpar datas]       ││
+│                                                │                            ││
+│                                                └────────────────────────────┘│
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │                         BOTÃO AÇÕES                                      ││
+│  │                     [Ações (0)]                                          ││
+│  └─────────────────────────────────────────────────────────────────────────┘│
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+COMPONENTES NA SEQUÊNCIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  BUSCA (Espaço Flexível)
+    Input com placeholder e lupa à direita
+    Ocupa todo espaço disponível
+    
+    [Buscar por documento, cliente, nosso número...                        🔍]
+    └─────────────────────────────────────────────────────────────────────────┘
+    
+2️⃣  FILTRO DE STATUS (Fixo)
+    Select com opções
+    
+    [▼ Todos os status ▼]
+    └──────────────────────┘
+    
+3️⃣  TIPO DE DATA (Radio Buttons)
+    ◉ Emissão   ○ Vencimento
+    
+    Compacto e direto
+    
+4️⃣  CAMPOS DE DATA (2 inputs)
+    Lado a lado
+    
+    [2026-05-01] [2026-05-31]
+    └───────────┘ └───────────┘
+    
+5️⃣  BOTÃO FILTRAR (Lupa Branca)
+    Cor branca destaca muito
+    
+    [🔍]
+    └─┘  ← Pequeno, compacto
+    
+6️⃣  BOTÃO LIMPAR DATAS
+    
+    [Limpar datas]
+    └──────────────┘
+    
+7️⃣  BOTÃO AÇÕES
+    Menu com opções
+    
+    [Ações (0)]
+    └──────────┘
+
+
+EXEMPLO DE USO PRÁTICO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ESTADO 1: Padrão (Sem Filtros)
+─────────────────────────────────
+[Buscar...                            ] [Todos status] ◉Emissão ○Vencimento
+[  ] [  ] [🔍] [Limpar datas] [Ações]
+
+Campos vazios, tabela mostra TODOS os boletos
+
+
+ESTADO 2: Aplicando Filtro de Emissão
+─────────────────────────────────────
+[Buscar...                            ] [Todos status] ◉Emissão ○Vencimento
+[2026-05-01] [2026-05-31] [🔍] [Limpar datas] [Ações]
+                                 ↑
+                          Botão ativo (opcional)
+
+✅ Tabela filtra em TEMPO REAL
+   Mostra boletos emitidos entre 01/05 e 31/05/2026
+
+
+ESTADO 3: Trocando para Vencimento
+──────────────────────────────────
+[Buscar...                            ] [Todos status] ○Emissão ◉Vencimento
+[2026-06-01] [2026-06-30] [🔍] [Limpar datas] [Ações]
+
+✨ Campos de emissão foram zerados automaticamente
+✅ Tabela mostra boletos vencendo em junho
+
+
+ESTADO 4: Com Busca + Status + Datas (Tudo Junto)
+─────────────────────────────────────────────────
+[Cliente A                            ] [Pendente] ◉Emissão ○Vencimento
+[2026-05-01] [2026-05-31] [🔍] [Limpar datas] [Ações]
+
+✅ Resultado: Apenas boletos pendentes de "Cliente A" emitidos em maio
+   (Intersecção de todos os 3 filtros)
+
+
+MUDANÇAS VISUAIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Filtros SEMPRE VISÍVEIS
+   - Antes: Precisava clicar no botão 📅 Datas
+   - Depois: Tudo já aparece
+
+✅ Uma ÚNICA LINHA
+   - Antes: 2 linhas (filtros + painel expandível)
+   - Depois: 1 linha (tudo compacto)
+
+✅ Radio Buttons Lado a Lado
+   - Antes: Em linha separada dentro do painel
+   - Depois: Ao lado dos campos de data
+
+✅ Campos de Data Lado a Lado
+   - Antes: Um em cada coluna
+   - Depois: Lado a lado na mesma linha
+
+✅ Botão Lupa BRANCO
+   - Antes: Não havia
+   - Depois: Destaca visualmente (ação principal)
+
+✅ Mais Intuitivo
+   - Antes: Precisava expandir painel
+   - Depois: Tudo disponível de imediato
+
+
+CORES & ESTILOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                    Texto      Fundo       Borda
+Busca:              #666666    #111111     #2a2a2a
+Select Status:      #ffffff    #111111     #2a2a2a
+Radio Buttons:      #ffffff    -           -
+Inputs Data:        #ffffff    #111111     #2a2a2a
+Botão Lupa:         #000000    #ffffff     -
+Botão Limpar:       #ffffff    #1a1a1a     #2a2a2a
+Botão Ações:        #ffffff    #1a1a1a     #2a2a2a
+
+
+RESPONSIVIDADE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DESKTOP (1920px+):
+┌─────────────────────────────────────────────────────────────────────┐
+│[Busca...]      [Status] ◉Emissão ○Vencimento [Data] [Data] [🔍]   │
+│[Limpar] [Ações]                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+TABLET (768px):
+┌─────────────────────────────────────────────────────────────────────┐
+│[Busca...] [Status] ◉Emissão ○Vencimento                             │
+│[Data] [Data] [🔍] [Limpar] [Ações]                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+MOBILE (375px):
+┌─────────────────────────────────────────────────────────────────────┐
+│[Busca...] [Status]                                                   │
+│◉Emissão ○Vencimento [Data] [Data]                                  │
+│[🔍] [Limpar] [Ações]                                                │
+└─────────────────────────────────────────────────────────────────────┘
+
+Note: flex gap-3 items-end cuida da respons automaticamente
+
+
+BENEFÍCIOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ UX Melhorada
+   • Tudo visível de imediato
+   • Sem necessidade de expandir painel
+   • Menos cliques necessários
+
+✨ Interface Limpa
+   • Uma linha principal de filtros
+   • Sem painel separado
+   • Mais minimalista
+
+✨ Acessibilidade
+   • Radio buttons e inputs diretos
+   • Sem dependência de menu
+   • Acesso rápido
+
+✨ Performance Visual
+   • Menos elementos dinâmicos
+   • Sem animações de expansão
+   • Render mais leve
+
+
+═══════════════════════════════════════════════════════════════════════════════
+Data: 14/05/2026 | Status: ✅ IMPLEMENTADO
+═══════════════════════════════════════════════════════════════════════════════
+

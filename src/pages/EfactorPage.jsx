@@ -610,8 +610,10 @@ export default function EfactorPage() {
           errors: result.errors
         })
 
-        // Armazenar divergências
-        setDivergencias(result.divergencias || [])
+        // Armazenar os 3 tipos de divergências
+        setDivergenciasCIC(result.divergenciasCIC || [])
+        setDivergenciasValor(result.divergenciasValor || [])
+        setDivergenciasVencimento(result.divergenciasVencimento || [])
 
         console.log('[Reconciliação] Concluída:', result)
 

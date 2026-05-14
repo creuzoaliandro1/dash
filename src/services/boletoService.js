@@ -399,7 +399,7 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
 
     const loadStartTime = Date.now()
     const [boletos, allOpeite, allSacado] = await Promise.all([
-      paginateTable('capt_boletos', 'id, numero_documento, num_lancamento, valor, data_vencimento, sacado_cic, status', { conta_id: contaId }),
+      paginateTable('capt_boletos', 'id, numero_documento, num_lancamento, valor, data_vencimento, sacado_cic, status'),
       paginateTable('OPEITE', 'NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO'),
       paginateTable('SACADO', 'COD_SACADO, CIC')
     ])

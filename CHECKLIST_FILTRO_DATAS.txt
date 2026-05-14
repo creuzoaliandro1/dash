@@ -1,0 +1,140 @@
+═══════════════════════════════════════════════════════════════════════════════
+                    CHECKLIST - FILTRO DE DATAS BOLETOS
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ IMPLEMENTAÇÃO COMPLETA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MODIFICAÇÕES REALIZADAS:
+  [✓] Estados adicionados ao componente
+  [✓] Função getFilteredBoletos() atualizada
+  [✓] Função handleClearDateFilters() criada
+  [✓] UI com botão "📅 Datas"
+  [✓] Painel expandível com radio buttons
+  [✓] Campos de data (HTML5 input type="date")
+  [✓] Botão "Limpar datas"
+  [✓] Integração com filtros existentes (texto e status)
+  [✓] Auto-limpeza ao trocar tipo de filtro
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🧪 TESTES PARA FAZER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TEST 1: Botão Ativação
+  [ ] Clicar no botão "📅 Datas"
+  [ ] Painel deve aparecer abaixo dos filtros
+  [ ] Clicar novamente deve fechá-lo
+  [ ] Botão muda de cor: cinza → azul quando ativo
+
+TEST 2: Filtro Data de Emissão
+  [ ] Selecionar "Data de Emissão" (deve estar selecionado por padrão)
+  [ ] Definir "De: 2026-05-01"
+  [ ] Tabela filtra para mostrar apenas boletos >= 2026-05-01
+  [ ] Definir "Até: 2026-05-31"
+  [ ] Tabela filtra para mostrar apenas boletos ENTRE as datas
+  [ ] Remover a data "Até" e tabela volta a filtrar apenas por "De"
+
+TEST 3: Filtro Data de Vencimento
+  [ ] Selecionar "Data de Vencimento"
+  [ ] Campos de "Data de Emissão" são zerados automaticamente
+  [ ] Definir período de vencimento (ex: 2026-06-01 a 2026-06-30)
+  [ ] Tabela mostra apenas boletos vencendo nesse período
+  [ ] Remover datas deixa tabela sem filtro de vencimento
+
+TEST 4: Troca de Filtro
+  [ ] Definir período de "Data de Emissão"
+  [ ] Clicar em "Data de Vencimento"
+  [ ] Campos de emissão são zerados
+  [ ] Campos de vencimento ficam vazios e prontos para uso
+
+TEST 5: Limpar Datas
+  [ ] Aplicar filtro de datas
+  [ ] Clicar em "Limpar datas"
+  [ ] Todos os 4 campos devem ser zerados
+  [ ] Tabela volta a mostrar todos os registros (sem filtro de data)
+
+TEST 6: Compatibilidade com Outros Filtros
+  [ ] Aplicar filtro de TEXTO
+  [ ] Adicionar filtro de DATAS
+  [ ] Adicionar filtro de STATUS
+  [ ] Verificar que TODOS os 3 filtros funcionam juntos
+  [ ] Tabela mostra intersecção de todos os critérios
+
+TEST 7: Calendário do Input
+  [ ] Clicar no campo "De:" ou "Até:"
+  [ ] Deve abrir um calendário interativo (nativo do navegador)
+  [ ] Selecionar uma data no calendário
+  [ ] A data deve aparecer no campo
+  [ ] Tabela deve filtrar automaticamente
+
+TEST 8: Valores Vazios
+  [ ] Deixar campos vazios e não ativar filtro
+  [ ] Tabela mostra TODOS os boletos
+  [ ] Preencher apenas "De:" com 2026-05-01
+  [ ] Tabela mostra boletos a partir dessa data (até o final)
+  [ ] Preencher apenas "Até:" com 2026-05-31
+  [ ] Tabela mostra boletos até essa data (desde o início)
+
+TEST 9: Datas Iguais
+  [ ] De: 2026-05-15 | Até: 2026-05-15
+  [ ] Tabela mostra APENAS boletos daquele dia específico
+
+TEST 10: Ordem das Datas
+  [ ] De: 2026-05-31 | Até: 2026-05-01 (invertido)
+  [ ] Sistema deve tratá-lo graciosamente (resultado vazio ou invertido)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📊 VERIFICAÇÃO TÉCNICA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+No arquivo src/pages/BoletosPage.jsx:
+
+  [✓] Linha ~11-35:   5 novos estados adicionados
+  [✓] Linha ~211-275: getFilteredBoletos() atualizada com lógica de datas
+  [✓] Linha ~277-283: handleClearDateFilters() criada
+  [✓] Linha ~408-481: UI completa do painel de datas adicionada
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📁 ARQUIVOS DE REFERÊNCIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  FILTRO_DATAS_BOLETOS.md        Documentação técnica completa
+  RESUMO_FILTRO_DATAS.txt        Sumário visual rápido
+  VISUAL_INTERFACE.txt           ASCII art da interface
+  CHECKLIST_FILTRO_DATAS.txt     Este arquivo
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🚀 PRÓXIMOS PASSOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. [  ] Fazer hard refresh (Ctrl+Shift+R) para recarregar código
+2. [  ] Testar todos os 10 testes acima
+3. [  ] Verificar console (F12) para erros
+4. [  ] Validar em diferentes navegadores (Chrome, Firefox, Safari, Edge)
+5. [  ] Testar com muitos boletos (1000+) para performance
+6. [  ] Verificar responsividade em mobile
+
+═══════════════════════════════════════════════════════════════════════════════
+
+💬 FEEDBACK & MELHORIAS FUTURAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Sugestões para próximas versões:
+  [ ] Salvar últimos filtros no localStorage
+  [ ] Presets rápidos (Hoje, Semana, Mês, Trimestre)
+  [ ] Gráfico de distribuição por data
+  [ ] Exportar resultados filtrados para Excel
+  [ ] Filtro de intervalo dinâmico (últimos N dias)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Data de Conclusão: 14/05/2026
+Status: ✅ PRONTO PARA TESTES
+Versão: 1.0
+
+═══════════════════════════════════════════════════════════════════════════════
+

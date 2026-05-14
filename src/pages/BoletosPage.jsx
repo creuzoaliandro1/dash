@@ -23,6 +23,11 @@ export default function BoletosPage() {
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [contaData, setContaData] = useState(null)
+  const [dataEmissaoInicio, setDataEmissaoInicio] = useState('')
+  const [dataEmissaoFim, setDataEmissaoFim] = useState('')
+  const [dataVencimentoInicio, setDataVencimentoInicio] = useState('')
+  const [dataVencimentoFim, setDataVencimentoFim] = useState('')
+  const [filterType, setFilterType] = useState('emissao')
 
   // Obter tipo de usuário e conta selecionada
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -229,7 +234,46 @@ export default function BoletosPage() {
       filtered = filtered.filter(boleto => boleto.status === statusFilter)
     }
 
+    // Filter by data de emissão
+    if (filterType === 'emissao') {
+      if (dataEmissaoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_emissao) return false
+          return boleto.data_emissao >= dataEmissaoInicio
+        })
+      }
+      if (dataEmissaoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_emissao) return false
+          return boleto.data_emissao <= dataEmissaoFim
+        })
+      }
+    }
+
+    // Filter by data de vencimento
+    if (filterType === 'vencimento') {
+      if (dataVencimentoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_vencimento) return false
+          return boleto.data_vencimento >= dataVencimentoInicio
+        })
+      }
+      if (dataVencimentoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_vencimento) return false
+          return boleto.data_vencimento <= dataVencimentoFim
+        })
+      }
+    }
+
     return filtered
+  }
+
+  const handleClearDateFilters = () => {
+    setDataEmissaoInicio('')
+    setDataEmissaoFim('')
+    setDataVencimentoInicio('')
+    setDataVencimentoFim('')
   }
 
   const handleGenerateSecondViaZip = async () => {
@@ -389,8 +433,9 @@ export default function BoletosPage() {
         selectedContaId={selectedContaId}
       />
 
-      {/* Search and Filter */}
-      <div className="flex gap-3 items-center">
+      {/* Search and Filter - All in one line */}
+      <div className="flex gap-3 items-end">
+        {/* Busca por texto */}
         <div className="flex-1 relative">
           <input
             type="text"
@@ -403,6 +448,8 @@ export default function BoletosPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
+
+        {/* Filtro de Status */}
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -414,6 +461,90 @@ export default function BoletosPage() {
           <option value="atrasado">Atrasado</option>
           <option value="cancelado">Cancelado</option>
         </select>
+
+        {/* Filtro de Datas - Tipo */}
+        <div className="flex gap-2 items-center">
+          <label className="flex items-center gap-2 whitespace-nowrap">
+            <input
+              type="radio"
+              name="filterType"
+              value="emissao"
+              checked={filterType === 'emissao'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataVencimentoInicio('')
+                setDataVencimentoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs text-white cursor-pointer">Emissão</span>
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap">
+            <input
+              type="radio"
+              name="filterType"
+              value="vencimento"
+              checked={filterType === 'vencimento'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataEmissaoInicio('')
+                setDataEmissaoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs text-white cursor-pointer">Vencimento</span>
+          </label>
+        </div>
+
+        {/* Filtro de Datas - Campos */}
+        {filterType === 'emissao' ? (
+          <>
+            <input
+              type="date"
+              value={dataEmissaoInicio}
+              onChange={(e) => setDataEmissaoInicio(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de início"
+            />
+            <input
+              type="date"
+              value={dataEmissaoFim}
+              onChange={(e) => setDataEmissaoFim(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de fim"
+            />
+          </>
+        ) : (
+          <>
+            <input
+              type="date"
+              value={dataVencimentoInicio}
+              onChange={(e) => setDataVencimentoInicio(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de início"
+            />
+            <input
+              type="date"
+              value={dataVencimentoFim}
+              onChange={(e) => setDataVencimentoFim(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de fim"
+            />
+          </>
+        )}
+
+        {/* Botão Filtrar com Lupa */}
+        <button
+          onClick={() => {
+            // Trigger filter (getFilteredBoletos é chamado automaticamente)
+          }}
+          className="p-2 bg-white text-black rounded hover:bg-[#e0e0e0] transition flex items-center justify-center"
+          title="Filtrar por datas"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
 
         {/* Botão Ações com Dropdown */}
         <div className="relative">

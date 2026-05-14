@@ -4,24 +4,39 @@ import 'jspdf-autotable'
 
 /**
  * Verificar se código de barras já existe em capt_boletos
+ * Usa limit(1) em vez de single() para evitar erros com URLs muito longas
  */
 export const verificarCodigoBarrasExistente = async (codigoBarras) => {
   try {
-    const { data, error } = await supabase
-      .from('capt_boletos')
-      .select('id')
-      .eq('codigo_barras', codigoBarras)
-      .single()
-
-    if (error && error.code === 'PGRST116') {
-      // Não encontrado - é ok
+    if (!codigoBarras || codigoBarras.trim() === '') {
       return false
     }
-    if (error) throw error
 
-    return !!data
+    const { data, error } = await supabase
+      .from('capt_boletos')
+      .select('id', { count: 'exact', head: true })
+      .eq('codigo_barras', codigoBarras)
+      .limit(1)
+
+    if (error) {
+      // Se erro for de URL muito longa (406), fazer fallback com substring
+      if (error.status === 406) {
+        console.warn('[boletoImportService] Código de barras muito longo, verificando com substring')
+        const { data: fallbackData, error: fallbackError } = await supabase
+          .from('capt_boletos')
+          .select('id', { count: 'exact', head: true })
+          .ilike('codigo_barras', `%${codigoBarras.slice(-20)}%`)
+          .limit(1)
+
+        return !fallbackError && fallbackData && fallbackData.length > 0
+      }
+      throw error
+    }
+
+    return data && data.length > 0
   } catch (err) {
     console.error('[boletoImportService] Erro ao verificar código de barras:', err)
+    // Em caso de erro, retorna false para não bloquear a importação
     return false
   }
 }
