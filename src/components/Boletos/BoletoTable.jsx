@@ -232,6 +232,8 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
             <SortableHeader column="sacado_nome" label="Nome Sacado" flex="3" align="text-center" />
             <SortableHeader column="sacado_cic" label="CIC Sacado" flex="1" align="text-right" />
             <div style={{ flex: '0.5' }} className="text-center">Status</div>
+            <div style={{ flex: '1' }} className="text-center">Antecipação</div>
+            <div style={{ flex: '1' }} className="text-center">Registro</div>
             <div style={{ flex: '0.5' }} className="text-center">Ações</div>
           </div>
         </div>
@@ -278,6 +280,12 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
                   <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-medium ${getStatusBadge(boleto.status)}`}>
                     {boleto.status ? boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1) : 'Pendente'}
                   </span>
+                </div>
+                <div style={{ flex: '1' }} className="text-center text-white">
+                  {boleto.status_efactor || '—'}
+                </div>
+                <div style={{ flex: '1' }} className="text-center text-white">
+                  {boleto.status_efator || '—'}
                 </div>
                 <div style={{ flex: '0.5' }} className="flex justify-center relative" ref={menuRef}>
                   <button

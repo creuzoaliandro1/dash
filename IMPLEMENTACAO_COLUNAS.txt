@@ -1,0 +1,172 @@
+╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                    IMPLEMENTAÇÃO: COLUNAS ANTECIPAÇÃO E REGISTRO NA PÁGINA BOLETOS                           ║
+║                                      Data: 20/05/2026                                                         ║
+╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+1. ARQUIVOS MODIFICADOS
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+   ✓ src/components/Boletos/BoletoTable.jsx
+     └─ Adicionadas 2 novas colunas no header e nos dados da tabela
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+2. ARQUIVOS CRIADOS
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+   ✓ backend/migration_add_efactor_fields.sql
+     └─ Migration para adicionar campos ao banco de dados Supabase
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+3. VISUALIZAÇÃO DO LAYOUT - ANTES vs DEPOIS
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ANTES:
+┌───┬──────────┬─────────┬──────────┬─────────┬──────────┬──────────┬──────┬──────────┬─────┐
+│ ☑ │Num Lç    │Emissão  │Documento │ Valor   │Vencimento│ Sacado   │ CIC  │  Status  │Ações│
+├───┼──────────┼─────────┼──────────┼─────────┼──────────┼──────────┼──────┼──────────┼─────┤
+│ ☑ │ 00001    │ 15/05   │123456789 │1.234,56 │   25/06  │ João S.  │123.4 │   Pago   │  ⋮  │
+│ ☐ │ 00002    │ 18/05   │987654321 │  789,00 │   30/06  │ Maria S. │789.1 │Pendente  │  ⋮  │
+└───┴──────────┴─────────┴──────────┴─────────┴──────────┴──────────┴──────┴──────────┴─────┘
+
+
+DEPOIS:
+┌───┬──────────┬─────────┬──────────┬─────────┬──────────┬──────────┬──────┬──────────┬──────────────┬──────────┬─────┐
+│ ☑ │Num Lç    │Emissão  │Documento │ Valor   │Vencimento│ Sacado   │ CIC  │  Status  │ Antecipação  │ Registro │Ações│
+├───┼──────────┼─────────┼──────────┼─────────┼──────────┼──────────┼──────┼──────────┼──────────────┼──────────┼─────┤
+│ ☑ │ 00001    │ 15/05   │123456789 │1.234,56 │   25/06  │ João S.  │123.4 │   Pago   │ Antecipado   │Registrado│  ⋮  │
+│ ☐ │ 00002    │ 18/05   │987654321 │  789,00 │   30/06  │ Maria S. │789.1 │Pendente  │      —       │    —     │  ⋮  │
+└───┴──────────┴─────────┴──────────┴─────────┴──────────┴──────────┴──────┴──────────┴──────────────┴──────────┴─────┘
+
+     NOVAS COLUNAS ↑                                        NOVAS COLUNAS ↑
+     - Antecipação: mostra capt_boletos.status_efactor
+     - Registro:    mostra capt_boletos.status_efator
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+4. DETALHES DAS ALTERAÇÕES NO CÓDIGO
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+Arquivo: src/components/Boletos/BoletoTable.jsx
+
+[HEADER] Linha 233-235 (ANTES):
+---
+            <SortableHeader column="sacado_cic" label="CIC Sacado" flex="1" align="text-right" />
+            <div style={{ flex: '0.5' }} className="text-center">Status</div>
+            <div style={{ flex: '0.5' }} className="text-center">Ações</div>
+
+[HEADER] Linha 233-237 (DEPOIS):
+---
+            <SortableHeader column="sacado_cic" label="CIC Sacado" flex="1" align="text-right" />
+            <div style={{ flex: '0.5' }} className="text-center">Status</div>
+            <div style={{ flex: '1' }} className="text-center">Antecipação</div>          ← NOVA
+            <div style={{ flex: '1' }} className="text-center">Registro</div>            ← NOVA
+            <div style={{ flex: '0.5' }} className="text-center">Ações</div>
+
+
+[DADOS] Linha 281-287 (ANTES):
+---
+                <div style={{ flex: '0.5' }} className="text-center">
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-medium ${getStatusBadge(boleto.status)}`}>
+                    {boleto.status ? boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1) : 'Pendente'}
+                  </span>
+                </div>
+                <div style={{ flex: '0.5' }} className="flex justify-center relative" ref={menuRef}>
+
+[DADOS] Linha 281-291 (DEPOIS):
+---
+                <div style={{ flex: '0.5' }} className="text-center">
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-medium ${getStatusBadge(boleto.status)}`}>
+                    {boleto.status ? boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1) : 'Pendente'}
+                  </span>
+                </div>
+                <div style={{ flex: '1' }} className="text-center text-white">     ← NOVA
+                  {boleto.status_efactor || '—'}                                  ← NOVA
+                </div>                                                             ← NOVA
+                <div style={{ flex: '1' }} className="text-center text-white">     ← NOVA
+                  {boleto.status_efator || '—'}                                    ← NOVA
+                </div>                                                             ← NOVA
+                <div style={{ flex: '0.5' }} className="flex justify-center relative" ref={menuRef}>
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+5. MIGRATION SQL A EXECUTAR
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+Arquivo: backend/migration_add_efactor_fields.sql
+
+-- Adicionar coluna status_efactor (Antecipação)
+ALTER TABLE public."CAPT_BOLETOS"
+ADD COLUMN IF NOT EXISTS "status_efactor" VARCHAR(100);
+
+-- Adicionar coluna status_efator (Registro)
+ALTER TABLE public."CAPT_BOLETOS"
+ADD COLUMN IF NOT EXISTS "status_efator" VARCHAR(100);
+
+⚠️  EXECUTE ESTE SQL NO SUPABASE:
+    1. Acesse: https://supabase.com
+    2. Abra seu projeto Capt
+    3. Vá para: SQL Editor
+    4. Cole o conteúdo da migration
+    5. Clique em "Execute"
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+6. CHECKLIST DE IMPLEMENTAÇÃO
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+   [ ] 1. Arquivo BoletoTable.jsx foi modificado ✓
+   [ ] 2. Migration SQL foi criada ✓
+   [ ] 3. Migration foi executada no Supabase
+   [ ] 4. Página de boletos foi recarregada (F5)
+   [ ] 5. Novas colunas aparecem na tabela
+   [ ] 6. Dados sendo exibidos corretamente (ou "—" se vazio)
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+7. COMPORTAMENTO DOS NOVOS CAMPOS
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+Coluna ANTECIPAÇÃO:
+  • Campo BD: capt_boletos.status_efactor
+  • Tipo: VARCHAR(100)
+  • Valor vazio: Mostra "—"
+  • Exemplos: "Antecipado", "Não Antecipado", etc.
+
+Coluna REGISTRO:
+  • Campo BD: capt_boletos.status_efator
+  • Tipo: VARCHAR(100)
+  • Valor vazio: Mostra "—"
+  • Exemplos: "Registrado", "Cancelado", etc.
+
+Ambas as colunas:
+  • Respeitam o tema dark da aplicação (texto branco)
+  • Têm o mesmo alinhamento das outras colunas (centro)
+  • Ocupam flex: 1 (mesma largura que Documento e Emissão)
+  • São responsivas
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+8. TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+Problema: Colunas não aparecem
+├─ Solução 1: Recarregue a página (Ctrl+F5 ou Cmd+Shift+R)
+├─ Solução 2: Limpe o cache: F12 → Application → Local Storage → Delete site data
+└─ Solução 3: Verifique se o arquivo BoletoTable.jsx foi salvo corretamente
+
+Problema: Colunas aparecem mas sempre mostram "—"
+├─ Solução 1: Verifique se a migration SQL foi executada
+├─ Solução 2: Atualize alguns boletos com dados em status_efactor/status_efator
+├─ Solução 3: Verifique o console (F12) para erros de carregamento
+└─ Solução 4: Confirme a sintaxe do campo no banco: SELECT * FROM "CAPT_BOLETOS" LIMIT 1;
+
+Problema: Erro no console
+├─ Solução 1: Procure por "undefined" - indica campo não encontrado
+├─ Solução 2: Verifique se o nome do campo está em snake_case
+└─ Solução 3: Reexecute a migration
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
