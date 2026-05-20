@@ -102,12 +102,6 @@ export default function LoginPage({ onLoginSuccess }) {
             </button>
           </div>
 
-          {/* Demo Info */}
-          <div className="mt-6 pt-4 border-t border-[#1f1f1f] text-xs text-[#666666]">
-            <p className="mb-2">Credenciais de teste</p>
-            <p className="font-mono text-[#a3a3a3]">CIC: 12345678901</p>
-            <p className="font-mono text-[#a3a3a3]">Senha: 123456</p>
-          </div>
         </div>
       </div>
     </div>
