@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Line, Pie, Bar } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -12,6 +12,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
+import { getBoletos } from '../services/boletoService'
 
 ChartJS.register(
   CategoryScale,
@@ -26,12 +27,118 @@ ChartJS.register(
 )
 
 export default function DashboardPage() {
-  const [stats] = useState({
-    totalRecebido: 723463.76,
-    aReceber: 376208.85,
-    inadimplentes: 93,
+  const [stats, setStats] = useState({
+    totalRecebido: 0,
+    aReceber: 0,
+    inadimplentes: 0,
     clientesAtivos: 30,
   })
+  const [loading, setLoading] = useState(true)
+
+  // Lê o ID ativo sempre do localStorage (sem stale closure)
+  const getActiveContaId = useRef(() => {
+    const stored = localStorage.getItem('activeContaId')
+    if (stored) return stored
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    return user.id
+  }).current
+
+  // Carregar dados de boletos em aberto
+  useEffect(() => {
+    const loadBoletosAbertos = async () => {
+      setLoading(true)
+      try {
+        const activeId = getActiveContaId()
+        if (!activeId) {
+          setLoading(false)
+          return
+        }
+
+        const resultado = await getBoletos(activeId)
+        const boletos = resultado.data || []
+
+        // ============================================================================
+        // CARD 1: BOLETOS EM ABERTO
+        // Critério: status='pendente' E situacao='Registrado'
+        // ============================================================================
+        const boletosAbertos = boletos.filter(b =>
+          b.status === 'pendente' && b.situacao === 'Registrado'
+        )
+        const totalAberto = boletosAbertos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+        // ============================================================================
+        // CARD 2: RECEITA RECEBIDA
+        // Critério: status='pago'
+        // ============================================================================
+        const boletosPagos = boletos.filter(b => b.status === 'pago')
+        const totalPago = boletosPagos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+        // ============================================================================
+        // CARD 3: INADIMPLENTES (VENCIDOS)
+        // Critério: status='pendente' E situacao='Registrado' E data_vencimento < hoje
+        // ============================================================================
+        const hoje = new Date()
+        hoje.setHours(0, 0, 0, 0)
+
+        // Filtrar apenas boletos em aberto que estão vencidos
+        const boletosInadimplentes = boletosAbertos.filter(b => {
+          if (!b.data_vencimento) return false
+
+          let dataVencimento
+          if (typeof b.data_vencimento === 'string') {
+            // Suporta formatos: YYYY-MM-DD e DD/MM/YYYY
+            if (b.data_vencimento.includes('-')) {
+              const [year, month, day] = b.data_vencimento.split('-')
+              dataVencimento = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+            } else if (b.data_vencimento.includes('/')) {
+              const [day, month, year] = b.data_vencimento.split('/')
+              dataVencimento = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+            } else {
+              return false
+            }
+          } else {
+            dataVencimento = new Date(b.data_vencimento)
+          }
+
+          dataVencimento.setHours(0, 0, 0, 0)
+          // Retorna true apenas se a data de vencimento for ANTERIOR a hoje
+          return dataVencimento < hoje
+        })
+
+        // Soma dos valores dos boletos inadimplentes (vencidos)
+        const totalInadimplentes = boletosInadimplentes.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+        // Clientes Ativos: Contar CICs únicos dos boletos em aberto
+        // Extrair sacado_cic de todos os boletos em aberto e contar únicos
+        const cicUnicos = new Set(
+          boletosAbertos
+            .filter(b => b.sacado_cic && b.sacado_cic.trim() !== '') // Filtrar CICs vazios
+            .map(b => b.sacado_cic.trim()) // Extrair e remover espaços
+        )
+        const quantidadeClientesUnicos = cicUnicos.size
+
+        setStats({
+          totalRecebido: totalAberto,
+          aReceber: totalPago,
+          inadimplentes: totalInadimplentes,
+          clientesAtivos: quantidadeClientesUnicos,
+        })
+      } catch (error) {
+        console.error('Erro ao carregar boletos:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadBoletosAbertos()
+
+    // Recarregar quando usuario tipo M troca de perfil
+    const handleContaSwitched = () => {
+      loadBoletosAbertos()
+    }
+    window.addEventListener('contaSwitched', handleContaSwitched)
+    return () => window.removeEventListener('contaSwitched', handleContaSwitched)
+  }, [])
 
   const chartOptions = {
     responsive: true,
@@ -137,27 +244,33 @@ export default function DashboardPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6">
-          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">Receita Recebida</p>
-          <p className="text-3xl font-bold text-white mb-2">R$ 723.463,76</p>
-          <p className="text-xs text-[#666666]">93 boletos pagos</p>
+          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">Boletos em aberto</p>
+          <p className="text-3xl font-bold text-white mb-2">
+            {loading ? '—' : `R$ ${stats.totalRecebido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </p>
+          <p className="text-xs text-[#666666]">{loading ? 'Carregando...' : `${stats.inadimplentes} boletos atrasados`}</p>
         </div>
 
         <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6">
-          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">A Receber</p>
-          <p className="text-3xl font-bold text-white mb-2">R$ 376.208,85</p>
-          <p className="text-xs text-[#666666]">118 títulos em aberto</p>
+          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">Receita Recebida</p>
+          <p className="text-3xl font-bold text-white mb-2">
+            {loading ? '—' : `R$ ${stats.aReceber.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </p>
+          <p className="text-xs text-[#666666]">{loading ? 'Carregando...' : 'Boletos pagos'}</p>
         </div>
 
         <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6">
           <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">Inadimplentes</p>
-          <p className="text-3xl font-bold text-white mb-2">93</p>
-          <p className="text-xs text-[#666666]">43.9% do total</p>
+          <p className="text-3xl font-bold text-white mb-2">
+            {loading ? '—' : `R$ ${stats.inadimplentes.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          </p>
+          <p className="text-xs text-[#666666]">{loading ? 'Carregando...' : 'Vencidos (pendentes + registrados)'}</p>
         </div>
 
         <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6">
           <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider mb-3">Clientes Ativos</p>
-          <p className="text-3xl font-bold text-white mb-2">30</p>
-          <p className="text-xs text-[#666666]">Cadastrados na base</p>
+          <p className="text-3xl font-bold text-white mb-2">{loading ? '—' : stats.clientesAtivos}</p>
+          <p className="text-xs text-[#666666]">{loading ? 'Carregando...' : 'Cadastrados na base'}</p>
         </div>
       </div>
 

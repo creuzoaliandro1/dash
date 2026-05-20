@@ -58,26 +58,6 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
         </svg>
       )
     },
-    {
-      id: 'relatorios',
-      label: 'Relatórios',
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="12" y1="2" x2="12" y2="22"></line>
-          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-        </svg>
-      )
-    },
-    {
-      id: 'settings',
-      label: 'Configurações',
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M12 1v6m0 6v6M4.22 4.22l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6m-16.78 7.78l4.24-4.24m4.24-4.24l4.24-4.24"></path>
-        </svg>
-      )
-    },
   ]
 
   return (
@@ -128,63 +108,55 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
         ))}
       </nav>
 
-      {/* Operations Section */}
-      <div className="px-3 py-2 mt-4 flex flex-col gap-1 border-t border-[#1f1f1f] pt-4">
-        <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider px-2 py-2">Operações</p>
+      {/* Operations Section - Only for Master Users */}
+      {isMaster && (
+        <div className="px-3 py-2 mt-4 flex flex-col gap-1 border-t border-[#1f1f1f] pt-4">
+          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider px-2 py-2">Operações</p>
 
-        {/* Importar with submenu */}
-        <div className="flex flex-col gap-1">
-          <button
-            onClick={() => setExpandedMenu(expandedMenu === 'importar' ? null : 'importar')}
-            className="flex items-center justify-between px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition w-full"
-          >
-            <span>Importar</span>
-            <svg
-              className={`w-4 h-4 transition ${expandedMenu === 'importar' ? 'rotate-180' : ''}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
+          {/* Importar with submenu - Master Only */}
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => setExpandedMenu(expandedMenu === 'importar' ? null : 'importar')}
+              className="flex items-center justify-between px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition w-full"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-            </svg>
-          </button>
+              <span>Importar</span>
+              <svg
+                className={`w-4 h-4 transition ${expandedMenu === 'importar' ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+            </button>
 
-          {expandedMenu === 'importar' && (
-            <div className="pl-4 flex flex-col gap-1">
-              <button
-                onClick={() => setCurrentPage('conta-capt')}
-                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                  currentPage === 'conta-capt'
-                    ? 'bg-[#1a1a1a] text-white'
-                    : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                }`}
-              >
-                Conta Capt
-              </button>
-              <button
-                onClick={() => setCurrentPage('efactor')}
-                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                  currentPage === 'efactor'
-                    ? 'bg-[#1a1a1a] text-white'
-                    : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                }`}
-              >
-                E-Factor
-              </button>
-            </div>
-          )}
+            {expandedMenu === 'importar' && (
+              <div className="pl-4 flex flex-col gap-1">
+                <button
+                  onClick={() => setCurrentPage('conta-capt')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'conta-capt'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  Conta Capt
+                </button>
+                <button
+                  onClick={() => setCurrentPage('efactor')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'efactor'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  E-Factor
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-
-        <button className="flex items-center gap-3 px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition">
-          Emails
-        </button>
-        <button className="flex items-center gap-3 px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition">
-          Contas
-        </button>
-        <button className="flex items-center gap-3 px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition">
-          Pagamentos
-        </button>
-      </div>
+      )}
 
       {/* Footer */}
       <div className="mt-auto px-3 py-3 border-t border-[#1f1f1f]">
