@@ -3,6 +3,14 @@ import { createBoleto, getAllContas } from '../../services/boletoService'
 import { verificarCodigoBarrasExistente, gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 
+// Função para formatar valor em padrão brasileiro (55.457,87)
+function formatarValorBrasileiro(valor) {
+  if (!valor && valor !== 0) return '—'
+  const num = typeof valor === 'string' ? parseFloat(valor.replace(/[^\d.-]/g, '').replace(',', '.')) : valor
+  if (isNaN(num)) return '—'
+  return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   const [dataWithInstalments, setDataWithInstalments] = useState(
     previewData.map(item => ({
@@ -248,7 +256,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 {/* Sacado Information Section - Always at top */}
                 <div className="bg-[#0f0f0f] px-4 py-2 border-b border-[#1f1f1f] flex flex-col gap-1">
 
-                  {/* Linha 1: Nome + CPF/CNPJ + Telefone + Email */}
+                  {/* Linha 1: Nome + CPF/CNPJ + Telefone + Email + Avalista Nome + Avalista CPF/CNPJ */}
                   <div className="flex gap-3">
                     {/* Nome */}
                     <div
@@ -322,16 +330,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                         <p className="text-white text-xs truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
                       )}
                     </div>
-                  </div>
-
-                  {/* Linha 2: Avalista */}
-                  <div className="flex gap-3">
                     {/* Avalista Nome */}
                     <div
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_NOME', firstRecord.AVALISTA_NOME || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista - Nome</p>
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista</p>
                       {inlineEditingCell === `${itemIdx}-0-AVALISTA_NOME` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
@@ -349,7 +353,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_CIC', firstRecord.AVALISTA_CIC || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista - CPF/CNPJ</p>
+                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista CIC</p>
                       {inlineEditingCell === `${itemIdx}-0-AVALISTA_CIC` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
@@ -582,7 +586,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                                 <>
                                   <p className="text-[#666666] text-xs">Valor</p>
                                   <p className="text-white font-mono font-medium">
-                                    R$ {record.VALOR ? parseFloat(record.VALOR).toFixed(2) : '0,00'}
+                                    R$ {formatarValorBrasileiro(record.VALOR)}
                                   </p>
                                 </>
                               )}

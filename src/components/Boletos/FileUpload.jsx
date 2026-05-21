@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { processFilesForPreview, processContaCaptFileForBoletos } from '../../services/importService'
 
-export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas }) {
+export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas, contaData }) {
   const [isDragging, setIsDragging] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
@@ -57,16 +57,23 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
     try {
       // Obter dados do perfil selecionado para avalista
       let profileName = ''
-      let profileCNPJ = ''
+      let profileCIC = ''
 
+      // Tentar obter de allContas (para Master)
       if (allContas && allContas.length > 0 && selectedContaId) {
         const selectedConta = allContas.find(c => String(c.id) === String(selectedContaId))
         if (selectedConta) {
           profileName = selectedConta.nome_correntista || ''
-          // Usar CIC como identificador do avalista (CONTAS.cic)
-          profileCNPJ = selectedConta.cic || selectedConta.cpf_cnpj || selectedConta.cnpj || selectedConta.documento || ''
-          console.log(`[FileUpload] Usando perfil para avalista: ${profileName}${profileCNPJ ? ' (' + profileCNPJ + ')' : ''}`)
+          profileCIC = selectedConta.cic || selectedConta.cpf_cnpj || selectedConta.cnpj || selectedConta.documento || ''
+          console.log(`[FileUpload] ✅ Usando perfil (allContas) para avalista: ${profileName}${profileCIC ? ' (' + profileCIC + ')' : ''}`)
         }
+      }
+
+      // Se não encontrou em allContas, tentar usar contaData (para usuários não-Master)
+      if (!profileName && !profileCIC && contaData) {
+        profileName = contaData.nome_correntista || ''
+        profileCIC = contaData.cic || contaData.cpf_cnpj || contaData.cnpj || contaData.documento || ''
+        console.log(`[FileUpload] ℹ️ Usando perfil (contaData) para avalista: ${profileName}${profileCIC ? ' (' + profileCIC + ')' : ''}`)
       }
 
       let result = null
@@ -75,7 +82,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
       if (validFiles.length === 1 && validFiles[0].name.endsWith('.xlsx')) {
         const file = validFiles[0]
         try {
-          result = await processContaCaptFileForBoletos(file, userType, selectedContaId, profileName, profileCNPJ)
+          result = await processContaCaptFileForBoletos(file, userType, selectedContaId, profileName, profileCIC)
           // Converter resultado para formato compatível
           result = {
             data: result.data,
@@ -85,11 +92,11 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         } catch (err) {
           // Se falhar com processamento ContaCapt, tentar processamento genérico
           console.warn('[FileUpload] Processamento ContaCapt falhou, tentando processamento genérico:', err)
-          result = await processFilesForPreview(validFiles, profileName, profileCNPJ)
+          result = await processFilesForPreview(validFiles, profileName, profileCIC)
         }
       } else {
         // Usar processamento genérico para múltiplos arquivos ou outros formatos
-        result = await processFilesForPreview(validFiles, profileName, profileCNPJ)
+        result = await processFilesForPreview(validFiles, profileName, profileCIC)
       }
 
       // Atualizar progresso
@@ -147,7 +154,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
           <div className="flex-1 min-w-0">
             <span className="text-white font-semibold text-sm">Importar boletos em lote</span>
             <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
-              Arraste Excel (.xlsx, .xls), CSV (.csv), TXT (.txt) ou XML (NFe, NFSe, CTe, MDFe)
+              Arraste Excel (.xlsx, .xls, OS), CSV (.csv), TXT (.txt) ou XML (NFe, NFSe, CTe, MDFe)
             </span>
           </div>
           <label className="shrink-0">

@@ -35,12 +35,24 @@ export default function BoletosPage() {
   const selectedContaId = localStorage.getItem('activeContaId') || user.id
   const [allContas, setAllContas] = useState([])
 
+  // Debug: log do tipo de usuário
+  useEffect(() => {
+    console.log('[BoletosPage] Debug - userType:', userType, 'user:', user)
+  }, [userType])
+
   // Carregar contas se for Master
   useEffect(() => {
+    console.log('[BoletosPage] useEffect getAllContas - userType:', userType)
     if (userType === 'M') {
-      getAllContas().then(({ data }) => {
-        console.log('[BoletosPage] getAllContas retornou:', data)
+      console.log('[BoletosPage] Usuário é Master, chamando getAllContas()...')
+      getAllContas().then(({ data, error }) => {
+        console.log('[BoletosPage] getAllContas retornou:', { dataLength: data?.length, data, error })
+        if (error) {
+          console.error('[BoletosPage] ERRO na resposta:', error)
+          return
+        }
         if (data && data.length > 0) {
+          console.log('[BoletosPage] ✅ Contas carregadas com sucesso! Total:', data.length)
           console.log('[BoletosPage] PRIMEIRA CONTA - TODOS OS CAMPOS:')
           console.log(JSON.stringify(data[0], null, 2))
           console.log('[BoletosPage] Resumo das 3 primeiras contas:')
@@ -49,15 +61,21 @@ export default function BoletosPage() {
               id: c.id,
               cedente: c.cedente,
               conta: c.conta,
-              numero_conta: c.numero_conta,
-              agencia: c.agencia,
               nome_correntista: c.nome_correntista,
+              cic: c.cic,
               all_keys: Object.keys(c)
             })
           })
+          console.log('[BoletosPage] Chamando setAllContas com', data.length, 'contas')
           setAllContas(data)
+        } else {
+          console.warn('[BoletosPage] ⚠️ getAllContas retornou vazio ou undefined:', data)
         }
-      }).catch(err => console.error('[BoletosPage] Erro ao carregar contas:', err))
+      }).catch(err => {
+        console.error('[BoletosPage] ❌ Erro ao carregar contas:', err)
+      })
+    } else {
+      console.log('[BoletosPage] Usuário NÃO é Master, pulando getAllContas(). userType:', userType)
     }
   }, [userType])
 
@@ -276,6 +294,16 @@ export default function BoletosPage() {
     setDataVencimentoFim('')
   }
 
+  const handleChangePerfil = (contaId) => {
+    console.log('[BoletosPage] Mudando para conta:', contaId)
+    localStorage.setItem('activeContaId', contaId)
+    // Disparar evento para recarregar dados
+    window.dispatchEvent(new Event('contaSwitched'))
+    // Recarregar dados
+    loadBoletos()
+    loadContaData()
+  }
+
   const handleGenerateSecondViaZip = async () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
@@ -400,6 +428,33 @@ export default function BoletosPage() {
           <h1 className="text-2xl font-bold text-white">Boletos</h1>
           <p className="text-sm text-[#666666] mt-1">Emissão, consulta e gestão de títulos</p>
         </div>
+
+        {/* Seletor de Perfil Ativo (apenas para Master) */}
+        {(() => {
+          const shouldShow = userType === 'M' && allContas.length > 0
+          console.log('[BoletosPage] render - Perfil Ativo visibility check:', {
+            userType,
+            allContasLength: allContas.length,
+            shouldShow,
+            allContasSample: allContas.slice(0, 2)
+          })
+          return shouldShow && (
+            <div className="flex flex-col gap-1 ml-6">
+              <label className="text-xs text-[#666666] uppercase font-semibold">Perfil Ativo</label>
+              <select
+                value={getActiveContaId()}
+                onChange={(e) => handleChangePerfil(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition w-72"
+              >
+                {allContas.map((conta) => (
+                  <option key={conta.id} value={conta.id}>
+                    {conta.nome_correntista} ({conta.cedente || conta.conta})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        })()}
         <div className="flex gap-3">
           <button className="px-4 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition">
             Exportar CSV
@@ -432,6 +487,7 @@ export default function BoletosPage() {
         userType={userType}
         selectedContaId={selectedContaId}
         allContas={allContas}
+        contaData={contaData}
       />
 
       {/* Search and Filter - All in one line */}

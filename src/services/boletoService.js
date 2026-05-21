@@ -720,13 +720,21 @@ export const getAllContas = async () => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista, conta, cnpj, cpf_cnpj, documento')
+            .select('id, nome_correntista, conta, cedente, cic')
             .order('nome_correntista', { ascending: true })
 
       if (error) throw error
+
+      console.log('[getAllContas] Resultado da query:')
+      console.log('  Total de contas:', data?.length || 0)
+      if (data?.length > 0) {
+        console.log('  Primeira conta - campos:', Object.keys(data[0]))
+        console.log('  Exemplo:', data[0])
+      }
+
           return { data: data || [], error: null }
     } catch (err) {
-          console.error('Erro ao buscar contas:', err)
+          console.error('[getAllContas] Erro ao buscar contas:', err)
           return { data: [], error: err }
     }
 }
