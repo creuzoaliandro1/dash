@@ -230,9 +230,9 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
         nossoBase = '0'
     }
 
-    const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante exatamente 11 dígitos
-    const dvNN          = calcNNDV(nossoBaseFull)          // SEMPRE recalcula o DV
-    const nossoFmt      = nossoBaseFull                    // 11 digitos
+    const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante exatamente 11 dígitos para CNAB
+    const dvNN          = calcNNDV(nossoBase)              // DV: passa apenas a base (9 dígitos), não a versão padronizada!
+    const nossoFmt      = nossoBaseFull                    // 11 digitos para posição CNAB 071-081
 
     // --- Numero do titulo (Seu Numero) ---
     const tituloNum = cleanNum(boleto.numero_documento || boleto.nosso_numero || '')

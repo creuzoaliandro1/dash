@@ -111,7 +111,8 @@ export const getNextNossoNumero = async (contaId) => {
     const nextBase = Number(conta.nnumero || 0) + 1
 
     // Pre-calcula o DV do proximo numero para cache em nnumero_dv
-    const nextDv = calcNossoNumeroDV(String(nextBase).padStart(11, '0'))
+    // IMPORTANTE: passar apenas a base (9 dígitos), NÃO a versão padronizada!
+    const nextDv = calcNossoNumeroDV(String(nextBase))
 
     await supabase
       .from('CONTAS')

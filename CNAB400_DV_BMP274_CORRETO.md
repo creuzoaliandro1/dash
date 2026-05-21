@@ -17,7 +17,29 @@ Problema raiz:
 
 ---
 
-## ✅ Algoritmo Correto BMP274 (Validado)
+## 🔧 ERRO IDENTIFICADO E CORRIGIDO (Final Fix)
+
+**NOVO PROBLEMA:** Mesmo com os 13 dígitos e 13 pesos corretos, DVs ainda estavam errados!
+- 313500017 → arquivo: 2, esperado: 7 ❌
+- 313500016 → arquivo: 2, esperado: 9 ❌
+
+**CAUSA RAIZ:** O código estava passando a versão **padronizada para 11 dígitos** para calcNNDV, em vez da base original:
+- buildDetalhe1() chamava: `calcNNDV(nossoBaseFull)` onde `nossoBaseFull = "00313500017"` (11 dígitos)
+- getNextNossoNumero() chamava: `calcNossoNumeroDV(String(nextBase).padStart(11, '0'))` (11 dígitos)
+
+Quando calcNNDV recebia "00313500017":
+- `"00313500017".padStart(9, '0')` = "00313500017" (não adiciona padding porque já > 9)
+- `prefixado = "0900" + "00313500017"` = "090000313500017" (15 dígitos!) ❌ ERRADO!
+
+**SOLUÇÃO:** Passar apenas o nossoBase (9 dígitos), não a versão padronizada:
+- buildDetalhe1(): `calcNNDV(nossoBase)` onde `nossoBase = "313500017"` ✅
+- getNextNossoNumero(): `calcNossoNumeroDV(String(nextBase))` ✅
+
+Agora:
+- `"313500017".padStart(9, '0')` = "313500017" (já tem 9 dígitos)
+- `prefixado = "0900" + "313500017"` = "0900313500017" (13 dígitos) ✅ CORRETO!
+
+## ✅ Algoritmo Correto BMP274 (Validado e Testado)
 
 O algoritmo correto usa **TODOS os 13 dígitos** com **13 pesos**:
 
