@@ -459,15 +459,17 @@ export const generateBarcodeFromBoleto = (boleto, contaData) => {
     const agencia = '0001'
 
     // nosso_numero: armazenado SEM DV (ex: "313500015" - 9 dígitos)
-    // Para o código de barras, usa os 11 dígitos padronizados
+    // Para o código de barras, usa exatamente 11 dígitos padronizados
     let nossoNumeroRaw = String(boleto.nosso_numero || '').replace(/[^0-9]/g, '')
-    const nossoNumeroParaBarcode = nossoNumeroRaw.padStart(11, '0')  // 11 dígitos (base padded)
+    // Se tiver mais de 11, pega os últimos 11; se tiver menos, preenche com zeros
+    const nossoNumeroParaBarcode = nossoNumeroRaw.slice(-11).padStart(11, '0')
 
     // conta_corrente: ex "09535097" (8 dig com DV) → usa primeiros 7 + "0"
     // Para barcode/linha digitável, substitui último dígito (DV) por "0"
     // Se CONTAS.conta="09535097", usa "09535090"
     let contaRaw = String(contaData?.conta || contaData?.conta_corrente || '00000000').replace(/[^0-9]/g, '')
-    const conta = contaRaw.padStart(8, '0').slice(0, 7) + '0'  // Primeiros 7 dígitos + "0"
+    // Garante exatamente 7 primeiros dígitos + "0" = 8 dígitos
+    const conta = contaRaw.slice(0, 7).padStart(7, '0') + '0'
 
     // Campo Livre (25 dígitos): agencia(4) + "09"(2) + nossoNumero(11) + conta(8) = 25 dígitos
     // Barcode total: banco(3) + moeda(1) + DV(1) + fator(4) + valor(10) + campoLivre(25) = 44 dígitos
