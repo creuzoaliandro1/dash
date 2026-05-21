@@ -251,6 +251,13 @@ function parseNFe(xmlDoc) {
     let vNF = getElementText(xmlDoc, 'vNF') ||
               getElementText(xmlDoc, 'valor') || '0'
 
+    // Extrair descrição - prioridade: infCpl (NFe) → xDescServ (NFSe) → Discriminacao (NFSe alt) → xInfComp → Complemento
+    let descricao = getElementText(xmlDoc, 'infCpl') ||
+                    getElementText(xmlDoc, 'xDescServ') ||
+                    getElementText(xmlDoc, 'Discriminacao') ||
+                    getElementText(xmlDoc, 'xInfComp') ||
+                    getElementText(xmlDoc, 'Complemento') || ''
+
     // DADOS DO DESTINATÁRIO (sacado) - PROCURAR ESPECIFICAMENTE NA TAG <dest>
     const destElement = xmlDoc.getElementsByTagName('dest')[0]
     let destXNome = getChildElementText(destElement, 'xNome') || ''
@@ -277,7 +284,7 @@ function parseNFe(xmlDoc) {
     // Fallback: se tudo falhar, usar 'SEM_NUMERO'
     if (!nNF) nNF = 'SEM_NUMERO'
 
-    console.log('[NFe Parser] Extraído - NNF:', nNF, 'Destinatário:', destXNome, 'Valor:', vNF)
+    console.log('[NFe Parser] Extraído - NNF:', nNF, 'Destinatário:', destXNome, 'Valor:', vNF, 'Descrição:', descricao)
 
     return [{
       NUM_TITULO: nNF,
@@ -292,6 +299,7 @@ function parseNFe(xmlDoc) {
       EMISSAO: dhEmi ? new Date(dhEmi).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
       VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
       VALOR: parseFloat(vNF.toString().replace(/[^\d.,]/g, '').replace(',', '.')) || 0,
+      DESCRICAO: descricao || '',
       NOSSO_NUMERO: nNF,
       STATUS: 'pendente',
     }]
@@ -320,6 +328,13 @@ function parseNFSe(xmlDoc) {
                 getElementText(xmlDoc, 'vLiq') ||
                 getElementText(xmlDoc, 'vBC') ||
                 getElementText(xmlDoc, 'vServ') || '0'
+
+    // Extrair descrição - prioridade: xDescServ (NFSe) → Discriminacao → xInfComp → Complemento → infCpl
+    let descricao = getElementText(xmlDoc, 'xDescServ') ||
+                    getElementText(xmlDoc, 'Discriminacao') ||
+                    getElementText(xmlDoc, 'xInfComp') ||
+                    getElementText(xmlDoc, 'Complemento') ||
+                    getElementText(xmlDoc, 'infCpl') || ''
 
     // DADOS DO TOMADOR (sacado) - PROCURAR ESPECIFICAMENTE NA TAG DO TOMADOR
     // Tentar primeiro formato Ginfes: <TomadorServico>
@@ -406,6 +421,7 @@ function parseNFSe(xmlDoc) {
       EMISSAO: dataEmissao ? new Date(dataEmissao).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
       VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
       VALOR: valorLimpo,
+      DESCRICAO: descricao || '',
       NOSSO_NUMERO: numero,
       STATUS: 'pendente',
     }]
@@ -421,6 +437,11 @@ function parseCTe(xmlDoc) {
     const nCT = getElementText(xmlDoc, 'nCT') || ''
     const dhEmi = getElementText(xmlDoc, 'dhEmi') || new Date().toISOString()
     const vCT = getElementText(xmlDoc, 'vCT') || '0'
+    const descricao = getElementText(xmlDoc, 'xDescServ') ||
+                      getElementText(xmlDoc, 'Discriminacao') ||
+                      getElementText(xmlDoc, 'xInfComp') ||
+                      getElementText(xmlDoc, 'Complemento') ||
+                      getElementText(xmlDoc, 'infCpl') || ''
 
     // PROCURAR ESPECIFICAMENTE NA TAG <emit> (emitente/tomador)
     const emitElement = xmlDoc.getElementsByTagName('emit')[0]
@@ -446,6 +467,7 @@ function parseCTe(xmlDoc) {
       EMISSAO: dhEmi ? new Date(dhEmi).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
       VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
       VALOR: parseFloat(vCT.toString().replace(/[^\d.,]/g, '').replace(',', '.')) || 0,
+      DESCRICAO: descricao || '',
       NOSSO_NUMERO: nCT,
       STATUS: 'pendente',
     }]
@@ -461,6 +483,11 @@ function parseMDFe(xmlDoc) {
     const nMDF = getElementText(xmlDoc, 'nMDF') || ''
     const dhEmi = getElementText(xmlDoc, 'dhEmi') || new Date().toISOString()
     const vMDF = getElementText(xmlDoc, 'vMDF') || '0'
+    const descricao = getElementText(xmlDoc, 'xDescServ') ||
+                      getElementText(xmlDoc, 'Discriminacao') ||
+                      getElementText(xmlDoc, 'xInfComp') ||
+                      getElementText(xmlDoc, 'Complemento') ||
+                      getElementText(xmlDoc, 'infCpl') || ''
 
     // PROCURAR ESPECIFICAMENTE NA TAG <emit> (emitente/tomador)
     const emitElement = xmlDoc.getElementsByTagName('emit')[0]
@@ -486,6 +513,7 @@ function parseMDFe(xmlDoc) {
       EMISSAO: dhEmi ? new Date(dhEmi).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
       VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
       VALOR: parseFloat(vMDF.toString().replace(/[^\d.,]/g, '').replace(',', '.')) || 0,
+      DESCRICAO: descricao || '',
       NOSSO_NUMERO: nMDF,
       STATUS: 'pendente',
     }]
@@ -571,6 +599,15 @@ function processOSExcel(file, profileName, profileCIC, resolve, reject) {
       const sacado_bairro = String(getCellValue('F20') || '').trim()
       const sacado_cep = String(getCellValue('T20') || '').replace(/\D/g, '')
       const sacado_cidade = String(getCellValue('AJ19') || '').trim()
+
+      // Extrair G14 (placa) + L14 (descrição do equipamento) para descricao
+      const placa = String(getCellValue('G14') || '').trim()
+      const equipamento = String(getCellValue('L14') || '').trim()
+      const descricao = placa && equipamento ? `${placa} - ${equipamento}`
+                      : placa ? placa
+                      : equipamento ? equipamento
+                      : ''
+
       let valor = getCellValue('AU54')
 
       // Converter valor para número (detectar formato brasileiro ou internacional)
@@ -646,6 +683,7 @@ function processOSExcel(file, profileName, profileCIC, resolve, reject) {
         EMISSAO: data_emissao_formatada,
         VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
         VALOR: valor,
+        DESCRICAO: descricao,
         NOSSO_NUMERO: numero_documento, // Usar número do documento como nosso número
         STATUS: 'pendente',
         AVALISTA_NOME: profileName || '',

@@ -586,8 +586,33 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                                 <>
                                   <p className="text-[#666666] text-xs">Valor</p>
                                   <p className="text-white font-mono font-medium">
-                                    R$ {formatarValorBrasileiro(record.VALOR)}
+                                    {formatarValorBrasileiro(record.VALOR)}
                                   </p>
+                                </>
+                              )}
+                            </div>
+
+                            {/* Descrição - flex 1 */}
+                            <div
+                              style={{ flex: '1' }}
+                              className="cursor-pointer hover:opacity-80 transition"
+                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'DESCRICAO', record.DESCRICAO || '')}
+                            >
+                              {inlineEditingCell === `${itemIdx}-${recordIdx}-DESCRICAO` ? (
+                                <input
+                                  ref={inputRef}
+                                  type="text"
+                                  value={inlineEditValue}
+                                  onChange={(e) => setInlineEditValue(e.target.value)}
+                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'DESCRICAO')}
+                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'DESCRICAO')}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
+                                />
+                              ) : (
+                                <>
+                                  <p className="text-[#666666] text-xs">Descrição</p>
+                                  <p className="text-white text-sm truncate">{record.DESCRICAO || '—'}</p>
                                 </>
                               )}
                             </div>

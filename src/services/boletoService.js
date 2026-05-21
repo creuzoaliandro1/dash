@@ -69,9 +69,10 @@ export const getBoletos = async (contaId) => {
   }
 }
 
-// Buscar proximo nosso_numero da conta, calcular DV e incrementar CONTAS.nnumero
-// Retorna string no formato: String(nnumero) + DV  (ex: nnumero=50007, DV=2 → "500072")
-// No CNAB: base = tudo exceto ultimo char, padded a 11; pos82 = ultimo char (DV)
+// Buscar proximo nosso_numero da conta e incrementar CONTAS.nnumero
+// IMPORTANTE: Retorna APENAS O NÚMERO BASE (SEM DV)
+// O DV é calculado apenas na geração do CNAB400 (pos 82)
+// Retorna: CONTAS.nnumero + 1 (ex: nnumero=50007 → retorna "50008")
 export const getNextNossoNumero = async (contaId) => {
   try {
     const { data: conta, error } = await supabase
@@ -82,58 +83,41 @@ export const getNextNossoNumero = async (contaId) => {
 
     if (error) throw error
 
-    const base    = Number(conta.nnumero || 1)
-    const basePad = String(base).padStart(11, '0')    // padded apenas para calculo do DV
-    const dv      = calcNossoNumeroDV(basePad)         // calcula DV pelo padrao BMP
+    // Incrementa CONTAS.nnumero e retorna o novo valor (sem DV)
+    const nextBase = Number(conta.nnumero || 0) + 1
 
-    // Incrementa nnumero e pre-calcula o DV do proximo para cache em nnumero_dv
-    const nextBase = base + 1
-    const nextDv   = calcNossoNumeroDV(String(nextBase).padStart(11, '0'))
+    // Pre-calcula o DV do proximo numero para cache em nnumero_dv
+    const nextDv = calcNossoNumeroDV(String(nextBase).padStart(11, '0'))
+
     await supabase
       .from('CONTAS')
       .update({ nnumero: nextBase, nnumero_dv: nextDv })
       .eq('id', contaId)
 
-    // Armazena como String(base)+DV — sem padding, ex: "500072"
-    // CNAB usa: base = slice(0,-1) padded a 11; DV = slice(-1)
-    return { nossoNumero: String(base) + dv, error: null }
+    // Armazena APENAS O NÚMERO, SEM DV
+    // Exemplo: nextBase = 50008 → retorna "50008" (string)
+    // CNAB400 vai recalcular o DV na posição 82
+    return { nossoNumero: String(nextBase), error: null }
   } catch (err) {
     console.error('Erro ao gerar nosso numero:', err)
     return { nossoNumero: null, error: err }
   }
 }
 
-// Garante que um nosso_numero tenha o DV correto anexado.
-// Trata o valor recebido como BASE (sem DV) e calcula + anexa o DV.
-const appendDV = (nossoNumeroBase) => {
-  const base = String(nossoNumeroBase || '').replace(/\D/g, '')
-  if (!base) return ''
-  const basePad = base.padStart(11, '0').slice(0, 11)
-  const dv = calcNossoNumeroDV(basePad)
-  return base + dv
-}
-
 // Criar novo boleto
 export const createBoleto = async (contaId, boletoData) => {
   try {
-    let nossoNumeroFinal
-
-    if (boletoData.NOSSO_NUMERO) {
-      // Importação: nosso_numero já existe (registrado no BMP).
-      // Trata o valor como BASE e garante que o DV seja calculado e anexado.
-      nossoNumeroFinal = appendDV(boletoData.NOSSO_NUMERO)
-      console.log('[BoletoService] nosso_numero (import + DV):', nossoNumeroFinal)
-    } else {
-      // Novo boleto via formulário: gera do contador CONTAS.nnumero.
-      const { nossoNumero: gerado, error: nnErr } = await getNextNossoNumero(contaId)
-      if (nnErr || !gerado) {
-        const msg = nnErr?.message || 'erro desconhecido'
-        console.error('[BoletoService] Erro ao gerar nosso_numero:', msg)
-        throw new Error('Falha ao gerar nosso número da conta: ' + msg)
-      }
-      nossoNumeroFinal = gerado
-      console.log('[BoletoService] nosso_numero gerado:', nossoNumeroFinal)
+    // IMPORTANTE: SEMPRE gera novo nosso_numero usando o contador CONTAS.nnumero
+    // Isso garante que cada boleto (importado ou novo) tenha um número único e sequencial
+    // Não usa NOSSO_NUMERO do arquivo importado - sempre gera um novo
+    const { nossoNumero: gerado, error: nnErr } = await getNextNossoNumero(contaId)
+    if (nnErr || !gerado) {
+      const msg = nnErr?.message || 'erro desconhecido'
+      console.error('[BoletoService] Erro ao gerar nosso_numero:', msg)
+      throw new Error('Falha ao gerar nosso número da conta: ' + msg)
     }
+    const nossoNumeroFinal = gerado
+    console.log('[BoletoService] nosso_numero gerado:', nossoNumeroFinal, '(contador CONTAS.nnumero + 1)')
 
     // Mapear dados para as colunas corretas da tabela capt_boletos
     const dataToInsert = {
@@ -284,20 +268,23 @@ export const getBoletoStats = async (contaId) => {
   }
 }
 
-// Criar registro de remessa CNAB400 na tabela REMESSAS existente
+// Criar registro de remessa CNAB400 na tabela capt_remessas
 export const createRemessa = async (contaId, remessaData) => {
   try {
     const dataToInsert = {
-      "ARQUIVO_REMESSA": remessaData.filename,
-      "DATA_REMESSA": new Date().toISOString().split('T')[0],
-      "DATA_ENVIO": new Date().toISOString(),
-      "STATUS": 'gerado',
-      "CONTA": remessaData.conta || '',
-      "AGENCIA": remessaData.agencia || '',
+      conta_id: contaId,  // FK para capt_contas - OBRIGATÓRIO para RLS
+      nome_arquivo: remessaData.filename || '',
+      data_geracao: new Date().toISOString(),
+      quantidade_boletos: remessaData.quantidadeBoletos || 0,
+      valor_total: remessaData.valorTotal || 0,
+      boletos_ids: remessaData.boletosIds || [],  // Array de UUIDs dos boletos
+      status: 'gerado',
     }
 
+    console.log('[RemessaService] Inserindo remessa:', dataToInsert)
+
     const { data, error } = await supabase
-      .from('REMESSAS')
+      .from('capt_remessas')
       .insert([dataToInsert])
       .select()
       .single()
@@ -307,7 +294,7 @@ export const createRemessa = async (contaId, remessaData) => {
       throw error
     }
 
-    console.log('[RemessaService] Remessa criada com sucesso:', data?.ID)
+    console.log('[RemessaService] Remessa criada com sucesso:', data?.id)
     return { data, error: null }
   } catch (err) {
     console.error('Erro ao criar remessa:', err)

@@ -322,7 +322,17 @@ export default function BoletosPage() {
       console.log('[Ações] Gerando ZIP para', boletosParaZip.length, 'boletos selecionados')
 
       const pdfList = await generateMultipleBoletoPDFs(boletosParaZip, contaData)
-      await createAndDownloadZip(pdfList, 'boletos.zip')
+
+      // Gerar nome do arquivo: boletos+ddmmyy+hhmm
+      const now = new Date()
+      const dd = String(now.getDate()).padStart(2, '0')
+      const mm = String(now.getMonth() + 1).padStart(2, '0')
+      const yy = String(now.getFullYear()).slice(-2)
+      const hh = String(now.getHours()).padStart(2, '0')
+      const min = String(now.getMinutes()).padStart(2, '0')
+      const zipFilename = `boletos${dd}${mm}${yy}_${hh}${min}.zip`
+
+      await createAndDownloadZip(pdfList, zipFilename)
 
       alert(`ZIP com ${pdfList.length} boleto(s) gerado com sucesso!`)
       setSelectedRows(new Set())
@@ -394,13 +404,13 @@ export default function BoletosPage() {
 
       // Track remittance in database
       const valorTotal = boletosParaRemessa.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+      const boletosIds = boletosParaRemessa.map(b => b.id).filter(Boolean)
 
       const { error: remessaError } = await createRemessa(activeId, {
         filename,
         quantidadeBoletos: boletosParaRemessa.length,
         valorTotal,
-        conta: contaParaRemessa?.cedente || '',
-        agencia: contaParaRemessa?.agencia || '',
+        boletosIds,
       })
 
       if (remessaError) {
