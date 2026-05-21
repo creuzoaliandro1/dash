@@ -4,8 +4,11 @@ import { supabase } from '../lib/supabase'
 /**
  * Parse Excel files (.xlsx, .xls) - SIMPLES e DIRETO
  * Carrega biblioteca XLSX do unpkg e mapeia colunas automaticamente
+ * @param {File} file - arquivo Excel
+ * @param {string} profileName - nome do perfil/conta (avalista nome)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta (avalista CIC)
  */
-async function parseExcelFile(file) {
+async function parseExcelFile(file, profileName, profileCNPJ) {
   return new Promise((resolve, reject) => {
     // Carregar biblioteca XLSX se não estiver carregada
     if (!window.XLSX) {
@@ -14,18 +17,18 @@ async function parseExcelFile(file) {
       document.head.appendChild(script)
 
       script.onload = () => {
-        processExcelFile(file, resolve, reject)
+        processExcelFile(file, profileName, profileCNPJ, resolve, reject)
       }
       script.onerror = () => {
         reject(new Error('Erro ao carregar biblioteca Excel'))
       }
     } else {
-      processExcelFile(file, resolve, reject)
+      processExcelFile(file, profileName, profileCNPJ, resolve, reject)
     }
   })
 }
 
-function processExcelFile(file, resolve, reject) {
+function processExcelFile(file, profileName, profileCNPJ, resolve, reject) {
   const reader = new FileReader()
 
   reader.onload = (e) => {
@@ -57,8 +60,9 @@ function processExcelFile(file, resolve, reject) {
           SACADO_TELEFONE: String(row['Telefone do pagador'] || '').trim(),
           SACADO_EMAIL: String(row['Email do pagador'] || '').trim(),
           CODIGO_BARRAS: String(row['Linha digitável'] || '').trim(),
-          AVALISTA_NOME: String(row['Beneficiário final (sacador avalista)'] || '').trim(),
-          AVALISTA_CIC: String(row['Documento federal do avalista'] || row['CPF/CNPJ do avalista'] || row['CIC do avalista'] || '').replace(/\D/g, ''),
+          // Avalista auto-populate com dados do perfil logado
+          AVALISTA_NOME: profileName || String(row['Beneficiário final (sacador avalista)'] || '').trim(),
+          AVALISTA_CIC: profileCNPJ || String(row['Documento federal do avalista'] || row['CPF/CNPJ do avalista'] || row['CIC do avalista'] || '').replace(/\D/g, ''),
           VALOR_PAGAMENTO: parseFloat(String(row['Valor pago'] || '0').replace(/[^\d,.-]/g, '').replace(',', '.')),
           DATA_PAGAMENTO: formatarData(row['Data de pagamento']),
           DESCRICAO: String(row['Descrição'] || row['Descricao'] || '').trim(),
@@ -104,8 +108,11 @@ function formatarData(dataExcel) {
 
 /**
  * Parse CSV files (.csv)
+ * @param {File} file - arquivo CSV
+ * @param {string} profileName - nome do perfil/conta (avalista nome)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta (avalista CIC)
  */
-async function parseCSVFile(file) {
+async function parseCSVFile(file, profileName, profileCNPJ) {
   const text = await file.text()
   const lines = text.split('\n').filter(line => line.trim())
   const headers = lines[0].split(',').map(h => h.trim())
@@ -127,13 +134,19 @@ async function parseCSVFile(file) {
     VALOR: parseFloat(row['VALOR'] || row['Valor'] || row['valor'] || 0),
     NOSSO_NUMERO: row['NOSSO_NUMERO'] || row['Nosso Número'] || row['nosso_numero'] || '',
     STATUS: row['STATUS'] || row['Status'] || row['status'] || 'pendente',
+    // Avalista auto-populate com dados do perfil logado
+    AVALISTA_NOME: profileName || '',
+    AVALISTA_CIC: profileCNPJ || '',
   }))
 }
 
 /**
  * Parse TXT files (fixed format)
+ * @param {File} file - arquivo TXT
+ * @param {string} profileName - nome do perfil/conta (avalista nome)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta (avalista CIC)
  */
-async function parseTXTFile(file) {
+async function parseTXTFile(file, profileName, profileCNPJ) {
   const text = await file.text()
   const lines = text.split('\n').filter(line => line.trim())
 
@@ -148,6 +161,9 @@ async function parseTXTFile(file) {
       VALOR: parseFloat(valor || 0),
       NOSSO_NUMERO: nossoNumero || '',
       STATUS: status || 'pendente',
+      // Avalista auto-populate com dados do perfil logado
+      AVALISTA_NOME: profileName || '',
+      AVALISTA_CIC: profileCNPJ || '',
     }
   })
 }
@@ -481,8 +497,11 @@ function parseMDFe(xmlDoc) {
 
 /**
  * Process file based on extension
+ * @param {File} file - arquivo a processar
+ * @param {string} profileName - nome do perfil/conta para avalista (opcional)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta para avalista (opcional)
  */
-export async function processFile(file) {
+export async function processFile(file, profileName = '', profileCNPJ = '') {
   const extension = file.name.split('.').pop().toLowerCase()
 
   try {
@@ -492,14 +511,14 @@ export async function processFile(file) {
 
     switch (extension) {
       case 'csv':
-        data = await parseCSVFile(file)
+        data = await parseCSVFile(file, profileName, profileCNPJ)
         break
       case 'txt':
-        data = await parseTXTFile(file)
+        data = await parseTXTFile(file, profileName, profileCNPJ)
         break
       case 'xlsx':
       case 'xls':
-        data = await parseExcelFile(file)
+        data = await parseExcelFile(file, profileName, profileCNPJ)
         break
       case 'xml':
         data = await parseXMLFile(file)
@@ -523,15 +542,18 @@ export async function processFile(file) {
 
 /**
  * Process files and return preview data without saving to database
+ * @param {File[]} files - arquivos a processar
+ * @param {string} profileName - nome do perfil/conta para avalista (opcional)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta para avalista (opcional)
  */
-export async function processFilesForPreview(files) {
+export async function processFilesForPreview(files, profileName = '', profileCNPJ = '') {
   console.log(`[Import] Processando ${files.length} arquivo(s) para preview`)
 
   const allData = []
   const errors = []
 
   for (const file of files) {
-    const { success, data, error, fileName } = await processFile(file)
+    const { success, data, error, fileName } = await processFile(file, profileName, profileCNPJ)
 
     if (!success) {
       console.error(`[Import] Erro ao processar ${fileName}:`, error)
@@ -604,8 +626,12 @@ function detectChanges(existing, imported) {
 
 /**
  * Import multiple files with upsert logic (insert or update)
+ * @param {File[]} files - arquivos a importar
+ * @param {string} userId - ID do usuário/conta
+ * @param {string} profileName - nome do perfil/conta para avalista (opcional)
+ * @param {string} profileCNPJ - CNPJ do perfil/conta para avalista (opcional)
  */
-export async function importBoletos(files, userId) {
+export async function importBoletos(files, userId, profileName = '', profileCNPJ = '') {
   console.log(`[Import] Iniciando importação de ${files.length} arquivo(s) para usuário ${userId}`)
 
   const results = []
@@ -615,7 +641,7 @@ export async function importBoletos(files, userId) {
   let totalErrors = 0
 
   for (const file of files) {
-    const { success, data, error, fileName } = await processFile(file)
+    const { success, data, error, fileName } = await processFile(file, profileName, profileCNPJ)
 
     if (!success) {
       console.error(`[Import] Erro ao processar ${fileName}:`, error)

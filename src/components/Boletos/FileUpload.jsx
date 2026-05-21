@@ -55,6 +55,20 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
     setUploadProgress({ current: 0, total: validFiles.length })
 
     try {
+      // Obter dados do perfil selecionado para avalista
+      let profileName = ''
+      let profileCNPJ = ''
+
+      if (allContas && allContas.length > 0 && selectedContaId) {
+        const selectedConta = allContas.find(c => String(c.id) === String(selectedContaId))
+        if (selectedConta) {
+          profileName = selectedConta.nome_correntista || ''
+          // Tentar encontrar o CNPJ em um dos possíveis campos
+          profileCNPJ = selectedConta.cnpj || selectedConta.cpf_cnpj || selectedConta.documento || ''
+          console.log(`[FileUpload] Usando perfil para avalista: ${profileName}${profileCNPJ ? ' (' + profileCNPJ + ')' : ''}`)
+        }
+      }
+
       let result = null
 
       // Se há apenas um arquivo .xlsx e é provavelmente do Capt Capital
@@ -71,11 +85,11 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         } catch (err) {
           // Se falhar com processamento ContaCapt, tentar processamento genérico
           console.warn('[FileUpload] Processamento ContaCapt falhou, tentando processamento genérico:', err)
-          result = await processFilesForPreview(validFiles)
+          result = await processFilesForPreview(validFiles, profileName, profileCNPJ)
         }
       } else {
         // Usar processamento genérico para múltiplos arquivos ou outros formatos
-        result = await processFilesForPreview(validFiles)
+        result = await processFilesForPreview(validFiles, profileName, profileCNPJ)
       }
 
       // Atualizar progresso

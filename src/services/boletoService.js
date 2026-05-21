@@ -715,11 +715,12 @@ export const getContaInfo = async (contaId) => {
 }
 
 // Buscar todas as contas (usado pelo combobox de troca de perfil para usuarios tipo M)
+// Agora inclui CNPJ para auto-preenchimento de avalista durante importação
 export const getAllContas = async () => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista, conta')
+            .select('id, nome_correntista, conta, cnpj, cpf_cnpj, documento')
             .order('nome_correntista', { ascending: true })
 
       if (error) throw error
