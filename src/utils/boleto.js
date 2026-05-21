@@ -459,19 +459,29 @@ export const generateBarcodeFromBoleto = (boleto, contaData) => {
     const agencia = '0001'
 
     // nosso_numero: armazenado SEM DV (ex: "313500015" - 9 dígitos)
-    // Usar direto com padStart para 11 dígitos (não remover o último!)
+    // Para o código de barras, usa os 11 dígitos padronizados
     let nossoNumeroRaw = String(boleto.nosso_numero || '').replace(/[^0-9]/g, '')
-    const nossoNumero = nossoNumeroRaw.padStart(11, '0')
+    const nossoNumeroParaBarcode = nossoNumeroRaw.padStart(11, '0')  // 11 dígitos (base padded)
 
-    // conta_corrente: ex "09544156" (8 dig) → remove ultimo digito (DV) → "0954415" (7 dig)
-    let contaRaw = String(contaData?.conta_corrente || '0000000').replace(/[^0-9]/g, '')
-    if (contaRaw.length > 7) contaRaw = contaRaw.slice(0, 7)  // Remove DV (last digit)
-    const conta = contaRaw.padStart(7, '0')  // 7 digits, no extra '0' at the end
+    // conta_corrente: ex "09535097" (8 dig com DV) → usa primeiros 7 + "0"
+    // Para barcode/linha digitável, substitui último dígito (DV) por "0"
+    // Se CONTAS.conta="09535097", usa "09535090"
+    let contaRaw = String(contaData?.conta || contaData?.conta_corrente || '00000000').replace(/[^0-9]/g, '')
+    const conta = contaRaw.padStart(8, '0').slice(0, 7) + '0'  // Primeiros 7 dígitos + "0"
 
-    const freeField = `${agencia}09${nossoNumero}${conta}`
+    // Campo Livre (25 dígitos): agencia(4) + "09"(2) + nossoNumero(11) + conta(8) = 25 dígitos
+    // Barcode total: banco(3) + moeda(1) + DV(1) + fator(4) + valor(10) + campoLivre(25) = 44 dígitos
+    const freeField = `${agencia}09${nossoNumeroParaBarcode}${conta}`
     const block = `${banco}${moeda}${fator}${valorStr}${freeField}`
     const dv = modulo11Barcode(block)
-    return `${banco}${moeda}${dv}${fator}${valorStr}${freeField}`
+    const barcode = `${banco}${moeda}${dv}${fator}${valorStr}${freeField}`
+
+    // Validação: garantir que o barcode tem exatamente 44 dígitos
+    if (barcode.length !== 44) {
+        console.warn(`[generateBarcodeFromBoleto] ⚠️ Barcode tem ${barcode.length} dígitos, esperado 44. Barcode: ${barcode}`)
+    }
+
+    return barcode
 }
 
 // Gera linha digitavel formatada (47 digitos)
