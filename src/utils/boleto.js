@@ -26,6 +26,7 @@ const formatDate = (date) => {
     if (!date) return ''
 
     if (typeof date === 'string' && date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          // YYYY-MM-DD format - parse as local date to avoid timezone offset
           const [year, month, day] = date.split('-')
           return `${day}/${month}/${year}`
     }
@@ -450,23 +451,22 @@ const modulo11Barcode = (numero) => {
 
 // Gera string de 44 digitos do codigo de barras BMP (banco 274)
 // usando campos diretos de capt_boletos + CONTAS
-const generateBarcodeFromBoleto = (boleto, contaData) => {
+export const generateBarcodeFromBoleto = (boleto, contaData) => {
     const banco = '274'
     const moeda = '9'
     const fator = calcularFatorVencimento(boleto.data_vencimento)
     const valorStr = getValorForBarcode(boleto.valor)
     const agencia = '0001'
 
-    // nosso_numero: ex "004025007598" (12 dig) → remove ultimo digito (DV) → "00402500759" (11 dig)
+    // nosso_numero: armazenado SEM DV (ex: "313500015" - 9 dígitos)
+    // Usar direto com padStart para 11 dígitos (não remover o último!)
     let nossoNumeroRaw = String(boleto.nosso_numero || '').replace(/[^0-9]/g, '')
-    let numeroBase = nossoNumeroRaw.slice(0, -1) || '0'
-    const nossoNumero = numeroBase.padStart(11, '0')
+    const nossoNumero = nossoNumeroRaw.padStart(11, '0')
 
-    // conta_corrente: ex "09544156" (8 dig) → remove ultimo digito (DV) → "0954415" (7 dig) + "0"
+    // conta_corrente: ex "09544156" (8 dig) → remove ultimo digito (DV) → "0954415" (7 dig)
     let contaRaw = String(contaData?.conta_corrente || '0000000').replace(/[^0-9]/g, '')
-    if (contaRaw.length > 7) contaRaw = contaRaw.slice(0, 7)
-    const contaSemDV = contaRaw.padStart(7, '0')
-    const conta = contaSemDV + '0'
+    if (contaRaw.length > 7) contaRaw = contaRaw.slice(0, 7)  // Remove DV (last digit)
+    const conta = contaRaw.padStart(7, '0')  // 7 digits, no extra '0' at the end
 
     const freeField = `${agencia}09${nossoNumero}${conta}`
     const block = `${banco}${moeda}${fator}${valorStr}${freeField}`

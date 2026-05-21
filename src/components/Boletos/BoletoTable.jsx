@@ -12,8 +12,9 @@ const formatDate = (dateStr) => {
       const [day, month, year] = dateStr.split('/')
       date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
     } else if (dateStr.includes('-')) {
-      // YYYY-MM-DD format
-      date = new Date(dateStr)
+      // YYYY-MM-DD format - parse as local date, not UTC
+      const [year, month, day] = dateStr.split('-')
+      date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
     } else {
       return dateStr
     }

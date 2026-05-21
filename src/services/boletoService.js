@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { generateBarcodeFromBoleto } from '../utils/boleto'
 
 // Calcula DV do nosso numero - algoritmo BMP274 CNAB400 (oficial)
 // Algoritmo:
@@ -163,12 +164,32 @@ export const createBoleto = async (contaId, boletoData) => {
       sacado_cep: boletoData.SACADO_CEP || '',
       sacado_telefone: boletoData.SACADO_TELEFONE || '',
       sacado_email: boletoData.SACADO_EMAIL || '',
-      codigo_barras: boletoData.CODIGO_BARRAS || '',
       avalista_nome: boletoData.AVALISTA_NOME || '',
       avalista_cic:  boletoData.AVALISTA_CIC  || '',
       valor_pagamento: parseFloat(boletoData.VALOR_PAGAMENTO || 0),
       data_pagamento: boletoData.DATA_PAGAMENTO ? convertDateToPG(boletoData.DATA_PAGAMENTO) : null,
       descricao: boletoData.DESCRICAO || '',
+    }
+
+    // Gerar codigo de barras automaticamente
+    try {
+      const { data: contaData, error: contaErr } = await supabase
+        .from('CONTAS')
+        .select('conta_corrente')
+        .eq('id', contaId)
+        .single()
+
+      if (!contaErr && contaData) {
+        const barcode = generateBarcodeFromBoleto(dataToInsert, contaData)
+        dataToInsert.codigo_barras = barcode
+        console.log('[BoletoService] Código de barras gerado:', barcode)
+      } else {
+        console.warn('[BoletoService] Aviso ao gerar barcode - não encontrou conta:', contaErr)
+        dataToInsert.codigo_barras = ''
+      }
+    } catch (err) {
+      console.error('[BoletoService] Erro ao gerar codigo_barras:', err)
+      dataToInsert.codigo_barras = ''
     }
 
     console.log('[BoletoService] Criando boleto com dados:', dataToInsert)
@@ -195,6 +216,41 @@ export const createBoleto = async (contaId, boletoData) => {
 // Atualizar boleto
 export const updateBoleto = async (boletoId, updates) => {
   try {
+    // Se campos que afetam o código de barras foram alterados, regenerar o barcode
+    const barcodeRelatedFields = ['data_vencimento', 'valor', 'nosso_numero']
+    const hasBarcodeDependentChanges = Object.keys(updates).some(key =>
+      barcodeRelatedFields.includes(key)
+    )
+
+    if (hasBarcodeDependentChanges) {
+      console.log('[updateBoleto] Detectado mudança em campo que afeta barcode, regenerando...')
+
+      // Buscar o boleto atual para ter todos os dados
+      const { data: boletoAtual, error: fetchErr } = await supabase
+        .from('capt_boletos')
+        .select('*')
+        .eq('id', boletoId)
+        .single()
+
+      if (!fetchErr && boletoAtual) {
+        // Mesclar atualizações com dados atuais
+        const boletoMerged = { ...boletoAtual, ...updates }
+
+        // Buscar dados da conta
+        const { data: contaData, error: contaErr } = await supabase
+          .from('CONTAS')
+          .select('conta_corrente')
+          .eq('id', boletoMerged.conta_id)
+          .single()
+
+        if (!contaErr && contaData) {
+          const barcode = generateBarcodeFromBoleto(boletoMerged, contaData)
+          updates.codigo_barras = barcode
+          console.log('[updateBoleto] Novo código de barras gerado:', barcode)
+        }
+      }
+    }
+
     const { data, error } = await supabase
       .from('capt_boletos')
       .update(updates)
