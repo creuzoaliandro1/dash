@@ -112,17 +112,41 @@ const padRight = (text, size, char = ' ') => {
 }
 
 // Calcula digito verificador do Nosso Numero - algoritmo BMP274 (CNAB400)
-// Pesos [2,3,4,5,6,7,8,9,2,3,4], esquerda para direita sobre os 11 digitos da base.
-// Se resto < 2: DV = 0. Senao: DV = 11 - resto.
+// Algoritmo oficial BMP (Banco Nossa Caixa):
+// 1. Prefixar com "0900" + nosso_numero (ex: 313500015 → 0900313500015)
+// 2. Usar TODOS os 13 dígitos com pesos [2,7,6,5,4,3,2,7,6,5,4,3,2]
+// 3. Multiplicar, somar, dividir por 11
+// 4. Se resto=0: DV="0", Se resto=1: DV="P", Senão: DV=11-resto
 export const calcNNDV = (nossoNumero) => {
-    const base = String(nossoNumero || '').replace(/\D/g, '').padStart(11, '0').slice(0, 11)
-    const pesos = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4]
+    const num = String(nossoNumero || '').replace(/\D/g, '')
+
+    // Prefixar com "0900" para o cálculo
+    const prefixado = '0900' + num.padStart(9, '0')  // Garante 13 dígitos total
+
+    // Usar TODOS os 13 dígitos (não usar slice!)
+    const base13 = prefixado
+
+    // Pesos oficiais BMP274 - 13 pesos para 13 dígitos
+    const pesos = [2, 7, 6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+
+    // Multiplicar e somar
     let soma = 0
-    for (let i = 0; i < 11; i++) {
-        soma += parseInt(base.charAt(i), 10) * pesos[i]
+    for (let i = 0; i < 13; i++) {
+        soma += parseInt(base13.charAt(i), 10) * pesos[i]
     }
-    const resto = soma % 11
-    return resto < 2 ? '0' : String(11 - resto)
+
+    // Dividir por 11 e calcular resto
+    const quociente = Math.floor(soma / 11)
+    const resto = soma - (quociente * 11)
+
+    // Calcular DV conforme regra BMP274
+    if (resto === 0) {
+        return '0'
+    } else if (resto === 1) {
+        return 'P'  // Letra P quando resto = 1
+    } else {
+        return String(11 - resto)
+    }
 }
 
 // Determina tipo pessoa pelo CIC: '01' CPF (11 dig), '02' CNPJ (14 dig)
