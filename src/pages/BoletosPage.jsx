@@ -402,20 +402,25 @@ export default function BoletosPage() {
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
 
-      // Track remittance in database
+      // Track remittance in database (opcional - continua mesmo se falhar)
       const valorTotal = boletosParaRemessa.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
-      const boletosIds = boletosParaRemessa.map(b => b.id).filter(Boolean)
 
-      const { error: remessaError } = await createRemessa(activeId, {
-        filename,
-        quantidadeBoletos: boletosParaRemessa.length,
-        valorTotal,
-        boletosIds,
-      })
+      try {
+        const { error: remessaError } = await createRemessa(activeId, {
+          filename,
+          quantidadeBoletos: boletosParaRemessa.length,
+          valorTotal,
+        })
 
-      if (remessaError) {
-        console.error('[CNAB400] Erro ao registrar remessa:', remessaError)
-        // Continue anyway - file was generated
+        if (remessaError) {
+          console.warn('[CNAB400] Aviso ao registrar remessa (continua mesmo assim):', remessaError)
+          // Continue anyway - arquivo foi gerado com sucesso
+        } else {
+          console.log('[CNAB400] Remessa registrada no banco com sucesso')
+        }
+      } catch (err) {
+        console.warn('[CNAB400] Aviso ao registrar remessa:', err)
+        // Continua mesmo com erro - o arquivo já foi gerado
       }
 
       alert(`Remessa CNAB400 "${filename}" gerada com sucesso!`)
