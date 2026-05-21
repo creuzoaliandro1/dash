@@ -762,7 +762,7 @@ function extractContaFromBarcode(codigo_barras) {
  * Se é Master: mostra todos os registros agrupados por conta
  * Se não é Master: mostra apenas registros da conta selecionada
  */
-export async function processContaCaptFileForBoletos(file, userType, selectedContaId) {
+export async function processContaCaptFileForBoletos(file, userType, selectedContaId, profileName = '', profileCNPJ = '') {
   return new Promise((resolve, reject) => {
     if (!window.XLSX) {
       const script = document.createElement('script')
@@ -770,18 +770,18 @@ export async function processContaCaptFileForBoletos(file, userType, selectedCon
       document.head.appendChild(script)
 
       script.onload = () => {
-        processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
+        processContaCaptExcel(file, userType, selectedContaId, profileName, profileCNPJ, resolve, reject)
       }
       script.onerror = () => {
         reject(new Error('Erro ao carregar biblioteca Excel'))
       }
     } else {
-      processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
+      processContaCaptExcel(file, userType, selectedContaId, profileName, profileCNPJ, resolve, reject)
     }
   })
 }
 
-function processContaCaptExcel(file, userType, selectedContaId, resolve, reject) {
+function processContaCaptExcel(file, userType, selectedContaId, profileName = '', profileCNPJ = '', resolve, reject) {
   const reader = new FileReader()
 
   reader.onload = (e) => {
@@ -817,7 +817,9 @@ function processContaCaptExcel(file, userType, selectedContaId, resolve, reject)
           SACADO_EMAIL: String(row['Email do pagador'] || '').trim(),
           CODIGO_BARRAS: codigoBarras,
           CONTA_CODIGO: contaCodigo,
-          AVALISTA_NOME: String(row['Beneficiário final (sacador avalista)'] || '').trim(),
+          // Avalista: usar dados da conta selecionada (profileName, profileCNPJ)
+          AVALISTA_NOME: profileName || String(row['Beneficiário final (sacador avalista)'] || '').trim(),
+          AVALISTA_CIC: profileCNPJ || String(row['Documento federal do avalista'] || row['CPF/CNPJ do avalista'] || row['CIC do avalista'] || '').replace(/\D/g, ''),
           DESCRICAO: String(row['Descrição'] || '').trim(),
         }
       }).filter(b => b.SACADO_NOME && b.VALOR > 0)

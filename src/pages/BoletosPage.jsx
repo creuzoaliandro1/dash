@@ -431,6 +431,7 @@ export default function BoletosPage() {
         onImportError={handleImportError}
         userType={userType}
         selectedContaId={selectedContaId}
+        allContas={allContas}
       />
 
       {/* Search and Filter - All in one line */}

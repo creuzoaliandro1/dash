@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { processFilesForPreview, processContaCaptFileForBoletos } from '../../services/importService'
 
-export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId }) {
+export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas }) {
   const [isDragging, setIsDragging] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
@@ -63,8 +63,8 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         const selectedConta = allContas.find(c => String(c.id) === String(selectedContaId))
         if (selectedConta) {
           profileName = selectedConta.nome_correntista || ''
-          // Tentar encontrar o CNPJ em um dos possíveis campos
-          profileCNPJ = selectedConta.cnpj || selectedConta.cpf_cnpj || selectedConta.documento || ''
+          // Usar CIC como identificador do avalista (CONTAS.cic)
+          profileCNPJ = selectedConta.cic || selectedConta.cpf_cnpj || selectedConta.cnpj || selectedConta.documento || ''
           console.log(`[FileUpload] Usando perfil para avalista: ${profileName}${profileCNPJ ? ' (' + profileCNPJ + ')' : ''}`)
         }
       }
@@ -75,7 +75,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
       if (validFiles.length === 1 && validFiles[0].name.endsWith('.xlsx')) {
         const file = validFiles[0]
         try {
-          result = await processContaCaptFileForBoletos(file, userType, selectedContaId)
+          result = await processContaCaptFileForBoletos(file, userType, selectedContaId, profileName, profileCNPJ)
           // Converter resultado para formato compatível
           result = {
             data: result.data,

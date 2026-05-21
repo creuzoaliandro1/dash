@@ -134,9 +134,6 @@ const getTipoPessoa = (cic) => {
 
 // ============================================================
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
-// CORREÇÃO: Incluir nosso número nas posições 77-87 com DV em 88
-// Conforme especificação BMP274 CNAB400
-// O header deve ter o mesmo layout de campos que o detalhe (linhas tipo 1)
 // ============================================================
 const buildHeader = (conta, nextSeq) => {
     // Dados do beneficiario/cedente vindos de CONTAS
@@ -150,13 +147,6 @@ const buildHeader = (conta, nextSeq) => {
           String(now.getMonth() + 1).padStart(2, '0') +
           String(now.getFullYear()).substring(2)
 
-    // CORREÇÃO: Nosso número do header baseado no sequencial da remessa
-    // Formato: 11 dígitos + 1 DV (algoritmo BMP274)
-    // Posições 77-87: 11 dígitos do nosso número base
-    // Posição 88: 1 dígito verificador
-    const nossoBaseHeader = padLeft(String(nextSeq || 0), 11, '0')  // 11 dígitos numéricos
-    const dvNNHeader      = calcNNDV(nossoBaseHeader)                // 1 dígito verificador
-
     let line = ''
     line += '0'                                    // pos 001 - tipo registro
     line += '1'                                    // pos 002 - codigo remessa
@@ -166,12 +156,12 @@ const buildHeader = (conta, nextSeq) => {
     line += cedenteFmt                             // pos 027-044 - codigo cedente (18)
     line += '09'                                   // pos 045-046 - codigo banco
     line += padRight(nomeEmpresa, 30)              // pos 047-076 - nome cedente (CONTAS.nome_correntista)
-    line += nossoBaseHeader                        // pos 077-087 - nosso numero (11 digitos) - CORRIGIDO
-    line += dvNNHeader                             // pos 088 - digito verificador - CORRIGIDO
-    line += '274'                                  // pos 089-091 - codigo banco BMP
-    line += padRight('BMP MONEY PLUS', 15)         // pos 092-106 - nome banco
-    line += headerDate                             // pos 107-112 - data geracao DDMMAA
-    line += '        '                             // pos 113-120 - brancos (8 espacos)
+    line += '274'                                  // pos 077-079 - codigo banco BMP
+    line += padRight('BMP MONEY PLUS', 15)         // pos 080-094 - nome banco
+    line += headerDate                             // pos 095-100 - data geracao DDMMAA
+    line += '        '                             // pos 101-108 - brancos (8 espacos)
+    line += 'MX'                                   // pos 109-110 - identificador sistema
+    line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
 
     // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '
@@ -200,13 +190,24 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
         ? (avalistaCic.length <= 11 ? '1' : '2')
         : ' '
 
-    // --- Nosso Numero: campo armazenado = String(CONTAS.nnumero) + DV ---
-    // Formato: ultimo char = DV; demais chars = base numerica (sem padding no banco).
-    // CNAB: pos 071-081 = base padded a 11 zeros; pos 082 = DV.
+    // --- Nosso Numero: campo armazenado = base (11-12 caracteres) ---
+    // IMPORTANTE: SEMPRE recalcular o DV com algoritmo BMP274
+    // Não confiar no DV armazenado no banco (pode estar incorreto)
+    // CNAB: pos 071-081 = base padded a 11 zeros; pos 082 = DV recalculado
     const nossoCompleto = cleanNum(boleto.nosso_numero || '')
-    const nossoBase     = nossoCompleto.length > 1 ? nossoCompleto.slice(0, -1) : nossoCompleto
-    const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante 11 digitos na posicao 71-81
-    const dvNN          = nossoCompleto.length > 1 ? nossoCompleto.slice(-1) : calcNNDV(nossoBaseFull)
+
+    // Extrair apenas a base (11 dígitos), desprezando DV se armazenado
+    let nossoBase = ''
+    if (nossoCompleto.length >= 11) {
+        nossoBase = nossoCompleto.substring(0, 11)  // Pega os 11 primeiros dígitos
+    } else if (nossoCompleto.length > 0) {
+        nossoBase = nossoCompleto  // Se tiver menos de 11, usa como está
+    } else {
+        nossoBase = '0'
+    }
+
+    const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante exatamente 11 dígitos
+    const dvNN          = calcNNDV(nossoBaseFull)          // SEMPRE recalcula o DV
     const nossoFmt      = nossoBaseFull                    // 11 digitos
 
     // --- Numero do titulo (Seu Numero) ---
