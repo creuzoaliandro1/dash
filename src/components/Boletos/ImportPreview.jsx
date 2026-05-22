@@ -646,7 +646,13 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    setInstalmentModal({ itemIdx })
+                                    // Garantir que o objeto raiz tenha os dados mais recentes de _records[0]
+                                    const currentRecord = dataWithInstalments[itemIdx]._records[0]
+                                    const updatedItem = {
+                                      ...dataWithInstalments[itemIdx],
+                                      ...currentRecord
+                                    }
+                                    setInstalmentModal({ itemIdx, item: updatedItem })
                                   }}
                                   className="ml-4 px-2 py-1 text-white hover:text-[#a3a3a3] text-lg flex-shrink-0"
                                   title="Adicionar parcelas"
@@ -706,7 +712,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
       {instalmentModal && (
         <InstalmentModal
-          item={dataWithInstalments[instalmentModal.itemIdx]}
+          item={instalmentModal.item || dataWithInstalments[instalmentModal.itemIdx]}
           onConfirm={handleInstalmentConfirm}
           onCancel={() => setInstalmentModal(null)}
         />
