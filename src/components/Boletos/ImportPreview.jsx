@@ -11,12 +11,42 @@ function formatarValorBrasileiro(valor) {
   return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// Função para formatar data em padrão brasileiro (dd/mm/aa)
+function formatarDataBrasileira(data) {
+  if (!data) return '—'
+  // Se já está em formato dd/mm/aa ou dd/mm/yyyy, retorna como está
+  if (typeof data === 'string' && /^\d{2}\/\d{2}/.test(data)) return data
+  // Se vem em formato yyyy-mm-dd, converte
+  if (typeof data === 'string' && /^\d{4}-\d{2}-\d{2}/.test(data)) {
+    const [year, month, day] = data.split('-')
+    const shortYear = year.slice(-2)
+    return `${day}/${month}/${shortYear}`
+  }
+  return data
+}
+
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   const [dataWithInstalments, setDataWithInstalments] = useState(
-    previewData.map(item => ({
-      ...item,
-      _records: [item]
-    }))
+    previewData.map(item => {
+      // Se o item já tem parcelas pré-preenchidas (de arquivo OS com múltiplos vencimentos)
+      if (item._parcelas && item._parcelas.length > 0) {
+        console.log(`[ImportPreview] Item ${item.NUM_TITULO} tem ${item._parcelas.length} parcelas pré-preenchidas`)
+        return {
+          ...item,
+          _records: item._parcelas.map(parcela => ({
+            ...item,
+            NUM_TITULO: parcela.number,
+            VENCIMENTO: parcela.dueDate,
+            VALOR: parcela.value,
+            EMISSAO: parcela.emission,
+          }))
+        }
+      }
+      return {
+        ...item,
+        _records: [item]
+      }
+    })
   )
 
   const [selectedRows, setSelectedRows] = useState(
@@ -252,221 +282,213 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             const hasMultiple = item._records.length > 1
 
             return (
-              <div key={`group-${itemIdx}`} className="border border-[#1f1f1f] rounded-lg overflow-hidden">
-                {/* Sacado Information Section - Always at top */}
-                <div className="bg-[#0f0f0f] px-4 py-2 border-b border-[#1f1f1f] flex flex-col gap-1">
+              <div key={`group-${itemIdx}`} className="border-2 border-[#444444] rounded-lg overflow-hidden">
+                {/* HEADER: Todas as linhas (correntista + parcelas) */}
+                <div className="bg-[#151515]">
 
-                  {/* Linha 1: Nome + CPF/CNPJ + Telefone + Email + Avalista Nome + Avalista CPF/CNPJ */}
-                  <div className="flex gap-3">
+                  {/* LINHA 1: Dados do Correntista */}
+                  <div className="px-4 py-2 border-b border-[#000000] flex items-start gap-2 text-[10px] overflow-x-auto">
                     {/* Nome */}
                     <div
-                      className="flex-1 cursor-pointer hover:opacity-80 transition"
+                      className="flex-1 flex-shrink-0 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_NOME', firstRecord.SACADO_NOME || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Nome</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Nome</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_NOME` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_NOME')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_NOME')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.SACADO_NOME || '—'}</p>
+                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_NOME || '—'}</p>
                       )}
                     </div>
                     {/* CPF/CNPJ */}
                     <div
-                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIC', firstRecord.SACADO_CIC || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">CPF/CNPJ</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">CPF/CNPJ</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CIC` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIC')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIC')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_CIC || '—'}</p>
+                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_CIC || '—'}</p>
                       )}
                     </div>
                     {/* Telefone */}
                     <div
-                      className="w-28 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_TELEFONE', firstRecord.SACADO_TELEFONE || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Telefone</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Telefone</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_TELEFONE` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_TELEFONE')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_TELEFONE')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs">{firstRecord.SACADO_TELEFONE || '—'}</p>
+                        <p className="text-white text-[10px]">{firstRecord.SACADO_TELEFONE || '—'}</p>
                       )}
                     </div>
                     {/* Email */}
                     <div
-                      className="w-48 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_EMAIL', firstRecord.SACADO_EMAIL || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Email</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Email</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_EMAIL` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_EMAIL')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_EMAIL')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
+                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
                       )}
                     </div>
-                    {/* Avalista Nome */}
-                    <div
-                      className="flex-1 cursor-pointer hover:opacity-80 transition"
-                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_NOME', firstRecord.AVALISTA_NOME || '')}
-                    >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista</p>
-                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_NOME` ? (
-                        <input ref={inputRef} type="text" value={inlineEditValue}
-                          onChange={(e) => setInlineEditValue(e.target.value)}
-                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_NOME')}
-                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_NOME')}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
-                        />
-                      ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.AVALISTA_NOME || '—'}</p>
-                      )}
-                    </div>
-                    {/* Avalista CPF/CNPJ */}
-                    <div
-                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
-                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_CIC', firstRecord.AVALISTA_CIC || '')}
-                    >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Avalista CIC</p>
-                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_CIC` ? (
-                        <input ref={inputRef} type="text" value={inlineEditValue}
-                          onChange={(e) => setInlineEditValue(e.target.value)}
-                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_CIC')}
-                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_CIC')}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
-                        />
-                      ) : (
-                        <p className="text-white text-xs font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Linha 3: Endereço completo em uma linha */}
-                  <div className="flex gap-2">
                     {/* Endereço */}
                     <div
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_ENDERECO', firstRecord.SACADO_ENDERECO || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Endereço</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Endereço</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_ENDERECO` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_ENDERECO')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_ENDERECO')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.SACADO_ENDERECO || '—'}</p>
+                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_ENDERECO || '—'}</p>
                       )}
                     </div>
                     {/* Bairro */}
                     <div
-                      className="w-32 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_BAIRRO', firstRecord.SACADO_BAIRRO || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Bairro</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Bairro</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_BAIRRO` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_BAIRRO')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_BAIRRO')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.SACADO_BAIRRO || '—'}</p>
+                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_BAIRRO || '—'}</p>
                       )}
                     </div>
                     {/* CEP */}
                     <div
-                      className="w-20 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CEP', firstRecord.SACADO_CEP || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">CEP</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">CEP</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CEP` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CEP')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CEP')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_CEP || '—'}</p>
+                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_CEP || '—'}</p>
                       )}
                     </div>
                     {/* Cidade */}
                     <div
-                      className="w-36 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIDADE', firstRecord.SACADO_CIDADE || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">Cidade</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Cidade</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CIDADE` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIDADE')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIDADE')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs truncate">{firstRecord.SACADO_CIDADE || '—'}</p>
+                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_CIDADE || '—'}</p>
                       )}
                     </div>
                     {/* UF */}
                     <div
-                      className="w-10 cursor-pointer hover:opacity-80 transition flex-shrink-0"
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_UF', firstRecord.SACADO_UF || '')}
                     >
-                      <p className="text-[10px] text-[#666666] uppercase font-semibold leading-none mb-0.5">UF</p>
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">UF</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_UF` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_UF')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_UF')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-xs"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
                         />
                       ) : (
-                        <p className="text-white text-xs font-mono">{firstRecord.SACADO_UF || '—'}</p>
+                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_UF || '—'}</p>
+                      )}
+                    </div>
+                    {/* Avalista */}
+                    <div
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_NOME', firstRecord.AVALISTA_NOME || '')}
+                    >
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Avalista</p>
+                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_NOME` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_NOME')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_NOME')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                        />
+                      ) : (
+                        <p className="text-white text-[10px] truncate">{firstRecord.AVALISTA_NOME || '—'}</p>
+                      )}
+                    </div>
+                    {/* Avalista CIC */}
+                    <div
+                      className="flex-1 cursor-pointer hover:opacity-80 transition"
+                      onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_CIC', firstRecord.AVALISTA_CIC || '')}
+                    >
+                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Av. CIC</p>
+                      {inlineEditingCell === `${itemIdx}-0-AVALISTA_CIC` ? (
+                        <input ref={inputRef} type="text" value={inlineEditValue}
+                          onChange={(e) => setInlineEditValue(e.target.value)}
+                          onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_CIC')}
+                          onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_CIC')}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                        />
+                      ) : (
+                        <p className="text-white text-[10px] font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
                       )}
                     </div>
                   </div>
 
-                </div>
-
-                {/* Parcels Section - Below Sacado */}
-                <div className="space-y-0">
-                  {/* All parcels displayed as simple rows */}
+                  {/* LINHAS DE PARCELAS */}
                   {item._records.map((record, recordIdx) => {
                     const rowId = `${itemIdx}-${recordIdx}`
                     const isSelected = selectedRows.has(rowId)
@@ -474,195 +496,183 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                     return (
                       <div
                         key={rowId}
-                        className={`border-t transition ${
-                          isSelected ? 'border-white/30 bg-[#111111]' : 'border-[#1f1f1f] bg-[#0f0f0f]'
-                        }`}
+                        className={`transition flex items-center gap-3 px-4 py-2 border-b border-[#1a1a1a] text-[10px] ${
+                          recordIdx > 0 ? 'border-t-2 border-[#444444]' : 'border-t-2 border-[#333333]'
+                        } ${isSelected ? 'bg-[#151515]' : 'bg-[#151515]'}`}
                       >
-                        <div className="flex items-center gap-3 px-4 py-1.5 group">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              e.stopPropagation()
-                              toggleRow(rowId)
-                            }}
-                            className="w-4 h-4 cursor-pointer accent-white flex-shrink-0"
-                          />
+                        {/* Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            e.stopPropagation()
+                            toggleRow(rowId)
+                          }}
+                          className="w-3 h-3 cursor-pointer accent-white flex-shrink-0"
+                        />
 
-                          <div className="flex-1 flex gap-4 text-sm items-start">
-                            {/* Emissão - flex 0.5 */}
-                            <div
-                              style={{ flex: '0.5' }}
-                              className="cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'EMISSAO', record.EMISSAO || '')}
-                            >
-                              {inlineEditingCell === `${itemIdx}-${recordIdx}-EMISSAO` ? (
-                                <input
-                                  ref={inputRef}
-                                  type="text"
-                                  value={inlineEditValue}
-                                  onChange={(e) => setInlineEditValue(e.target.value)}
-                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'EMISSAO')}
-                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'EMISSAO')}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                />
-                              ) : (
-                                <>
-                                  <p className="text-[#666666] text-xs">Emissão</p>
-                                  <p className="text-white font-medium">{record.EMISSAO || '—'}</p>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Título - flex 0.5 */}
-                            <div
-                              style={{ flex: '0.5' }}
-                              className="cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'NUM_TITULO', record.NUM_TITULO || '')}
-                            >
-                              {inlineEditingCell === `${itemIdx}-${recordIdx}-NUM_TITULO` ? (
-                                <input
-                                  ref={inputRef}
-                                  type="text"
-                                  value={inlineEditValue}
-                                  onChange={(e) => setInlineEditValue(e.target.value)}
-                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'NUM_TITULO')}
-                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'NUM_TITULO')}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                />
-                              ) : (
-                                <>
-                                  <p className="text-[#666666] text-xs">Título</p>
-                                  <p className="text-white font-mono font-medium">{record.NUM_TITULO || '—'}</p>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Vencimento - flex 0.5 */}
-                            <div
-                              style={{ flex: '0.5' }}
-                              className="cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'VENCIMENTO', record.VENCIMENTO || '')}
-                            >
-                              {inlineEditingCell === `${itemIdx}-${recordIdx}-VENCIMENTO` ? (
-                                <input
-                                  ref={inputRef}
-                                  type="text"
-                                  value={inlineEditValue}
-                                  onChange={(e) => setInlineEditValue(e.target.value)}
-                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VENCIMENTO')}
-                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VENCIMENTO')}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                />
-                              ) : (
-                                <>
-                                  <p className="text-[#666666] text-xs">Vencimento</p>
-                                  <p className="text-white font-medium">{record.VENCIMENTO || '—'}</p>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Valor - flex 0.5 */}
-                            <div
-                              style={{ flex: '0.5' }}
-                              className="cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'VALOR', record.VALOR || '')}
-                            >
-                              {inlineEditingCell === `${itemIdx}-${recordIdx}-VALOR` ? (
-                                <input
-                                  ref={inputRef}
-                                  type="text"
-                                  value={inlineEditValue}
-                                  onChange={(e) => setInlineEditValue(e.target.value)}
-                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VALOR')}
-                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VALOR')}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                />
-                              ) : (
-                                <>
-                                  <p className="text-[#666666] text-xs">Valor</p>
-                                  <p className="text-white font-mono font-medium">
-                                    {formatarValorBrasileiro(record.VALOR)}
-                                  </p>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Descrição - flex 1 */}
-                            <div
-                              style={{ flex: '1' }}
-                              className="cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'DESCRICAO', record.DESCRICAO || '')}
-                            >
-                              {inlineEditingCell === `${itemIdx}-${recordIdx}-DESCRICAO` ? (
-                                <input
-                                  ref={inputRef}
-                                  type="text"
-                                  value={inlineEditValue}
-                                  onChange={(e) => setInlineEditValue(e.target.value)}
-                                  onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'DESCRICAO')}
-                                  onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'DESCRICAO')}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                />
-                              ) : (
-                                <>
-                                  <p className="text-[#666666] text-xs">Descrição</p>
-                                  <p className="text-white text-sm truncate">{record.DESCRICAO || '—'}</p>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Sacado - flex 1 */}
-                            <div
-                              style={{ flex: '1' }}
-                              className="flex items-center justify-between cursor-pointer hover:opacity-80 transition"
-                              onClick={() => handleInlineEdit(itemIdx, recordIdx, 'SACADO_NOME', record.SACADO_NOME || '')}
-                            >
-                              <div className="flex-1">
-                                {inlineEditingCell === `${itemIdx}-${recordIdx}-SACADO_NOME` ? (
-                                  <input
-                                    ref={inputRef}
-                                    type="text"
-                                    value={inlineEditValue}
-                                    onChange={(e) => setInlineEditValue(e.target.value)}
-                                    onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'SACADO_NOME')}
-                                    onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'SACADO_NOME')}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
-                                  />
-                                ) : (
-                                  <>
-                                    <p className="text-[#666666] text-xs">Sacado</p>
-                                    <p className="text-white font-medium truncate">{record.SACADO_NOME || '—'}</p>
-                                  </>
-                                )}
-                              </div>
-                              {recordIdx === 0 && inlineEditingCell !== `${itemIdx}-${recordIdx}-SACADO_NOME` && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    // Garantir que o objeto raiz tenha os dados mais recentes de _records[0]
-                                    const currentRecord = dataWithInstalments[itemIdx]._records[0]
-                                    const updatedItem = {
-                                      ...dataWithInstalments[itemIdx],
-                                      ...currentRecord
-                                    }
-                                    setInstalmentModal({ itemIdx, item: updatedItem })
-                                  }}
-                                  className="ml-4 px-2 py-1 text-white hover:text-[#a3a3a3] text-lg flex-shrink-0"
-                                  title="Adicionar parcelas"
-                                >
-                                  +
-                                </button>
-                              )}
-                            </div>
-                          </div>
+                        {/* Emissão */}
+                        <div
+                          className="w-[60px] flex-shrink-0 cursor-pointer hover:opacity-80 transition text-center"
+                          onClick={() => handleInlineEdit(itemIdx, recordIdx, 'EMISSAO', record.EMISSAO || '')}
+                        >
+                          {inlineEditingCell === `${itemIdx}-${recordIdx}-EMISSAO` ? (
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'EMISSAO')}
+                              onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'EMISSAO')}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                            />
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Emissão</p>
+                              <p className="text-white text-[10px]">{formatarDataBrasileira(record.EMISSAO) || '—'}</p>
+                            </>
+                          )}
                         </div>
+
+                        {/* Título */}
+                        <div
+                          className="w-20 flex-shrink-0 cursor-pointer hover:opacity-80 transition text-center"
+                          onClick={() => handleInlineEdit(itemIdx, recordIdx, 'NUM_TITULO', record.NUM_TITULO || '')}
+                        >
+                          {inlineEditingCell === `${itemIdx}-${recordIdx}-NUM_TITULO` ? (
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'NUM_TITULO')}
+                              onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'NUM_TITULO')}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                            />
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Número</p>
+                              <p className="text-white text-[10px] font-mono">{record.NUM_TITULO || '—'}</p>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Vencimento */}
+                        <div
+                          className="w-[60px] flex-shrink-0 cursor-pointer hover:opacity-80 transition text-center"
+                          onClick={() => handleInlineEdit(itemIdx, recordIdx, 'VENCIMENTO', record.VENCIMENTO || '')}
+                        >
+                          {inlineEditingCell === `${itemIdx}-${recordIdx}-VENCIMENTO` ? (
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VENCIMENTO')}
+                              onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VENCIMENTO')}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                            />
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Vencimento</p>
+                              <p className="text-white text-[10px]">{formatarDataBrasileira(record.VENCIMENTO) || '—'}</p>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Valor */}
+                        <div
+                          className="w-20 flex-shrink-0 cursor-pointer hover:opacity-80 transition text-center"
+                          onClick={() => handleInlineEdit(itemIdx, recordIdx, 'VALOR', record.VALOR || '')}
+                        >
+                          {inlineEditingCell === `${itemIdx}-${recordIdx}-VALOR` ? (
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VALOR')}
+                              onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VALOR')}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                            />
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Valor</p>
+                              <p className="text-white text-[10px] font-mono">
+                                {formatarValorBrasileiro(record.VALOR)}
+                              </p>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Descrição */}
+                        <div
+                          className="w-[600px] flex-shrink-0 cursor-pointer hover:opacity-80 transition"
+                          onClick={() => handleInlineEdit(itemIdx, recordIdx, 'DESCRICAO', record.DESCRICAO || '')}
+                        >
+                          {inlineEditingCell === `${itemIdx}-${recordIdx}-DESCRICAO` ? (
+                            <input
+                              ref={inputRef}
+                              type="text"
+                              value={inlineEditValue}
+                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'DESCRICAO')}
+                              onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'DESCRICAO')}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                            />
+                          ) : (
+                            <>
+                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Descrição</p>
+                              <p className="text-white text-[10px] truncate line-clamp-1">{record.DESCRICAO || '—'}</p>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Botão lixeira para deletar parcela */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const newData = [...dataWithInstalments]
+                            newData[itemIdx]._records.splice(recordIdx, 1)
+                            // Se não sobrou nenhuma parcela, remove o item inteiro
+                            if (newData[itemIdx]._records.length === 0) {
+                              newData.splice(itemIdx, 1)
+                            }
+                            setDataWithInstalments(newData)
+                            // Atualizar selectedRows
+                            const newSelected = new Set(selectedRows)
+                            newSelected.delete(rowId)
+                            setSelectedRows(newSelected)
+                          }}
+                          className="w-[10px] h-[10px] flex items-center justify-center text-white hover:text-red-400 text-xs flex-shrink-0"
+                          title="Deletar parcela"
+                        >
+                          ×
+                        </button>
+
+                        {/* Botão + apenas na primeira parcela */}
+                        {recordIdx === 0 && inlineEditingCell === null && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const currentRecord = dataWithInstalments[itemIdx]._records[0]
+                              const updatedItem = {
+                                ...dataWithInstalments[itemIdx],
+                                ...currentRecord
+                              }
+                              setInstalmentModal({ itemIdx, item: updatedItem })
+                            }}
+                            className="w-[10px] h-[10px] flex items-center justify-center text-white hover:text-[#a3a3a3] text-lg flex-shrink-0"
+                            title="Adicionar parcelas"
+                          >
+                            +
+                          </button>
+                        )}
                       </div>
                     )
                   })}
@@ -687,7 +697,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             {relatorioPDF && (
               <button
                 onClick={() => downloadPDFRelatorio(relatorioPDF, `relatorio_importacao_${new Date().getTime()}.pdf`)}
-                className="px-6 py-2 bg-[#1a5490] text-white text-sm font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
+                className="px-6 py-2 bg-[#1a5490] text-white text-[10px] font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
               >
                 📄 Baixar Relatório de Erros
               </button>
@@ -695,14 +705,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             <button
               onClick={onCancel}
               disabled={isImporting}
-              className="px-6 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50"
+              className="px-6 py-2 bg-transparent text-white text-[10px] font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               onClick={handleImport}
               disabled={isImporting || selectedRows.size === 0}
-              className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50"
+              className="px-6 py-2 bg-white text-black text-[10px] font-medium rounded hover:opacity-90 transition disabled:opacity-50"
             >
               {isImporting ? 'Importando...' : `Importar (${selectedRows.size})`}
             </button>

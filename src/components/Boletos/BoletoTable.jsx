@@ -37,7 +37,7 @@ const formatCurrency = (value) => {
   })
 }
 
-export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData }) {
+export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData }) {
   console.log('[BoletoTable] Renderizando com', boletos?.length || 0, 'boletos')
 
   // Se não recebeu selectedRows (compatibilidade com versão anterior), usar estado local
@@ -130,7 +130,7 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
       }
 
       // Ordenação de data
-      if (sortColumn === 'data_emissao' || sortColumn === 'data_vencimento') {
+      if (sortColumn === 'data_emissao' || sortColumn === 'data_vencimento' || sortColumn === 'created_at') {
         const dateA = new Date(aValue)
         const dateB = new Date(bValue)
         if (isNaN(dateA.getTime())) return sortDirection === 'asc' ? 1 : -1
@@ -170,6 +170,13 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
         {label} {icon && <span className="ml-1">{icon}</span>}
       </div>
     )
+  }
+
+  const handleDelete = (boleto) => {
+    if (onDelete) {
+      onDelete(boleto)
+      setOpenMenu(null)
+    }
   }
 
   const handleGenerateSecondWay = async (boleto) => {
@@ -226,6 +233,7 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
           />
           <div className="flex-1 flex gap-4 text-xs font-semibold text-[#666666] uppercase tracking-wider">
             <SortableHeader column="num_lancamento" label="Num Lançamento" flex="1" align="text-right" />
+            <SortableHeader column="created_at" label="Gerado" flex="1" align="text-right" />
             <SortableHeader column="data_emissao" label="Emissão" flex="1" align="text-right" />
             <SortableHeader column="numero_documento" label="Documento" flex="1" align="text-right" />
             <SortableHeader column="valor" label="Valor" flex="1" align="text-right" />
@@ -258,6 +266,9 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
               <div className="flex-1 flex gap-4 text-sm items-center">
                 <div style={{ flex: '1' }} className="text-white text-right">
                   {boleto.num_lancamento || '—'}
+                </div>
+                <div style={{ flex: '1' }} className="text-white text-right">
+                  {boleto.created_at ? formatDate(boleto.created_at) : '—'}
                 </div>
                 <div style={{ flex: '1' }} className="text-white text-right">
                   {boleto.data_emissao ? formatDate(boleto.data_emissao) : '—'}
@@ -322,9 +333,15 @@ export default function BoletoTable({ boletos, onEdit, selectedRows: propsSelect
                           onEdit(boleto)
                           setOpenMenu(null)
                         }}
-                        className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                        className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                       >
                         Editar
+                      </button>
+                      <button
+                        onClick={() => handleDelete(boleto)}
+                        className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                      >
+                        🗑️ Excluir
                       </button>
                     </div>
                     </>

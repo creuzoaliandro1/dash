@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
@@ -22,12 +22,16 @@ export default function BoletosPage() {
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
+  const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
   const [dataEmissaoInicio, setDataEmissaoInicio] = useState('')
   const [dataEmissaoFim, setDataEmissaoFim] = useState('')
   const [dataVencimentoInicio, setDataVencimentoInicio] = useState('')
   const [dataVencimentoFim, setDataVencimentoFim] = useState('')
+  const [dataGeradoInicio, setDataGeradoInicio] = useState('')
+  const [dataGeradoFim, setDataGeradoFim] = useState('')
   const [filterType, setFilterType] = useState('emissao')
+  const [efactorActive, setEfactorActive] = useState(false)
 
   // Obter tipo de usuário e conta selecionada
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -99,15 +103,23 @@ export default function BoletosPage() {
     setLoading(true)
     try {
       const activeId = getActiveContaId()
-      console.log('[BoletosPage] loadBoletos para conta:', activeId)
-      const resultado = await getBoletos(activeId)
-      setBoletos(resultado.data || [])
+      console.log('[BoletosPage] loadBoletos para conta:', activeId, 'Efactor:', efactorActive)
+
+      if (efactorActive) {
+        // Carregar dados do Efactor (OPEITE)
+        const resultado = await carregarOPEITE(activeId, contaData)
+        setBoletos(resultado.data || [])
+      } else {
+        // Carregar dados normais (capt_boletos)
+        const resultado = await getBoletos(activeId)
+        setBoletos(resultado.data || [])
+      }
     } catch (err) {
       console.error('Erro ao carregar boletos:', err)
       setBoletos([])
     }
     setLoading(false)
-  }, [])
+  }, [efactorActive, contaData])
 
   // Carregar na montagem
   useEffect(() => {
@@ -126,7 +138,34 @@ export default function BoletosPage() {
     }
     window.addEventListener('contaSwitched', handleContaSwitched)
     return () => window.removeEventListener('contaSwitched', handleContaSwitched)
-  }, [])
+  }, [loadBoletos, loadContaData])
+
+  // Recarregar boletos quando Efactor é acionado
+  useEffect(() => {
+    loadBoletos()
+  }, [efactorActive, loadBoletos])
+
+  const carregarOPEITE = async (contaId, conta) => {
+    try {
+      if (!conta || !conta.cod_cedente) {
+        console.warn('[BoletosPage] Conta não tem cod_cedente definido')
+        return { data: [], error: 'Código cedente não configurado' }
+      }
+
+      console.log('[BoletosPage] Buscando OPEITE para cod_cedente:', conta.cod_cedente)
+      const resultado = await getOPEITEByCedente(conta.cod_cedente)
+      return resultado
+    } catch (err) {
+      console.error('[BoletosPage] Erro ao carregar OPEITE:', err)
+      return { data: [], error: err }
+    }
+  }
+
+  const handleToggleEfactor = () => {
+    console.log('[BoletosPage] Toggle Efactor:', !efactorActive)
+    setEfactorActive(!efactorActive)
+    // loadBoletos será chamado automaticamente pelo useEffect quando efactorActive mudar
+  }
 
   const handleCreateNew = () => {
     setEditingBoleto(null)
@@ -134,6 +173,12 @@ export default function BoletosPage() {
   }
 
   const handleEdit = (boleto) => {
+    // Proteger registros OPEITE
+    if (boleto._ORIGEM === 'OPEITE') {
+      alert('Não é possível editar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
+      return
+    }
+
     setEditingBoleto(boleto)
     setShowModal(true)
   }
@@ -284,6 +329,24 @@ export default function BoletosPage() {
       }
     }
 
+    // Filter by data de geração (created_at)
+    if (filterType === 'gerado') {
+      if (dataGeradoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.created_at) return false
+          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
+          return boletoDate >= dataGeradoInicio
+        })
+      }
+      if (dataGeradoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.created_at) return false
+          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
+          return boletoDate <= dataGeradoFim
+        })
+      }
+    }
+
     return filtered
   }
 
@@ -292,6 +355,8 @@ export default function BoletosPage() {
     setDataEmissaoFim('')
     setDataVencimentoInicio('')
     setDataVencimentoFim('')
+    setDataGeradoInicio('')
+    setDataGeradoFim('')
   }
 
   const handleChangePerfil = (contaId) => {
@@ -435,6 +500,137 @@ export default function BoletosPage() {
     }
   }
 
+  const handleDeleteSingleBoleto = async (boleto) => {
+    // Proteger registros OPEITE
+    if (boleto._ORIGEM === 'OPEITE') {
+      alert('Não é possível deletar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
+      return
+    }
+
+    // Confirmar antes de deletar
+    if (!window.confirm(`Tem certeza que deseja deletar o boleto "${boleto.titulo || boleto.numero_nosso || 'sem título'}"? Esta ação não pode ser desfeita.`)) {
+      return
+    }
+
+    try {
+      console.log('[Ações] Deletando boleto individual:', boleto.id)
+      const { error } = await deleteBoleto(boleto.id)
+
+      if (error) {
+        alert('Erro ao deletar boleto: ' + error.message)
+        console.error('[Ações] Erro ao deletar boleto:', boleto.id, error)
+      } else {
+        alert('Boleto deletado com sucesso!')
+        await loadBoletos()
+      }
+    } catch (error) {
+      console.error('[Ações] Erro ao deletar boleto:', error)
+      alert('Erro ao deletar boleto: ' + error.message)
+    }
+  }
+
+  const handleAntecipacao = async () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto para antecipar')
+      return
+    }
+
+    // Confirmar antes de antecipar
+    if (!window.confirm(`Tem certeza que deseja antecipar ${selectedRows.size} boleto(s)?`)) {
+      return
+    }
+
+    setOpenActionsMenu(false)
+    setProcessandoAntecipacao(true)
+
+    try {
+      const filteredBoletos = getFilteredBoletos()
+      const boletosParaAntecipar = Array.from(selectedRows)
+        .map(index => filteredBoletos[index])
+        .filter(boleto => boleto)
+
+      console.log('[Ações] Antecipando', boletosParaAntecipar.length, 'boletos')
+
+      // Chamar função de antecipação
+      const { data: resultado, error } = await criarAntecipacao(boletosParaAntecipar, contaData)
+
+      if (error) {
+        alert('Erro ao antecipar boletos: ' + error.message)
+        console.error('[Ações] Erro ao antecipar:', error)
+      } else {
+        const mensagem = `✓ Antecipação realizada com sucesso!\n\nCódigo do Borderô: ${resultado.codBordero}\nCódigo da Operação: ${resultado.codOperacao}\nQuantidade: ${resultado.quantidadeBoletos} boleto(s)\nCódigos de Título: ${resultado.codTituloInicio} a ${resultado.codTituloFim}`
+        alert(mensagem)
+        console.log('[Ações] Resultado da antecipação:', resultado)
+        setSelectedRows(new Set())
+        // Não precisa recarregar boletos pois são registros diferentes
+      }
+    } catch (error) {
+      console.error('[Ações] Erro ao antecipar boletos:', error)
+      alert('Erro ao antecipar boletos: ' + error.message)
+    } finally {
+      setProcessandoAntecipacao(false)
+    }
+  }
+
+  const handleDeleteSelectedBoletos = async () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+
+    const filteredBoletos = getFilteredBoletos()
+    const boletosParaDeletar = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(boleto => boleto)
+
+    // Separar registros OPEITE dos registros locais
+    const boletosPorExcluir = boletosParaDeletar.filter(b => b._ORIGEM !== 'OPEITE')
+    const boletosOpeite = boletosParaDeletar.filter(b => b._ORIGEM === 'OPEITE')
+
+    // Se houver registros OPEITE, avisar o usuário
+    if (boletosOpeite.length > 0) {
+      const mensagem = `${boletosOpeite.length} boleto(s) selecionado(s) é do Efactor (OPEITE) e não pode ser deletado. Apenas os ${boletosPorExcluir.length} boleto(s) local(is) serão deletados.`
+      if (boletosPorExcluir.length === 0) {
+        alert(mensagem)
+        return
+      }
+      alert(mensagem)
+    }
+
+    if (boletosPorExcluir.length === 0) {
+      return
+    }
+
+    // Confirmar antes de deletar
+    if (!window.confirm(`Tem certeza que deseja deletar ${boletosPorExcluir.length} boleto(s)? Esta ação não pode ser desfeita.`)) {
+      return
+    }
+
+    setOpenActionsMenu(false)
+
+    try {
+      console.log('[Ações] Deletando', boletosPorExcluir.length, 'boletos selecionados')
+
+      // Deletar cada boleto
+      let deletedCount = 0
+      for (const boleto of boletosPorExcluir) {
+        const { error } = await deleteBoleto(boleto.id)
+        if (!error) {
+          deletedCount++
+        } else {
+          console.error('[Ações] Erro ao deletar boleto:', boleto.id, error)
+        }
+      }
+
+      alert(`${deletedCount} boleto(s) deletado(s) com sucesso!`)
+      setSelectedRows(new Set())
+      await loadBoletos()
+    } catch (error) {
+      console.error('[Ações] Erro ao deletar boletos:', error)
+      alert('Erro ao deletar boletos: ' + error.message)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       {/* Header */}
@@ -503,6 +699,8 @@ export default function BoletosPage() {
         selectedContaId={selectedContaId}
         allContas={allContas}
         contaData={contaData}
+        onEfactorToggle={handleToggleEfactor}
+        efactorActive={efactorActive}
       />
 
       {/* Search and Filter - All in one line */}
@@ -561,10 +759,29 @@ export default function BoletosPage() {
                 setFilterType(e.target.value)
                 setDataEmissaoInicio('')
                 setDataEmissaoFim('')
+                setDataGeradoInicio('')
+                setDataGeradoFim('')
               }}
               className="w-4 h-4 cursor-pointer"
             />
             <span className="text-xs text-white cursor-pointer">Vencimento</span>
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap">
+            <input
+              type="radio"
+              name="filterType"
+              value="gerado"
+              checked={filterType === 'gerado'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataEmissaoInicio('')
+                setDataEmissaoFim('')
+                setDataVencimentoInicio('')
+                setDataVencimentoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs text-white cursor-pointer">Gerado</span>
           </label>
         </div>
 
@@ -586,7 +803,7 @@ export default function BoletosPage() {
               title="Data de fim"
             />
           </>
-        ) : (
+        ) : filterType === 'vencimento' ? (
           <>
             <input
               type="date"
@@ -599,6 +816,23 @@ export default function BoletosPage() {
               type="date"
               value={dataVencimentoFim}
               onChange={(e) => setDataVencimentoFim(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de fim"
+            />
+          </>
+        ) : (
+          <>
+            <input
+              type="date"
+              value={dataGeradoInicio}
+              onChange={(e) => setDataGeradoInicio(e.target.value)}
+              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+              title="Data de início"
+            />
+            <input
+              type="date"
+              value={dataGeradoFim}
+              onChange={(e) => setDataGeradoFim(e.target.value)}
               className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
               title="Data de fim"
             />
@@ -641,6 +875,19 @@ export default function BoletosPage() {
               >
                 {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
               </button>
+              <button
+                onClick={handleAntecipacao}
+                disabled={processandoAntecipacao}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
+              </button>
+              <button
+                onClick={handleDeleteSelectedBoletos}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                🗑️ Excluir
+              </button>
             </div>
           )}
         </div>
@@ -651,6 +898,7 @@ export default function BoletosPage() {
         <BoletoTable
           boletos={getFilteredBoletos()}
           onEdit={handleEdit}
+          onDelete={handleDeleteSingleBoleto}
           selectedRows={selectedRows}
           onSelectedRowsChange={setSelectedRows}
           contaData={contaData}

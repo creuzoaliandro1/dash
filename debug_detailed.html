@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Detailed OS File Debug</title>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: monospace; }
+        .section { background: #f5f5f5; margin: 10px 0; padding: 10px; border-left: 3px solid #666; }
+        .good { color: green; font-weight: bold; }
+        .bad { color: red; font-weight: bold; }
+        table { border-collapse: collapse; font-size: 11px; }
+        td, th { border: 1px solid #ccc; padding: 5px; }
+        th { background: #ddd; }
+    </style>
+</head>
+<body>
+    <h1>Detailed OS File Debug</h1>
+    <input type="file" id="fileInput" accept=".xls,.xlsx" />
+    <button onclick="analyzeFile()">Analyze</button>
+
+    <div id="results"></div>
+
+    <script>
+        function analyzeFile() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Selecione um arquivo');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+
+                // Get JSON with defval to fill empty cells
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                let html = `<h2>${file.name}</h2>`;
+                html += `<div class="section">
+                    <strong>Estrutura</strong><br>
+                    Total de linhas: ${jsonData.length}<br>
+                    Colunas (primeira linha): ${jsonData.length > 0 ? Object.keys(jsonData[0]).length : 0}<br>
+                    Colunas: ${jsonData.length > 0 ? Object.keys(jsonData[0]).join(', ') : 'N/A'}
+                </div>`;
+
+                // Mostrar linhas relevantes
+                html += `<div class="section">
+                    <strong>Linhas 11-17 (Headers e Cliente)</strong><br>
+                    <table>
+                    <thead><tr><th>Linha</th><th>Coluna B</th><th>Coluna C</th><th>Coluna D</th><th>Outras</th></tr></thead>
+                    <tbody>`;
+
+                for (let i = 10; i < 17 && i < jsonData.length; i++) {
+                    const row = jsonData[i];
+                    const colB = Object.values(row)[1] || '';
+                    const colC = Object.values(row)[2] || '';
+                    const colD = Object.values(row)[3] || '';
+                    const others = Object.values(row).slice(4, 8).filter(v => v).join(' | ');
+                    html += `<tr><td>L${i+1}</td><td>${colB}</td><td>${colC}</td><td>${colD}</td><td>${others}</td></tr>`;
+                }
+                html += `</tbody></table></div>`;
+
+                // Mostrar linhas 38-42 (BOLETO e dados)
+                html += `<div class="section">
+                    <strong>Linhas 38-42 (BOLETO, Data, Valor)</strong><br>
+                    <table>
+                    <thead><tr><th>Linha</th><th>Conteúdo</th></tr></thead>
+                    <tbody>`;
+
+                for (let i = 37; i < 42 && i < jsonData.length; i++) {
+                    const row = jsonData[i];
+                    const values = Object.entries(row)
+                        .filter(([k, v]) => v && String(v).trim())
+                        .map(([k, v]) => `${k}: ${String(v).substring(0, 20)}`)
+                        .join(' | ');
+                    html += `<tr><td>L${i+1}</td><td>${values}</td></tr>`;
+                }
+                html += `</tbody></table></div>`;
+
+                // Testar extração
+                html += `<div class="section">
+                    <strong>Teste de Extração</strong><br>`;
+
+                const testSearch = (keyword) => {
+                    for (let rowIdx = 0; rowIdx < jsonData.length; rowIdx++) {
+                        const row = jsonData[rowIdx];
+                        for (const [colName, value] of Object.entries(row)) {
+                            if (String(value).toUpperCase().includes(keyword.toUpperCase())) {
+                                return { found: true, row: rowIdx + 1, col: colName, rowData: row };
+                            }
+                        }
+                    }
+                    return { found: false };
+                };
+
+                const testCodigo = testSearch('Código');
+                const testCliente = testSearch('Cliente');
+                const testData = testSearch('Data');
+                const testValor = testSearch('Valor');
+
+                html += `<table>
+                    <thead><tr><th>Campo</th><th>Status</th><th>Detalhes</th></tr></thead>
+                    <tbody>`;
+
+                const fields = [
+                    { name: 'Código', result: testCodigo },
+                    { name: 'Cliente', result: testCliente },
+                    { name: 'Data', result: testData },
+                    { name: 'Valor', result: testValor }
+                ];
+
+                for (const field of fields) {
+                    const status = field.result.found ? '<span class="good">✓ ENCONTRADO</span>' : '<span class="bad">✗ NÃO ENCONTRADO</span>';
+                    const details = field.result.found ? `L${field.result.row}, Col ${field.result.col}` : '';
+                    html += `<tr><td>${field.name}</td><td>${status}</td><td>${details}</td></tr>`;
+                }
+                html += `</tbody></table></div>`;
+
+                // Mostrar valores próximos a "Código"
+                if (testCodigo.found) {
+                    html += `<div class="section">
+                        <strong>Valores próximos a "Código" (L${testCodigo.row})</strong><br>
+                        Colunas: ${Object.entries(testCodigo.rowData)
+                            .map(([k, v]) => `${k}="${v}"`)
+                            .join(' | ')}
+                    </div>`;
+                }
+
+                // Mostrar valores próximos a "Data"
+                if (testData.found) {
+                    html += `<div class="section">
+                        <strong>Valores próximos a "Data" (L${testData.row})</strong><br>
+                        <table><thead><tr><th>Coluna</th><th>Valor</th></tr></thead><tbody>`;
+                    for (const [col, val] of Object.entries(testData.rowData)) {
+                        if (val) {
+                            html += `<tr><td>${col}</td><td>${val}</td></tr>`;
+                        }
+                    }
+                    html += `</tbody></table></div>`;
+                }
+
+                document.getElementById('results').innerHTML = html;
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>

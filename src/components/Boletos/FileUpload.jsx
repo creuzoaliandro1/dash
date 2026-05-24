@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { processFilesForPreview, processContaCaptFileForBoletos } from '../../services/importService'
 
-export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas, contaData }) {
+export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas, contaData, onEfactorToggle, efactorActive }) {
   const [isDragging, setIsDragging] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
@@ -32,6 +32,13 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
   const handleFileInput = (e) => {
     const files = Array.from(e.target.files)
     handleFiles(files)
+  }
+
+  const handleOpenEfactorModal = () => {
+    console.log('[FileUpload] Acionando Efactor...')
+    if (onEfactorToggle) {
+      onEfactorToggle()
+    }
   }
 
   const handleFiles = async (files) => {
@@ -124,6 +131,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
   }
 
   return (
+    <>
     <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -170,8 +178,22 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
               Selecionar arquivos
             </span>
           </label>
+          <button
+            onClick={handleOpenEfactorModal}
+            disabled={isLoading}
+            className={`shrink-0 px-4 py-1.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+              efactorActive
+                ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
+                : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
+            }`}
+            title={efactorActive ? 'Desativar Efactor' : 'Ativar Efactor'}
+          >
+            {efactorActive ? '✓ Efactor' : 'Efactor'}
+          </button>
         </div>
       )}
     </div>
+
+    </>
   )
 }

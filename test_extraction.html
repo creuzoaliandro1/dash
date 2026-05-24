@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test OS Extraction</title>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h1>Test OS File Extraction</h1>
+    <input type="file" id="fileInput" accept=".xls,.xlsx" />
+    <button onclick="testExtraction()">Test</button>
+    <pre id="output" style="background:#f0f0f0; padding:10px; border:1px solid #ccc; max-height:600px; overflow-y:auto;"></pre>
+
+    <script>
+        // Copy helper functions from importService.js
+        function findValueAfterText(jsonData, searchText, maxColsAhead = 10) {
+            for (let rowIdx = 0; rowIdx < jsonData.length; rowIdx++) {
+                const rowObj = jsonData[rowIdx];
+                if (!rowObj) continue;
+                const rowKeys = Object.keys(rowObj);
+                for (let colIdx = 0; colIdx < rowKeys.length; colIdx++) {
+                    const cellVal = String(rowObj[rowKeys[colIdx]] || '').toUpperCase();
+                    if (cellVal.includes(searchText.toUpperCase())) {
+                        let bestValue = null;
+                        for (let k = colIdx + 1; k < Math.min(colIdx + maxColsAhead, rowKeys.length); k++) {
+                            const nextVal = String(rowObj[rowKeys[k]] || '').trim();
+                            if (!nextVal || nextVal.length === 0) continue;
+                            const isNumericOnly = /^\d+$/.test(nextVal);
+                            if (searchText.toUpperCase().includes('CLIENTE') && isNumericOnly) {
+                                console.log(`Ignorando ${nextVal} (numérico)`);
+                                continue;
+                            }
+                            bestValue = nextVal;
+                            console.log(`✓ "${searchText}" encontrado: "${bestValue}"`);
+                            return bestValue;
+                        }
+                        if (bestValue) return bestValue;
+                    }
+                }
+            }
+            console.log(`✗ "${searchText}" não encontrado`);
+            return null;
+        }
+
+        function findValuesBelow(jsonData, labelText, fieldName = 'Campo') {
+            const values = [];
+            let labelRowIdx = -1;
+            let labelColIdx = -1;
+
+            for (let rowIdx = 0; rowIdx < jsonData.length; rowIdx++) {
+                const rowObj = jsonData[rowIdx];
+                if (!rowObj) continue;
+                const rowKeys = Object.keys(rowObj);
+                for (let colIdx = 0; colIdx < rowKeys.length; colIdx++) {
+                    const cellVal = String(rowObj[rowKeys[colIdx]] || '').toUpperCase();
+                    if (cellVal.includes(labelText.toUpperCase())) {
+                        labelRowIdx = rowIdx;
+                        labelColIdx = colIdx;
+                        console.log(`✓ Label "${labelText}" encontrado em L${rowIdx + 1}, coluna ${rowKeys[colIdx]}`);
+                        break;
+                    }
+                }
+                if (labelRowIdx >= 0) break;
+            }
+
+            if (labelRowIdx >= 0) {
+                const labelColName = Object.keys(jsonData[labelRowIdx])[labelColIdx];
+                for (let rowIdx = labelRowIdx + 1; rowIdx < Math.min(jsonData.length, labelRowIdx + 50); rowIdx++) {
+                    const rowObj = jsonData[rowIdx];
+                    if (!rowObj) continue;
+                    const cellVal = String(rowObj[labelColName] || '').trim();
+                    if (!cellVal) {
+                        console.log(`  (célula vazia em L${rowIdx + 1}, parando)`);
+                        break;
+                    }
+                    if (cellVal.length > 0 && !cellVal.toUpperCase().includes(':')) {
+                        values.push(cellVal);
+                        console.log(`  ${fieldName} L${rowIdx + 1}: "${cellVal}"`);
+                    }
+                }
+            } else {
+                console.log(`✗ Label "${labelText}" não encontrado`);
+            }
+            console.log(`Total ${fieldName}: ${values.length}\n`);
+            return values;
+        }
+
+        function testExtraction() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Selecione um arquivo');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                let output = `=== TESTE DE EXTRAÇÃO: ${file.name} ===\n\n`;
+                output += `Linhas: ${jsonData.length}, Colunas (primeira linha): ${jsonData.length > 0 ? Object.keys(jsonData[0]).length : 0}\n\n`;
+
+                console.clear();
+                console.log('=== EXTRAÇÃO ===');
+
+                // Test each field
+                const num_titulo = findValueAfterText(jsonData, 'Código:');
+                const sacado_nome = findValueAfterText(jsonData, 'Cliente:');
+                const sacado_cic = findValueAfterText(jsonData, 'Cnpj / Cpf :');
+                const vencimentos = findValuesBelow(jsonData, 'Data', 'VENCIMENTO');
+                const valores = findValuesBelow(jsonData, 'Valor', 'VALOR');
+
+                output += '\n=== RESULTADOS ===\n';
+                output += `NUM_TITULO: ${num_titulo || '(vazio)'}\n`;
+                output += `SACADO_NOME: ${sacado_nome || '(vazio)'}\n`;
+                output += `SACADO_CIC: ${sacado_cic || '(vazio)'}\n`;
+                output += `VENCIMENTOS: ${vencimentos.length > 0 ? vencimentos.join(', ') : '(vazio)'}\n`;
+                output += `VALORES: ${valores.length > 0 ? valores.join(', ') : '(vazio)'}\n`;
+
+                output += '\n=== VALIDAÇÃO ===\n';
+                const valid = num_titulo && sacado_nome && (valores.length > 0 || vencimentos.length > 0);
+                output += valid ? '✓ PASSA' : '✗ FALHA';
+                output += `\n  NUM_TITULO: ${num_titulo ? '✓' : '✗'}\n`;
+                output += `  SACADO_NOME: ${sacado_nome ? '✓' : '✗'}\n`;
+                output += `  VALORES/VENCIMENTOS: ${(valores.length > 0 || vencimentos.length > 0) ? '✓' : '✗'}\n`;
+
+                document.getElementById('output').innerText = output;
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>

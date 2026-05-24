@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug OS File Structure</title>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h1>OS File Debug Tool</h1>
+    <input type="file" id="fileInput" accept=".xls,.xlsx" />
+    <button onclick="analyzeFile()">Analyze</button>
+    <pre id="output"></pre>
+
+    <script>
+        function analyzeFile() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Selecione um arquivo');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                let output = `=== ANÁLISE DO ARQUIVO: ${file.name} ===\n\n`;
+                output += `Total de linhas: ${jsonData.length}\n`;
+                output += `Total de colunas: ${jsonData.length > 0 ? Object.keys(jsonData[0]).length : 0}\n\n`;
+
+                output += '=== PRIMEIRAS 30 LINHAS (estrutura) ===\n\n';
+
+                for (let i = 0; i < Math.min(30, jsonData.length); i++) {
+                    const row = jsonData[i];
+                    const rowKeys = Object.keys(row);
+                    const values = rowKeys.map(k => String(row[k] || '').substring(0, 20)).join(' | ');
+                    output += `L${i + 1}: ${values}\n`;
+                }
+
+                output += '\n=== PROCURANDO KEYWORDS ===\n\n';
+
+                // Procurar keywords
+                const keywords = ['Código:', 'Cliente:', 'Cnpj', 'CPF', 'Endereço:', 'Bairro:', 'Cidade:', 'Cep:', 'Placa', 'Data', 'Valor', 'BOLETO'];
+
+                for (const keyword of keywords) {
+                    for (let i = 0; i < jsonData.length; i++) {
+                        const row = jsonData[i];
+                        const rowText = Object.values(row).join(' ').toUpperCase();
+                        if (rowText.includes(keyword.toUpperCase())) {
+                            output += `✓ "${keyword}" encontrado em L${i + 1}\n`;
+                            const rowKeys = Object.keys(row);
+                            for (let j = 0; j < rowKeys.length; j++) {
+                                const val = String(row[rowKeys[j]] || '').toUpperCase();
+                                if (val.includes(keyword.toUpperCase())) {
+                                    output += `  └─ Coluna ${rowKeys[j]}: "${String(row[rowKeys[j]])}" `;
+                                    if (j < rowKeys.length - 1) {
+                                        output += `→ Próxima: "${String(row[rowKeys[j + 1]])}"\n`;
+                                    } else {
+                                        output += '\n';
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                output += '\n=== VALORES APÓS KEYWORDS ===\n\n';
+
+                // Função helper (copiada de importService.js)
+                function findValueAfterText(jsonData, searchText) {
+                    for (let rowIdx = 0; rowIdx < Math.min(jsonData.length, 30); rowIdx++) {
+                        const rowObj = jsonData[rowIdx];
+                        if (!rowObj) continue;
+                        const rowKeys = Object.keys(rowObj);
+                        for (let colIdx = 0; colIdx < rowKeys.length; colIdx++) {
+                            const cellVal = String(rowObj[rowKeys[colIdx]] || '').toUpperCase();
+                            if (cellVal.includes(searchText.toUpperCase())) {
+                                for (let k = colIdx + 1; k < Math.min(colIdx + 10, rowKeys.length); k++) {
+                                    const nextVal = String(rowObj[rowKeys[k]] || '').trim();
+                                    if (nextVal && nextVal.length > 0) {
+                                        const isNumericOnly = /^\d+$/.test(nextVal);
+                                        const hasLetters = /[A-Z]/i.test(nextVal);
+                                        if (searchText.toUpperCase().includes('CLIENTE') && isNumericOnly) {
+                                            continue;
+                                        }
+                                        return { value: nextVal, row: rowIdx + 1, col: rowKeys[k], allValues: rowKeys.slice(colIdx, colIdx + 10).map(key => `${key}="${String(rowObj[key])}"`).join(' | ') };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return null;
+                }
+
+                const num_titulo = findValueAfterText(jsonData, 'Código:');
+                const sacado_nome = findValueAfterText(jsonData, 'Cliente:');
+                const valor = findValueAfterText(jsonData, 'Valor');
+
+                output += `NUM_TITULO ("Código:"): ${num_titulo ? `✓ "${num_titulo.value}" (L${num_titulo.row}, col ${num_titulo.col})` : '✗ NÃO ENCONTRADO'}\n`;
+                output += `SACADO_NOME ("Cliente:"): ${sacado_nome ? `✓ "${sacado_nome.value}" (L${sacado_nome.row}, col ${sacado_nome.col})` : '✗ NÃO ENCONTRADO'}\n`;
+                output += `VALOR ("Valor"): ${valor ? `✓ "${valor.value}" (L${valor.row}, col ${valor.col})` : '✗ NÃO ENCONTRADO'}\n`;
+
+                output += '\n=== MERGED CELLS ===\n\n';
+                if (worksheet['!mergedCells'] && worksheet['!mergedCells'].length > 0) {
+                    output += `Encontradas ${worksheet['!mergedCells'].length} regiões mescladas:\n`;
+                    worksheet['!mergedCells'].forEach((merged, idx) => {
+                        output += `${idx + 1}. ${merged.s.r}:${merged.s.c} → ${merged.e.r}:${merged.e.c}\n`;
+                    });
+                } else {
+                    output += 'Nenhuma célula mesclada encontrada\n';
+                }
+
+                document.getElementById('output').innerText = output;
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>

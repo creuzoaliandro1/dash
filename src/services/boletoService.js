@@ -171,11 +171,11 @@ export const createBoleto = async (contaId, boletoData) => {
       descricao: boletoData.DESCRICAO || '',
     }
 
-    // Gerar codigo de barras automaticamente
+    // Gerar codigo de barras automaticamente e calcular juros
     try {
       const { data: contaData, error: contaErr } = await supabase
         .from('CONTAS')
-        .select('conta_corrente')
+        .select('conta_corrente, juros')
         .eq('id', contaId)
         .single()
 
@@ -183,6 +183,13 @@ export const createBoleto = async (contaId, boletoData) => {
         const barcode = generateBarcodeFromBoleto(dataToInsert, contaData)
         dataToInsert.codigo_barras = barcode
         console.log('[BoletoService] Código de barras gerado:', barcode)
+
+        // Calcular juros diário: (valor * juros_mensal / 30) / 100
+        if (contaData.juros && dataToInsert.valor) {
+          const jurosDiario = (dataToInsert.valor * contaData.juros) / 3000
+          dataToInsert.juros = Math.round(jurosDiario * 100) / 100 // Arredondar para 2 casas decimais
+          console.log(`[BoletoService] Juros calculado: valor=${dataToInsert.valor}, juros_mensal=${contaData.juros}, juros_diario=${dataToInsert.juros}`)
+        }
       } else {
         console.warn('[BoletoService] Aviso ao gerar barcode - não encontrou conta:', contaErr)
         dataToInsert.codigo_barras = ''
@@ -239,7 +246,7 @@ export const updateBoleto = async (boletoId, updates) => {
         // Buscar dados da conta
         const { data: contaData, error: contaErr } = await supabase
           .from('CONTAS')
-          .select('conta_corrente')
+          .select('conta_corrente, juros')
           .eq('id', boletoMerged.conta_id)
           .single()
 
@@ -247,6 +254,13 @@ export const updateBoleto = async (boletoId, updates) => {
           const barcode = generateBarcodeFromBoleto(boletoMerged, contaData)
           updates.codigo_barras = barcode
           console.log('[updateBoleto] Novo código de barras gerado:', barcode)
+
+          // Recalcular juros se o valor foi alterado
+          if (updates.valor && contaData.juros) {
+            const jurosDiario = (updates.valor * contaData.juros) / 3000
+            updates.juros = Math.round(jurosDiario * 100) / 100 // Arredondar para 2 casas decimais
+            console.log(`[updateBoleto] Juros recalculado: valor=${updates.valor}, juros_mensal=${contaData.juros}, juros_diario=${updates.juros}`)
+          }
         }
       }
     }
@@ -783,6 +797,104 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
   }
 }
 
+// Buscar registros OPEITE filtrando por COD_CEDENTE (para origem Efactor)
+export const getOPEITEByCedente = async (codCedente) => {
+  try {
+    console.log('[BoletoService] Buscando OPEITE para COD_CEDENTE:', codCedente, '(TIPO_TITULO=DUP, STATUS em [DO,IN,PR])')
+
+    let allOpeite = []
+    let page = 0
+    const pageSize = 1000
+
+    while (true) {
+      const start = page * pageSize
+      const end = start + pageSize - 1
+
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE')
+        .eq('COD_CEDENTE', codCedente)
+        .eq('TIPO_TITULO', 'DUP')
+        .in('STATUS', ['DO', 'IN', 'PR'])
+        .range(start, end)
+
+      if (error) {
+        console.error('[BoletoService] Erro ao buscar OPEITE:', error)
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        console.log('[BoletoService] OPEITE: fim dos registros')
+        break
+      }
+
+      allOpeite = [...allOpeite, ...data]
+      console.log(`[BoletoService] OPEITE: página ${page} (+${data.length}, total: ${allOpeite.length})`)
+
+      if (data.length < pageSize) {
+        break
+      }
+
+      page++
+    }
+
+    console.log(`[BoletoService] ✓ Total de OPEITE: ${allOpeite.length} registros`)
+
+    // Buscar dados de SACADO para pegar NOME_CORRENTISTA
+    const codSacadoSet = new Set(allOpeite.map(o => o.COD_SACADO).filter(Boolean))
+    const sacadoMap = {}
+
+    if (codSacadoSet.size > 0) {
+      const codSacadoArray = Array.from(codSacadoSet)
+
+      for (let i = 0; i < codSacadoArray.length; i += pageSize) {
+        const batch = codSacadoArray.slice(i, i + pageSize)
+
+        const { data: sacados, error: sacadoError } = await supabase
+          .from('SACADO')
+          .select('COD_SACADO, NOME_CORRENTISTA, CIC')
+          .in('COD_SACADO', batch)
+
+        if (!sacadoError && sacados) {
+          sacados.forEach(s => {
+            sacadoMap[s.COD_SACADO] = {
+              NOME_CORRENTISTA: s.NOME_CORRENTISTA,
+              CIC: s.CIC
+            }
+          })
+        }
+      }
+    }
+
+    // Mapear dados para o padrão de boleto (snake_case para compatibilidade com capt_boletos)
+    const boletosMapeados = allOpeite.map(opeite => {
+      const sacado = sacadoMap[opeite.COD_SACADO] || {}
+      return {
+        num_titulo: opeite.NUM_TITULO || '',
+        data_emissao: opeite.DT_LANCA || '',
+        data_vencimento: opeite.DT_VENCI || '',
+        valor: parseFloat(opeite.VR_FACE) || 0,
+        numero_documento: opeite.NUM_LANCAMENTO || '',
+        sacado_nome: sacado.NOME_CORRENTISTA || '',
+        sacado_cic: sacado.CIC || '',
+        status: 'pendente',
+        status_efactor: 'Registrado',
+        num_lancamento: opeite.NUM_LANCAMENTO || '',
+        created_at: new Date().toISOString(), // Data da busca
+        // Metadados para rastreamento
+        _ORIGEM: 'OPEITE',
+        _COD_CEDENTE: opeite.COD_CEDENTE,
+        _COD_SACADO: opeite.COD_SACADO,
+      }
+    })
+
+    return { data: boletosMapeados, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao carregar OPEITE:', err)
+    return { data: [], error: err }
+  }
+}
+
 // Buscar dados completos da conta (incluindo logo, email, tipo)
 export const getContaInfo = async (contaId) => {
     try {
@@ -823,6 +935,225 @@ export const getAllContas = async () => {
           console.error('[getAllContas] Erro ao buscar contas:', err)
           return { data: [], error: err }
     }
+}
+
+// Buscar o próximo COD_OPERACAO para um cedente
+export const getProximoCodOperacao = async (codCedente) => {
+  try {
+    console.log('[BoletoService] Buscando próximo COD_OPERACAO para:', codCedente)
+
+    const { data, error } = await supabase
+      .from('OPECABWEB')
+      .select('COD_OPERACAO')
+      .eq('COD_CEDENTE', codCedente)
+      .order('COD_OPERACAO', { ascending: false })
+      .limit(1)
+
+    if (error) throw error
+
+    let proximo = 1
+    if (data && data.length > 0) {
+      const ultimoCod = parseInt(data[0].COD_OPERACAO || 0)
+      proximo = ultimoCod + 1
+    }
+
+    console.log('[BoletoService] Próximo COD_OPERACAO:', proximo)
+    return { data: proximo, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar COD_OPERACAO:', err)
+    return { data: 1, error: err }
+  }
+}
+
+// Buscar o próximo COD_BORDERO (global)
+export const getProximoCodBordero = async () => {
+  try {
+    console.log('[BoletoService] Buscando próximo COD_BORDERO global...')
+
+    const { data, error } = await supabase
+      .from('OPECABWEB')
+      .select('COD_BORDERO')
+      .order('COD_BORDERO', { ascending: false })
+      .limit(1)
+
+    if (error) throw error
+
+    let proximo = 1
+    if (data && data.length > 0) {
+      const ultimoCod = parseInt(data[0].COD_BORDERO || 0)
+      proximo = ultimoCod + 1
+    }
+
+    console.log('[BoletoService] Próximo COD_BORDERO:', proximo)
+    return { data: proximo, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar COD_BORDERO:', err)
+    return { data: 1, error: err }
+  }
+}
+
+// Buscar o próximo COD_TITULO da tabela OPEITEWEB
+export const getProximoCodTitulo = async () => {
+  try {
+    console.log('[BoletoService] Buscando próximo COD_TITULO de OPEITEWEB...')
+
+    const { data, error } = await supabase
+      .from('OPEITEWEB')
+      .select('COD_TITULO')
+      .order('COD_TITULO', { ascending: false })
+      .limit(1)
+
+    if (error) throw error
+
+    let proximo = 1
+    if (data && data.length > 0) {
+      const ultimoCod = parseInt(data[0].COD_TITULO || 0)
+      proximo = ultimoCod + 1
+    }
+
+    console.log('[BoletoService] Próximo COD_TITULO:', proximo)
+    return { data: proximo, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar COD_TITULO:', err)
+    return { data: 1, error: err }
+  }
+}
+
+// Função auxiliar para truncar strings a um tamanho máximo
+const truncarString = (str, maxLength = 25) => {
+  if (!str) return ''
+  const strOriginal = String(str)
+  if (strOriginal.length > maxLength) {
+    console.warn(`[BoletoService] Campo truncado de ${strOriginal.length} para ${maxLength} caracteres`)
+    return strOriginal.substring(0, maxLength)
+  }
+  return strOriginal
+}
+
+// Criar antecipação: insere registros em OPECABWEB, SACADOWEB e OPEITEWEB
+export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
+  try {
+    console.log('[BoletoService] Criando antecipação para', boletosParaAntecipar.length, 'boletos')
+
+    if (!contaData || !contaData.cod_cedente) {
+      throw new Error('Conta sem cod_cedente definido')
+    }
+
+    // 1. Obter próximos COD_OPERACAO, COD_BORDERO e COD_TITULO
+    const { data: proximoCodOperacao } = await getProximoCodOperacao(contaData.cod_cedente)
+    const { data: proximoCodBordero } = await getProximoCodBordero()
+    const { data: proximoCodTituloInicial } = await getProximoCodTitulo()
+
+    // 2. Preparar dados para OPECABWEB
+    const agora = new Date()
+    const dtRecepcao = agora.toISOString().split('T')[0] // YYYY-MM-DD
+    const hrRecepcao = agora.toTimeString().split(' ')[0] // HH:mm:ss
+
+    const registroOPECABWEB = {
+      COD_CEDENTE: contaData.cod_cedente,
+      COD_OPERACAO: proximoCodOperacao,
+      DT_RECEPCAO: dtRecepcao,
+      HR_RECEPCAO: hrRecepcao,
+      COD_BORDERO: proximoCodBordero,
+      STATUS: 'R'
+    }
+
+    console.log('[BoletoService] Inserindo OPECABWEB com STATUS=R:', registroOPECABWEB)
+
+    // 3. Inserir em OPECABWEB
+    const { error: erroOPECABWEB } = await supabase
+      .from('OPECABWEB')
+      .insert([registroOPECABWEB])
+
+    if (erroOPECABWEB) {
+      console.error('[BoletoService] Erro ao inserir OPECABWEB:', erroOPECABWEB)
+      throw erroOPECABWEB
+    }
+
+    // 4. Preparar e inserir registros em SACADOWEB para cada boleto
+    console.log('[BoletoService] Preparando registros SACADOWEB...')
+
+    const registrosSACLADOWEB = boletosParaAntecipar.map(boleto => ({
+      NOME_SACADO: boleto.sacado_nome || '',
+      CIC_SACADO: boleto.sacado_cic || '',
+      NOME_LOGRADOURO: boleto.sacado_endereco || '',
+      CEP: boleto.sacado_cep || '',
+      BAIRRO: boleto.sacado_bairro || '',
+      LOCALIDADE: boleto.sacado_cidade || '',
+      UF: boleto.sacado_uf || ''
+    }))
+
+    // Inserir em SACADOWEB (pode gerar erro de duplicata, que é aceitável)
+    const { error: erroSACADOWEB } = await supabase
+      .from('SACADOWEB')
+      .insert(registrosSACLADOWEB)
+
+    if (erroSACADOWEB) {
+      console.warn('[BoletoService] Aviso ao inserir SACADOWEB (pode ter duplicatas):', erroSACADOWEB.message)
+      // Não lançar erro, pois SACADO pode já existir
+    }
+
+    // 5. Preparar registros para OPEITEWEB com COD_TITULO sequencial
+    const PREFIXO_NOSSO_NUMERO = '36877480' // 8 dígitos
+    let codTituloAtual = proximoCodTituloInicial
+    const registrosOPEITEWEB = boletosParaAntecipar.map(boleto => {
+      // Construir NOSSO_NUMERO com prefixo (total 17 dígitos)
+      // Prefixo (8) + nosso_numero (9) = 17 dígitos
+      const nossoNumeroCompleto = PREFIXO_NOSSO_NUMERO + (boleto.nosso_numero || '').padStart(9, '0')
+
+      const registro = {
+        COD_CEDENTE: contaData.cod_cedente,
+        COD_BORDERO: proximoCodBordero,
+        COD_TITULO: codTituloAtual++,
+        TIPO: 'DUP',
+        DT_BORDERO: dtRecepcao,
+        VR_FACE: parseFloat(boleto.valor) || 0,
+        DT_VENCIMENTO: boleto.data_vencimento || null,
+        NUMERO: truncarString(boleto.numero_documento, 25),
+        NOME_EMITENTE: truncarString(boleto.sacado_nome, 25),
+        CIC_EMITENTE: truncarString(boleto.sacado_cic, 25),
+        NOSSO_NUMERO: nossoNumeroCompleto.substring(0, 25),
+        NOME_AVALISTA: truncarString(boleto.avalista_nome, 25),
+        CIC_AVALISTA: truncarString(boleto.avalista_cic, 25),
+        STATUS: 'R'
+      }
+
+      console.log(`[BoletoService] NOSSO_NUMERO: ${boleto.nosso_numero || ''} → ${nossoNumeroCompleto} (17 dígitos)`)
+
+      return registro
+    })
+
+    console.log('[BoletoService] Inserindo', registrosOPEITEWEB.length, 'registros OPEITEWEB com COD_TITULO sequencial')
+
+    if (registrosOPEITEWEB.length > 0) {
+      console.log('[BoletoService] Exemplo de registro OPEITEWEB:', JSON.stringify(registrosOPEITEWEB[0], null, 2))
+    }
+
+    // 6. Inserir em OPEITEWEB
+    const { error: erroOPEITEWEB } = await supabase
+      .from('OPEITEWEB')
+      .insert(registrosOPEITEWEB)
+
+    if (erroOPEITEWEB) {
+      console.error('[BoletoService] Erro ao inserir OPEITEWEB:', erroOPEITEWEB)
+      throw erroOPEITEWEB
+    }
+
+    console.log('[BoletoService] ✓ Antecipação criada com sucesso')
+    return {
+      data: {
+        codBordero: proximoCodBordero,
+        codOperacao: proximoCodOperacao,
+        quantidadeBoletos: registrosOPEITEWEB.length,
+        codTituloInicio: proximoCodTituloInicial,
+        codTituloFim: codTituloAtual - 1
+      },
+      error: null
+    }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao criar antecipação:', err)
+    return { data: null, error: err }
+  }
 }
 
 // Contar quantas remessas ja foram geradas para uma conta (pelo cedente)

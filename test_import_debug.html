@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug OS Import - Detailed Analysis</title>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: monospace; background: #1e1e1e; color: #00ff00; padding: 10px; }
+        h1, h2 { color: #ffff00; }
+        .section { background: #2d2d2d; border-left: 3px solid #00ff00; padding: 10px; margin: 10px 0; }
+        .good { color: #00ff00; font-weight: bold; }
+        .bad { color: #ff0000; font-weight: bold; }
+        .info { color: #00ffff; }
+        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        td, th { border: 1px solid #00ff00; padding: 5px; text-align: left; }
+        th { background: #004400; }
+        input, button { background: #2d2d2d; color: #00ff00; border: 1px solid #00ff00; padding: 5px; }
+        button { cursor: pointer; }
+        button:hover { background: #004400; }
+        pre { background: #0d0d0d; overflow-x: auto; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Debug OS Import System</h1>
+    <p>Upload the problematic OS file to see exactly what's happening during extraction.</p>
+
+    <input type="file" id="fileInput" accept=".xls,.xlsx" />
+    <button onclick="analyzeFile()">Analyze File</button>
+
+    <div id="results"></div>
+
+    <script>
+        // Copy helper functions from importService.js
+        function findValueAfterText(jsonData, searchText, maxColsAhead = 10) {
+            for (let rowIdx = 0; rowIdx < jsonData.length; rowIdx++) {
+                const rowObj = jsonData[rowIdx];
+                if (!rowObj) continue;
+                const rowKeys = Object.keys(rowObj);
+                for (let colIdx = 0; colIdx < rowKeys.length; colIdx++) {
+                    const cellVal = String(rowObj[rowKeys[colIdx]] || '').toUpperCase();
+                    if (cellVal.includes(searchText.toUpperCase())) {
+                        let bestValue = null;
+                        for (let k = colIdx + 1; k < Math.min(colIdx + maxColsAhead, rowKeys.length); k++) {
+                            const nextVal = String(rowObj[rowKeys[k]] || '').trim();
+                            if (!nextVal || nextVal.length === 0) continue;
+                            const isNumericOnly = /^\d+$/.test(nextVal);
+                            if (searchText.toUpperCase().includes('CLIENTE') && isNumericOnly) {
+                                log(`    → Ignorando numérico: "${nextVal}"`);
+                                continue;
+                            }
+                            bestValue = nextVal;
+                            log(`    ✓ Encontrado: "${bestValue}"`);
+                            return bestValue;
+                        }
+                        if (bestValue) return bestValue;
+                    }
+                }
+            }
+            log(`    ✗ Não encontrado`);
+            return null;
+        }
+
+        function findValuesBelow(jsonData, labelText, fieldName = 'Campo') {
+            const values = [];
+            let labelRowIdx = -1;
+            let labelColIdx = -1;
+
+            for (let rowIdx = 0; rowIdx < jsonData.length; rowIdx++) {
+                const rowObj = jsonData[rowIdx];
+                if (!rowObj) continue;
+                const rowKeys = Object.keys(rowObj);
+                for (let colIdx = 0; colIdx < rowKeys.length; colIdx++) {
+                    const cellVal = String(rowObj[rowKeys[colIdx]] || '').toUpperCase();
+                    if (cellVal.includes(labelText.toUpperCase())) {
+                        labelRowIdx = rowIdx;
+                        labelColIdx = colIdx;
+                        log(`    ✓ Label "${labelText}" encontrado em L${rowIdx + 1}, coluna ${rowKeys[colIdx]}`);
+                        break;
+                    }
+                }
+                if (labelRowIdx >= 0) break;
+            }
+
+            if (labelRowIdx >= 0) {
+                const labelColName = Object.keys(jsonData[labelRowIdx])[labelColIdx];
+                for (let rowIdx = labelRowIdx + 1; rowIdx < Math.min(jsonData.length, labelRowIdx + 50); rowIdx++) {
+                    const rowObj = jsonData[rowIdx];
+                    if (!rowObj) continue;
+                    const cellVal = String(rowObj[labelColName] || '').trim();
+                    if (!cellVal) {
+                        log(`    (vazio em L${rowIdx + 1}, parando)`);
+                        break;
+                    }
+                    if (cellVal.length > 0 && !cellVal.toUpperCase().includes(':')) {
+                        values.push(cellVal);
+                        log(`      L${rowIdx + 1}: "${cellVal}"`);
+                    }
+                }
+            } else {
+                log(`    ✗ Label não encontrado`);
+            }
+            return values;
+        }
+
+        let logOutput = [];
+        function log(msg) {
+            console.log(msg);
+            logOutput.push(msg);
+        }
+
+        function analyzeFile() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Selecione um arquivo');
+                return;
+            }
+
+            logOutput = [];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                let html = `<div class="section">
+                    <h2>${file.name}</h2>
+                    <p>Linhas: ${jsonData.length} | Colunas (1ª linha): ${jsonData.length > 0 ? Object.keys(jsonData[0]).length : 0}</p>
+                </div>`;
+
+                // Show first few rows
+                html += `<div class="section">
+                    <h3>Primeiras 20 linhas (estrutura)</h3>
+                    <table>
+                    <thead><tr><th>L</th><th>Conteúdo</th></tr></thead>
+                    <tbody>`;
+
+                for (let i = 0; i < Math.min(20, jsonData.length); i++) {
+                    const row = jsonData[i];
+                    const vals = Object.entries(row)
+                        .filter(([k, v]) => v)
+                        .map(([k, v]) => `${k}="${String(v).substring(0, 15)}"`)
+                        .join(' | ');
+                    if (vals) {
+                        html += `<tr><td>L${i + 1}</td><td>${vals}</td></tr>`;
+                    }
+                }
+                html += `</tbody></table></div>`;
+
+                // Test extraction
+                html += `<div class="section">
+                    <h3>🔍 Teste de Extração</h3>
+                    <h4>Procurando campos:</h4>
+                </div>`;
+
+                logOutput = [];
+                log(`\n=== TESTE DE EXTRAÇÃO ===\n`);
+
+                log(`Procurando NUM_TITULO ("Código:"):`);
+                const num_titulo = findValueAfterText(jsonData, 'Código:');
+
+                log(`\nProcurando SACADO_NOME (múltiplas variações):`);
+                log(`  1. Procurando "Cliente":`);
+                const sacado_nome_1 = findValueAfterText(jsonData, 'Cliente');
+                log(`  2. Se não encontrar, procurando "Cliente:":`);
+                const sacado_nome_2 = findValueAfterText(jsonData, 'Cliente:');
+                const sacado_nome = sacado_nome_1 || sacado_nome_2;
+
+                log(`\nProcurando SACADO_CIC (múltiplas variações):`);
+                log(`  1. Procurando "Cnpj":`);
+                const cic_1 = findValueAfterText(jsonData, 'Cnpj');
+                log(`  2. Procurando "CPF":`);
+                const cic_2 = findValueAfterText(jsonData, 'CPF');
+                log(`  3. Procurando "Cnpj / Cpf":`);
+                const cic_3 = findValueAfterText(jsonData, 'Cnpj / Cpf');
+                const sacado_cic = cic_1 || cic_2 || cic_3;
+
+                log(`\nProcurando VENCIMENTO ("Data"):`);
+                const vencimentos = findValuesBelow(jsonData, 'Data', 'VENCIMENTO');
+
+                log(`\nProcurando VALOR ("Valor"):`);
+                const valores = findValuesBelow(jsonData, 'Valor', 'VALOR');
+
+                html += `<div class="section">
+                    <h3>📊 Resultados</h3>
+                    <table>
+                    <tr>
+                        <td>NUM_TITULO</td>
+                        <td>${num_titulo ? `<span class="good">✓ ${num_titulo}</span>` : '<span class="bad">✗ Vazio</span>'}</td>
+                    </tr>
+                    <tr>
+                        <td>SACADO_NOME</td>
+                        <td>${sacado_nome ? `<span class="good">✓ ${sacado_nome}</span>` : '<span class="bad">✗ Vazio</span>'}</td>
+                    </tr>
+                    <tr>
+                        <td>SACADO_CIC</td>
+                        <td>${sacado_cic ? `<span class="good">✓ ${sacado_cic}</span>` : '<span class="bad">✗ Vazio</span>'}</td>
+                    </tr>
+                    <tr>
+                        <td>VENCIMENTOS</td>
+                        <td>${vencimentos.length > 0 ? `<span class="good">✓ ${vencimentos.join(', ')}</span>` : '<span class="bad">✗ Nenhum</span>'}</td>
+                    </tr>
+                    <tr>
+                        <td>VALORES</td>
+                        <td>${valores.length > 0 ? `<span class="good">✓ ${valores.join(', ')}</span>` : '<span class="bad">✗ Nenhum</span>'}</td>
+                    </tr>
+                    <tr style="font-weight: bold;">
+                        <td>VÁLIDO?</td>
+                        <td>${(num_titulo && sacado_nome && (valores.length > 0 || vencimentos.length > 0)) ? '<span class="good">✓ SIM</span>' : '<span class="bad">✗ NÃO</span>'}</td>
+                    </tr>
+                    </table>
+                </div>`;
+
+                // Console log
+                html += `<div class="section">
+                    <h3>🖥️ Console Log Detalhado</h3>
+                    <pre>${logOutput.join('\n')}</pre>
+                </div>`;
+
+                document.getElementById('results').innerHTML = html;
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>
