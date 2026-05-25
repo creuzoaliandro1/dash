@@ -45,7 +45,6 @@ const converterNumeroParaExtenso = (numero) => {
 
   let extenso = ''
 
-  // Centenas
   if (reais >= 100) {
     extenso += centenas[Math.floor(reais / 100)]
     const resto = reais % 100
@@ -75,6 +74,49 @@ const converterNumeroParaExtenso = (numero) => {
   return extenso
 }
 
+// Função auxiliar para converter número da célula em posição (row, col)
+const getCellPosition = (cellNumber, cols) => {
+  cellNumber-- // Converter para 0-based
+  const row = Math.floor(cellNumber / cols)
+  const col = cellNumber % cols
+  return { row, col }
+}
+
+// Função para desenhar um retângulo mesclado com arredondamento e espaçamento
+const drawMergedRect = (pdf, startX, startY, colWidth, rowHeight, cells, cols, cardNumber = null) => {
+  if (cells.length === 0) return
+
+  const spacing = 0.75 // 0.75mm de cada lado = 1.5mm total de separação
+  const radius = 2 // Raio dos cantos arredondados em mm
+
+  // Encontrar bounds das células
+  const positions = cells.map(cell => getCellPosition(cell, cols))
+  const minCol = Math.min(...positions.map(p => p.col))
+  const maxCol = Math.max(...positions.map(p => p.col))
+  const minRow = Math.min(...positions.map(p => p.row))
+  const maxRow = Math.max(...positions.map(p => p.row))
+
+  const x = startX + minCol * colWidth + spacing
+  const y = startY + minRow * rowHeight + spacing
+  const width = (maxCol - minCol + 1) * colWidth - spacing * 2
+  const height = (maxRow - minRow + 1) * rowHeight - spacing * 2
+
+  // Desenhar retângulo com cantos arredondados
+  pdf.roundedRect(x, y, width, height, radius, radius)
+
+  // Adicionar número do card no centro
+  if (cardNumber !== null) {
+    const centerX = x + width / 2
+    const centerY = y + height / 2
+
+    pdf.setFontSize(8)
+    pdf.setTextColor(180, 180, 180) // Cinza claro
+    pdf.setFont(undefined, 'normal')
+    pdf.text(String(cardNumber), centerX, centerY, { align: 'center', baseline: 'middle' })
+    pdf.setTextColor(0, 0, 0) // Voltar para preto
+  }
+}
+
 export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -82,168 +124,339 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     format: 'a4'
   })
 
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const margin = 10
-  const contentWidth = pageWidth - margin * 2
+  // Dimensões da Duplicata
+  const duplicataWidth = 190 // 19cm em mm
+  const duplicataHeight = 120 // 12cm em mm
+  const cols = 6
+  const rows = 13
+
+  // Calcular dimensões de cada célula
+  const colWidth = duplicataWidth / cols
+  const rowHeight = duplicataHeight / rows
+
+  // Posição inicial da Duplicata no PDF
+  const startX = 10
+  const startY = 10
 
   try {
-    let yPos = margin
+    pdf.setDrawColor(0, 0, 0)
+    pdf.setLineWidth(0.4)
 
-    // ===== HEADER: LOGO + DADOS DA EMPRESA =====
-    // Logo (lado esquerdo)
-    if (logoUrl) {
+    // ===== DESENHAR GRID COM MESCLAGENS =====
+
+    // Card 1: Logo + Dados cedente (1,2,3,4,7,8,9,10,13,14,15,16)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [1,2,3,4,7,8,9,10,13,14,15,16], cols, 1)
+
+    // Card 2: Telefone cedente (5,11)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [5,11], cols, 2)
+
+    // Card 3: Espaço vazio (6,12)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [6,12], cols, 3)
+
+    // Card 4: Para uso de Instituição (17,18)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [17,18], cols, 4)
+
+    // Card 5: Tabelas Fatura/Duplicata (20,21,22,23,26,27,28,29)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [20,21,22,23,26,27,28,29], cols, 5)
+
+    // Card 6: Desconto (24,30,36)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [24,30,36], cols, 6)
+
+    // Card 7: Dados Sacado header (32,33,34,35)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [32,33,34,35], cols, 7)
+
+    // Card 8: Coluna esquerda vertical (19,25,31,37,43,49,55,61,67,73,79)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [19,25,31,37,43,49,55,61,67,73,79], cols, 8)
+
+    // Card 9: Grande área central (38,39,40,41,42,44,45,46,47,48,50,51,52,53,54,56,57,58,59,60,62,63,64,65,66)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [38,39,40,41,42,44,45,46,47,48,50,51,52,53,54,56,57,58,59,60,62,63,64,65,66], cols, 9)
+
+    // Card 10: Assinatura (68,69,70,71,72)
+    drawMergedRect(pdf, startX, startY, colWidth, rowHeight, [68,69,70,71,72], cols, 10)
+
+    // ===== ADICIONAR CONTEÚDO NAS ÁREAS =====
+
+    pdf.setTextColor(0, 0, 0)
+    pdf.setFont(undefined, 'normal')
+
+    // ===== CARD 1: LOGO (1/4) + DADOS CEDENTE (3/4) =====
+    // Calcular dimensões do card 1
+    const card1Positions = [1,2,3,4,7,8,9,10,13,14,15,16].map(cell => getCellPosition(cell, cols))
+    const card1MinCol = Math.min(...card1Positions.map(p => p.col))
+    const card1MaxCol = Math.max(...card1Positions.map(p => p.col))
+    const card1MinRow = Math.min(...card1Positions.map(p => p.row))
+    const card1MaxRow = Math.max(...card1Positions.map(p => p.row))
+
+    const spacing = 0.75
+    const card1X = startX + card1MinCol * colWidth + spacing
+    const card1Y = startY + card1MinRow * rowHeight + spacing
+    const card1Width = (card1MaxCol - card1MinCol + 1) * colWidth - spacing * 2
+    const card1Height = (card1MaxRow - card1MinRow + 1) * rowHeight - spacing * 2
+
+    const card1LogoWidth = card1Width / 4
+    const card1DataWidth = card1Width * 3 / 4
+
+    // Logo (1/4 da largura) - usar logo armazenado na conta, não URL
+    const logoData = conta?.logo || null
+    if (logoData) {
       try {
-        const imgData = await fetch(logoUrl).then(r => r.blob()).then(b => b.arrayBuffer())
-        const imgBinary = String.fromCharCode(...new Uint8Array(imgData))
-        const imgBase64 = btoa(imgBinary)
-        pdf.addImage('data:image/png;base64,' + imgBase64, 'PNG', margin, yPos, 30, 15)
+        console.log('[Duplicata] Logo encontrado na conta, tamanho:', logoData.length)
+        const logoHeight = card1Height - 2
+        const logoWidth = card1LogoWidth - 2
+
+        // Determinar tipo de imagem baseado no conteúdo
+        let imgFormat = 'PNG'
+        let imgDataUri = logoData
+
+        // Se não começar com data:, é provavelmente base64 puro
+        if (!logoData.startsWith('data:')) {
+          // Verificar se é PNG ou JPG baseado na assinatura
+          if (logoData.startsWith('iVBO')) {
+            imgDataUri = 'data:image/png;base64,' + logoData
+          } else if (logoData.startsWith('/9j/')) {
+            imgDataUri = 'data:image/jpeg;base64,' + logoData
+            imgFormat = 'JPEG'
+          } else {
+            // Assume PNG como padrão
+            imgDataUri = 'data:image/png;base64,' + logoData
+          }
+        }
+
+        pdf.addImage(imgDataUri, imgFormat, card1X + 1, card1Y + 1, logoWidth, logoHeight, undefined, 'FAST')
+        console.log('[Duplicata] ✓ Logo carregada com sucesso')
       } catch (e) {
-        console.warn('[Duplicata] Erro ao carregar logo:', e)
+        console.warn('[Duplicata] Erro ao carregar logo:', e.message)
       }
+    } else {
+      console.warn('[Duplicata] Nenhum logo disponível (campo logo vazio na conta)')
     }
 
-    // Dados da empresa cedente (lado direito)
-    pdf.setFontSize(9)
+    // Dados cedente (3/4 da largura)
+    pdf.setFontSize(8)
+    const cedenteX = card1X + card1LogoWidth + 1
+    const cedenteY = card1Y + 1
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('RAZÃO SOCIAL:', cedenteX, cedenteY)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((conta?.nome_correntista || 'EMPRESA').toUpperCase(), cedenteX, cedenteY + 2.5, { maxWidth: card1DataWidth - 2 })
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('CNPJ:', cedenteX, cedenteY + 5)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((conta?.cic || '00.000.000/0000-00').toUpperCase(), cedenteX, cedenteY + 7, { maxWidth: card1DataWidth - 2 })
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('ENDEREÇO:', cedenteX, cedenteY + 10)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((conta?.endereco || 'RUA').toUpperCase(), cedenteX, cedenteY + 12, { maxWidth: card1DataWidth - 2 })
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('MUNICÍPIO / UF:', cedenteX, cedenteY + 15)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(((conta?.cidade || '') + ' - ' + (conta?.uf || '')).toUpperCase(), cedenteX, cedenteY + 17, { maxWidth: card1DataWidth - 2 })
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('CEP:', cedenteX, cedenteY + 20)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((conta?.cep || '00000-000').toUpperCase(), cedenteX, cedenteY + 22, { maxWidth: card1DataWidth / 2 - 2 })
+
+    pdf.setFont(undefined, 'normal')
+    pdf.text('TELEFONE:', cedenteX + card1DataWidth / 2, cedenteY + 20)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((conta?.telefone || '').toUpperCase(), cedenteX + card1DataWidth / 2, cedenteY + 22, { maxWidth: card1DataWidth / 2 - 2 })
+
+    // ===== CARD 3: DUPLICATA (centralizado vertical) =====
+    const card3Positions = [6,12].map(cell => getCellPosition(cell, cols))
+    const card3MinCol = Math.min(...card3Positions.map(p => p.col))
+    const card3MaxCol = Math.max(...card3Positions.map(p => p.col))
+    const card3MinRow = Math.min(...card3Positions.map(p => p.row))
+    const card3MaxRow = Math.max(...card3Positions.map(p => p.row))
+
+    const card3X = startX + card3MinCol * colWidth + spacing
+    const card3Y = startY + card3MinRow * rowHeight + spacing
+    const card3Width = (card3MaxCol - card3MinCol + 1) * colWidth - spacing * 2
+    const card3Height = (card3MaxRow - card3MinRow + 1) * rowHeight - spacing * 2
+
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('DUPLICATA', card3X + card3Width / 2, card3Y + card3Height / 2, { align: 'center', baseline: 'middle' })
+
+    // ===== CARD 5: LINHA DIVISÓRIA (Fatura | Duplicata) =====
+    const card5Positions = [20,21,22,23,26,27,28,29].map(cell => getCellPosition(cell, cols))
+    const card5MinCol = Math.min(...card5Positions.map(p => p.col))
+    const card5MaxCol = Math.max(...card5Positions.map(p => p.col))
+    const card5MinRow = Math.min(...card5Positions.map(p => p.row))
+    const card5MaxRow = Math.max(...card5Positions.map(p => p.row))
+
+    const card5X = startX + card5MinCol * colWidth + spacing
+    const card5Y = startY + card5MinRow * rowHeight + spacing
+    const card5Width = (card5MaxCol - card5MinCol + 1) * colWidth - spacing * 2
+    const card5Height = (card5MaxRow - card5MinRow + 1) * rowHeight - spacing * 2
+
+    // Linha horizontal dividindo o card ao meio
+    const card5MidY = card5Y + card5Height / 2
+    pdf.setDrawColor(0, 0, 0)
+    pdf.setLineWidth(0.4)
+    pdf.line(card5X, card5MidY, card5X + card5Width, card5MidY)
+
+    // Linhas verticais dividindo o card em 4 colunas
+    const card5Col1X = card5X + card5Width / 4
+    const card5Col2X = card5X + card5Width / 2
+    const card5Col3X = card5X + (card5Width * 3) / 4
+
+    pdf.line(card5Col1X, card5Y, card5Col1X, card5Y + card5Height) // 1ª linha vertical (25%)
+    pdf.line(card5Col2X, card5Y, card5Col2X, card5Y + card5Height) // 2ª linha vertical (50%)
+    pdf.line(card5Col3X, card5Y, card5Col3X, card5Y + card5Height) // 3ª linha vertical (75%)
+
+    // Labels nas 4 colunas do Card 5 - alinhados verticalmente com o centro da linha horizontal
+    const card5LabelY = card5Y + card5Height / 2 // Centro da linha horizontal
+
+    pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
 
-    const dataStartX = margin + 50
-    let dataY = yPos + 1
+    // Coluna 1: "NF-FATURA"
+    const col1CenterX = card5X + (card5Col1X - card5X) / 2
+    pdf.text('NF-FATURA', col1CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
 
-    pdf.text('Razão Social: ' + (conta?.nome_correntista || 'EMPRESA'), dataStartX, dataY)
-    dataY += 4
-    pdf.text('CNPJ: ' + (conta?.cic || conta?.cpf_cnpj || '00.000.000/0000-00'), dataStartX, dataY)
-    dataY += 4
-    pdf.text('Endereço: ' + (conta?.endereco || 'RUA'), dataStartX, dataY)
-    dataY += 4
-    pdf.text('Município / UF: ' + (conta?.cidade || '') + ' - ' + (conta?.uf || ''), dataStartX, dataY)
-    dataY += 4
-    pdf.text('Cep: ' + (conta?.cep || '00000-000'), dataStartX, dataY)
+    // Coluna 2: "DUPLICATA VALOR R$" (com quebra de linha)
+    const col2CenterX = card5Col1X + (card5Col2X - card5Col1X) / 2
+    pdf.text('DUPLICATA', col2CenterX, card5LabelY - 1.5, { align: 'center' })
+    pdf.text('VALOR R$', col2CenterX, card5LabelY + 1.5, { align: 'center' })
+
+    // Coluna 3: "DUPLICATA Nº"
+    const col3CenterX = card5Col2X + (card5Col3X - card5Col2X) / 2
+    pdf.text('DUPLICATA', col3CenterX, card5LabelY - 1.5, { align: 'center' })
+    pdf.text('Nº', col3CenterX, card5LabelY + 1.5, { align: 'center' })
+
+    // Coluna 4: "VENCIMENTO"
+    const col4CenterX = card5Col3X + (card5X + card5Width - card5Col3X) / 2
+    pdf.text('VENCIMENTO', col4CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
+
+    // ===== CARD 6: PARA USO DA INSTITUIÇÃO =====
+    const card6Positions = [24,30,36].map(cell => getCellPosition(cell, cols))
+    const card6MinCol = Math.min(...card6Positions.map(p => p.col))
+    const card6MaxCol = Math.max(...card6Positions.map(p => p.col))
+    const card6MinRow = Math.min(...card6Positions.map(p => p.row))
+    const card6MaxRow = Math.max(...card6Positions.map(p => p.row))
+
+    const card6X = startX + card6MinCol * colWidth + spacing
+    const card6Y = startY + card6MinRow * rowHeight + spacing
+    const card6Width = (card6MaxCol - card6MinCol + 1) * colWidth - spacing * 2
+    const card6Height = (card6MaxRow - card6MinRow + 1) * rowHeight - spacing * 2
 
     pdf.setFontSize(8)
-    pdf.text('Telefone: ' + (conta?.telefone || ''), pageWidth - margin - 30, yPos + 2)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('USO DA INSTITUIÇÃO', card6X + card6Width / 2, card6Y + card6Height / 6, { align: 'center', baseline: 'middle' })
 
-    yPos += 22
+    // ===== CARD 8: LINHA PARA ASSINATURA =====
+    const card8Positions = [19,25,31,37,43,49,55,61,67,73,79].map(cell => getCellPosition(cell, cols))
+    const card8MinCol = Math.min(...card8Positions.map(p => p.col))
+    const card8MaxCol = Math.max(...card8Positions.map(p => p.col))
+    const card8MinRow = Math.min(...card8Positions.map(p => p.row))
+    const card8MaxRow = Math.max(...card8Positions.map(p => p.row))
 
-    // ===== TABELAS: FATURA | DUPLICATA | PARA USO DE INSTITUIÇÃO FINANCEIRA =====
-    const colWidth = (contentWidth - 4) / 3
+    const card8X = startX + card8MinCol * colWidth + spacing
+    const card8Y = startY + card8MinRow * rowHeight + spacing
+    const card8Width = (card8MaxCol - card8MinCol + 1) * colWidth - spacing * 2
+    const card8Height = (card8MaxRow - card8MinRow + 1) * rowHeight - spacing * 2
 
-    // Desenhar retângulos das três colunas
-    pdf.rect(margin, yPos, colWidth, 28)
-    pdf.rect(margin + colWidth + 2, yPos, colWidth, 28)
-    pdf.rect(margin + colWidth * 2 + 4, yPos, colWidth, 28)
+    // Desenhar linha vertical para assinatura - posicionada à direita do card
+    const card8LineX = card8X + card8Width * 0.75 // 75% da largura (mais à direita)
+    const card8SignatureLineStartY = card8Y + 2 // Começar próximo ao topo
+    const card8SignatureLineEndY = card8Y + card8Height - 2 // Terminar próximo ao fundo
+    pdf.setDrawColor(0, 0, 0)
+    pdf.setLineWidth(0.2) // Linha mais fina
+    pdf.line(card8LineX, card8SignatureLineStartY, card8LineX, card8SignatureLineEndY)
 
-    // Headers
-    pdf.setFontSize(9)
-    pdf.setFont(undefined, 'bold')
-    pdf.text('Fatura', margin + colWidth / 2, yPos + 4, { align: 'center' })
-    pdf.text('Duplicata', margin + colWidth + 2 + colWidth / 2, yPos + 4, { align: 'center' })
-    pdf.text('Para uso de Instituição financeira', margin + colWidth * 2 + 4 + colWidth / 2, yPos + 4, { align: 'center' })
+    // Label "ASSINATURA DO EMITENTE" vertical ao lado direito da linha, centralizado pela altura do card
+    // Desenhar letra por letra (90 graus rotacionado)
+    const labelVertical = 'ASSINATURA DO EMITENTE'
+    const charSpacing = 1.2 // espaço entre caracteres
+    const card8CenterY = card8Y + card8Height / 2 // altura central do card
+    const textX = card8LineX + 4 // um pouco à direita da linha
 
-    // Linhas separadoras do header
-    pdf.setDrawColor(0)
-    pdf.line(margin + 2, yPos + 5.5, margin + colWidth - 2, yPos + 5.5)
-    pdf.line(margin + colWidth + 4, yPos + 5.5, margin + colWidth * 2, yPos + 5.5)
-    pdf.line(margin + colWidth * 2 + 6, yPos + 5.5, pageWidth - margin - 2, yPos + 5.5)
+    // Calcular ponto de início para centralizar o texto pela altura
+    const totalTextHeight = labelVertical.length * charSpacing
+    const textStartY = card8CenterY + (totalTextHeight / 2) // começar do centro
 
-    // Dados das tabelas
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    let currentY = textStartY
+    for (let i = labelVertical.length - 1; i >= 0; i--) {
+      pdf.text(labelVertical[i], textX, currentY, { align: 'left' })
+      currentY += charSpacing
+    }
+
+    // ===== CARD 9: DADOS DO SACADO =====
+    const card9Positions = [38,39,40,41,42,44,45,46,47,48,50,51,52,53,54,56,57,58,59,60,62,63,64,65,66].map(cell => getCellPosition(cell, cols))
+    const card9MinCol = Math.min(...card9Positions.map(p => p.col))
+    const card9MaxCol = Math.max(...card9Positions.map(p => p.col))
+    const card9MinRow = Math.min(...card9Positions.map(p => p.row))
+    const card9MaxRow = Math.max(...card9Positions.map(p => p.row))
+
+    const card9X = startX + card9MinCol * colWidth + spacing + 10 // Avanço de 1cm (10mm) para direita
+    const card9Y = startY + card9MinRow * rowHeight + spacing
+    const card9Width = (card9MaxCol - card9MinCol + 1) * colWidth - spacing * 2 - 10 // Ajusta largura
+    const card9Height = (card9MaxRow - card9MinRow + 1) * rowHeight - spacing * 2
+
+    pdf.setFont(undefined, 'normal')
+    pdf.setFontSize(8)
+    pdf.text('DADOS DO SACADO:', card9X, card9Y + 7)
+
     pdf.setFont(undefined, 'normal')
     pdf.setFontSize(8)
 
-    let tableDataY = yPos + 8
-
-    // FATURA - Coluna 1
-    pdf.text('Número', margin + 2, tableDataY)
-    pdf.text('Valor', margin + 2, tableDataY + 5)
-    pdf.text('Dt. Emissão', margin + 2, tableDataY + 10)
-
-    pdf.text(boleto.numero_documento || '', margin + 2, tableDataY + 15)
-    pdf.text('R$ ' + formatMoeda(boleto.valor), margin + 2, tableDataY + 20)
-    pdf.text(formatDate(boleto.data_emissao) || '', margin + 2, tableDataY + 25)
-
-    // DUPLICATA - Coluna 2
-    pdf.text('Número', margin + colWidth + 4, tableDataY)
-    pdf.text('Valor', margin + colWidth + 4, tableDataY + 5)
-    pdf.text('Vencimento', margin + colWidth + 4, tableDataY + 10)
-
-    const numDuplicata = (boleto.numero_documento || '') + ' 1/3'
-    const valorParcela = formatMoeda(parseFloat(boleto.valor || 0) / 3)
-
-    pdf.text(numDuplicata, margin + colWidth + 4, tableDataY + 15)
-    pdf.text('R$ ' + valorParcela, margin + colWidth + 4, tableDataY + 20)
-    pdf.text(formatDate(boleto.data_vencimento) || '', margin + colWidth + 4, tableDataY + 25)
-
-    yPos += 30
-
-    // ===== DESCONTO =====
-    pdf.rect(margin, yPos, colWidth, 10)
-    pdf.setFontSize(9)
-    pdf.setFont(undefined, 'bold')
-    pdf.text('Desconto', margin + 2, yPos + 4)
+    // Razão Social - posicionada no mesmo alinhamento que "Dados do Sacado:"
+    const card9DataStartY = card9Y + 11 // Logo após "Dados do Sacado:" (7 + 4mm de espaço)
+    const card9DataX = card9X + 5 // Recuo de 5mm para o lado esquerdo
     pdf.setFont(undefined, 'normal')
-    pdf.setFontSize(8)
-    pdf.text('0.00', margin + 2, yPos + 8)
-
-    yPos += 12
-
-    // ===== DADOS DO SACADO (DEVEDOR) =====
-    pdf.setFontSize(9)
-    pdf.setFont(undefined, 'bold')
-    pdf.text('Dados do Sacado:', margin, yPos)
-
-    yPos += 5
+    pdf.text('RAZÃO SOCIAL:', card9DataX, card9DataStartY)
     pdf.setFont(undefined, 'normal')
-    pdf.setFontSize(8)
+    pdf.text((boleto.sacado_nome || '').toUpperCase(), card9DataX, card9DataStartY + 2, { maxWidth: card9Width - 2 })
 
-    pdf.text('Razão Social: ' + (boleto.sacado_nome || ''), margin, yPos)
-    yPos += 4
-    pdf.text('CNPJ / CPF: ' + (boleto.sacado_cic || ''), margin, yPos)
-    yPos += 4
-    pdf.text('Endereço: ' + (boleto.sacado_endereco || ''), margin, yPos)
-    yPos += 4
-    pdf.text('Município / UF: ' + (boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || ''), margin, yPos)
-    yPos += 4
-    pdf.text('Cep: ' + (boleto.sacado_cep || ''), margin, yPos)
-    yPos += 4
-    pdf.text('Praça de pagamento: A mesma', margin, yPos)
-
-    yPos += 6
-
-    // ===== VALOR POR EXTENSO =====
-    pdf.setFont(undefined, 'bold')
-    pdf.setFontSize(8)
-    pdf.text('Valor por extenso:', margin, yPos)
-    yPos += 4
+    // CNPJ/CPF - linha seguinte
     pdf.setFont(undefined, 'normal')
-    const extenso = converterNumeroParaExtenso(parseFloat(boleto.valor || 0) / 3)
-    pdf.text(extenso, margin, yPos, { maxWidth: contentWidth })
-
-    yPos += 8
-
-    // ===== RECONHECIMENTO =====
-    pdf.setFont(undefined, 'bold')
-    pdf.setFontSize(8)
-    pdf.text('Reconhecimento:', margin, yPos)
-    yPos += 4
+    pdf.text('CNPJ/CPF:', card9DataX, card9DataStartY + 6)
     pdf.setFont(undefined, 'normal')
-    pdf.setFontSize(7)
-    const reconhecimentoText = 'Reconheci(emos) a exatidão desta DUPLICATA de venda realizada acima. Qualquer contestação deverá ser feita por escrito em até 30 dias contados da data de recebimento desta duplicata.'
-    pdf.text(reconhecimentoText, margin, yPos, { maxWidth: contentWidth, align: 'justify' })
+    pdf.text((boleto.sacado_cic || '').toUpperCase(), card9DataX, card9DataStartY + 8)
 
-    yPos = pageHeight - 35
-
-    // ===== ASSINATURA =====
+    // Endereço - linha seguinte
     pdf.setFont(undefined, 'normal')
-    pdf.setFontSize(8)
-    pdf.text('Em: _____ / _____ / _____', margin, yPos)
-    pdf.line(margin + 35, yPos, margin + contentWidth - 20, yPos)
-    pdf.setFontSize(7)
-    pdf.text('Data do Aceite', margin + 35, yPos + 3)
+    pdf.text('ENDEREÇO:', card9DataX, card9DataStartY + 12)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((boleto.sacado_endereco || '').toUpperCase(), card9DataX, card9DataStartY + 14, { maxWidth: card9Width - 2 })
 
-    pdf.setFontSize(8)
-    pdf.text('_________________________________', margin + contentWidth / 2, yPos)
-    pdf.setFontSize(7)
-    pdf.text('EMPRESA / SACADO', margin + contentWidth / 2 + 5, yPos + 3)
+    // Município/UF, CEP, Celular e Telefone na mesma linha
+    const bottomLineY = card9DataStartY + 19
+    const colWidth1 = card9Width / 4 - 1
+    const colWidth2 = card9Width / 4 - 1
+    const colWidth3 = card9Width / 4 - 1
+    const colWidth4 = card9Width / 4 - 1
+
+    // Município/UF
+    pdf.setFont(undefined, 'normal')
+    pdf.text('MUNICÍPIO/UF:', card9DataX, bottomLineY - 2)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(((boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || '')).toUpperCase(), card9DataX, bottomLineY, { maxWidth: colWidth1 })
+
+    // CEP
+    pdf.setFont(undefined, 'normal')
+    pdf.text('CEP:', card9DataX + colWidth1 + 1, bottomLineY - 2)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((boleto.sacado_cep || '').toUpperCase(), card9DataX + colWidth1 + 1, bottomLineY, { maxWidth: colWidth2 })
+
+    // Celular
+    pdf.setFont(undefined, 'normal')
+    pdf.text('CEL:', card9DataX + (colWidth1 + colWidth2) + 2, bottomLineY - 2)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((boleto.sacado_celular || '').toUpperCase(), card9DataX + (colWidth1 + colWidth2) + 2, bottomLineY, { maxWidth: colWidth3 })
+
+    // Telefone
+    pdf.setFont(undefined, 'normal')
+    pdf.text('TELEFONE:', card9DataX + (colWidth1 + colWidth2 + colWidth3) + 3, bottomLineY - 2)
+    pdf.setFont(undefined, 'normal')
+    pdf.text((boleto.sacado_telefone || '').toUpperCase(), card9DataX + (colWidth1 + colWidth2 + colWidth3) + 3, bottomLineY, { maxWidth: colWidth4 })
 
     const blob = pdf.output('blob')
     return blob

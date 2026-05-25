@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
+import { generateDuplicataPDF } from '../../utils/duplicata'
+import { getContaInfo } from '../../services/boletoService'
 import BoletoDetailsModal from './BoletoDetailsModal'
 
 const formatDate = (dateStr) => {
@@ -57,6 +59,11 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   // Estado para preview de PDF da 2ª via
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null)
+
+  // Estado para preview de PDF da Duplicata
+  const [duplicataPdfOpen, setDuplicataPdfOpen] = useState(false)
+  const [duplicataPdfUrl, setDuplicataPdfUrl] = useState(null)
+  const [generatingDuplicata, setGeneratingDuplicata] = useState(false)
 
   // Estado para ordenação
   const [sortColumn, setSortColumn] = useState('data_emissao')
@@ -219,6 +226,59 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     }
   }
 
+  const handleGenerateDuplicata = async (boleto) => {
+    console.log('[Duplicata] Clique no botão Duplicata - iniciando...')
+    setGeneratingDuplicata(true)
+    try {
+      console.log('[Duplicata] Boleto recebido:', boleto.id)
+
+      // Mapear dados do boleto para a Duplicata
+      const boletoForDuplicata = {
+        numero_documento: boleto.numero_documento || '',
+        valor: boleto.valor || 0,
+        data_emissao: boleto.data_emissao || '',
+        data_vencimento: boleto.data_vencimento || '',
+        sacado_nome: boleto.sacado_nome || '',
+        sacado_cic: boleto.sacado_cic || '',
+        sacado_endereco: boleto.sacado_endereco || '',
+        sacado_cidade: boleto.sacado_cidade || '',
+        sacado_uf: boleto.sacado_uf || '',
+        sacado_cep: boleto.sacado_cep || '',
+        sacado_celular: boleto.sacado_celular || '',
+        sacado_telefone: boleto.sacado_telefone || '',
+      }
+
+      // Obter dados da conta (se contaData não foi passado, buscar)
+      let contaInfo = contaData
+      if (!contaInfo) {
+        const { data } = await getContaInfo(boleto.conta_id)
+        contaInfo = data || {}
+      }
+
+      console.log('[Duplicata] Conta info:', { id: contaInfo?.id, tem_logo: !!contaInfo?.logo })
+
+      // Gerar Duplicata PDF (passa null como logoUrl - será usado logo da conta)
+      const duplicataBlob = await generateDuplicataPDF(boletoForDuplicata, contaInfo, null)
+      console.log('[Duplicata] PDF gerado, tamanho:', duplicataBlob?.size, 'bytes')
+
+      // Criar URL para preview
+      const url = URL.createObjectURL(duplicataBlob)
+      setDuplicataPdfUrl(url)
+      setDuplicataPdfOpen(true)
+
+      setOpenMenu(null)
+      console.log('[Duplicata] Sucesso! Preview aberto')
+    } catch (error) {
+      console.error('[Duplicata] ERRO CAPTURADO:', error)
+      console.error('[Duplicata] Message:', error.message)
+      console.error('[Duplicata] Stack:', error.stack)
+      alert('Erro ao gerar Duplicata: ' + error.message)
+      setOpenMenu(null)
+    } finally {
+      setGeneratingDuplicata(false)
+    }
+  }
+
   if (boletos.length === 0) {
     return (
       <div className="p-8 text-center">
@@ -337,6 +397,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                           2ª via do boleto
                         </button>
                         <button
+                          onClick={() => handleGenerateDuplicata(boleto)}
+                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                        >
+                          📄 Duplicata
+                        </button>
+                        <button
                           onClick={() => handleOpenDetails(boleto)}
                           className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                         >
@@ -395,6 +461,39 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                   className="w-full h-[950px] border border-[#2a2a2a] rounded"
                   title="2ª Via Boleto"
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Preview da Duplicata */}
+        {duplicataPdfOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
+                <h2 className="text-white text-sm font-medium">Duplicata</h2>
+                <button
+                  onClick={() => setDuplicataPdfOpen(false)}
+                  className="text-[#666666] hover:text-white transition text-2xl"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                {generatingDuplicata ? (
+                  <div className="flex items-center justify-center h-[950px]">
+                    <p className="text-[#a3a3a3]">Gerando Duplicata...</p>
+                  </div>
+                ) : (
+                  <iframe
+                    src={duplicataPdfUrl + '#navpanes=0&zoom=75'}
+                    className="w-full h-[950px] border border-[#2a2a2a] rounded"
+                    title="Duplicata"
+                  />
+                )}
               </div>
             </div>
           </div>

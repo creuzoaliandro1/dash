@@ -3,9 +3,8 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, uploadAnexoBoleto } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
-import { generateDuplicataPDF } from '../utils/duplicata'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
 export default function BoletosPage() {
@@ -233,55 +232,11 @@ export default function BoletosPage() {
       }
     } else {
       // Criar novo boleto
-      const { data: newBoleto, error } = await createBoleto(activeId, formData)
+      const { error } = await createBoleto(activeId, formData)
       if (error) {
         alert('Erro ao salvar boleto: ' + error.message)
         setLoading(false)
         return
-      }
-
-      // Gerar e fazer upload de Duplicata PDF
-      try {
-        console.log('[BoletosPage] Iniciando geração de Duplicata para boleto:', newBoleto.id)
-
-        // Mapear formData para estrutura esperada pela generateDuplicataPDF
-        const boletoForDuplicata = {
-          numero_documento: newBoleto.numero_documento || '',
-          valor: newBoleto.valor || 0,
-          data_emissao: newBoleto.data_emissao || '',
-          data_vencimento: newBoleto.data_vencimento || '',
-          sacado_nome: newBoleto.sacado_nome || '',
-          sacado_cic: newBoleto.sacado_cic || '',
-          sacado_endereco: newBoleto.sacado_endereco || '',
-          sacado_cidade: newBoleto.sacado_cidade || '',
-          sacado_uf: newBoleto.sacado_uf || '',
-          sacado_cep: newBoleto.sacado_cep || '',
-        }
-
-        // Obter logo da conta (se disponível)
-        const logoUrl = contaData?.logo_url || null
-
-        // Gerar Duplicata PDF
-        const duplicataBlob = await generateDuplicataPDF(boletoForDuplicata, contaData || {}, logoUrl)
-
-        // Converter Blob para File
-        const duplicataFile = new File(
-          [duplicataBlob],
-          `Duplicata_${newBoleto.numero_documento || newBoleto.id}.pdf`,
-          { type: 'application/pdf' }
-        )
-
-        // Upload para Supabase
-        const { error: uploadError } = await uploadAnexoBoleto(newBoleto.id, duplicataFile, activeId)
-        if (uploadError) {
-          console.error('[BoletosPage] Erro ao fazer upload de Duplicata:', uploadError)
-          // Não interromper o fluxo, apenas avisar no console
-        } else {
-          console.log('[BoletosPage] ✓ Duplicata enviada com sucesso para boleto:', newBoleto.id)
-        }
-      } catch (duplicataError) {
-        console.error('[BoletosPage] Erro ao gerar/enviar Duplicata:', duplicataError)
-        // Não interromper o fluxo, apenas avisar no console
       }
     }
     setShowModal(false)
