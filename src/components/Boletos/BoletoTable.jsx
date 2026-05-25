@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
+import BoletoDetailsModal from './BoletoDetailsModal'
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
@@ -48,6 +49,14 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
   const [openMenu, setOpenMenu] = useState(null)
   const menuRef = useRef(null)
+
+  // Estado para o modal de detalhes
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false)
+  const [selectedBoletoDetail, setSelectedBoletoDetail] = useState(null)
+
+  // Estado para preview de PDF da 2ª via
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false)
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null)
 
   // Estado para ordenação
   const [sortColumn, setSortColumn] = useState('data_emissao')
@@ -179,6 +188,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     }
   }
 
+  const handleOpenDetails = (boleto) => {
+    setSelectedBoletoDetail(boleto)
+    setDetailsModalOpen(true)
+    setOpenMenu(null)
+  }
+
   const handleGenerateSecondWay = async (boleto) => {
     console.log('[PDF] Clique no botão 2ª via - iniciando...')
     try {
@@ -188,20 +203,13 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
       const pdfBlob = await generateSingleBoletoPDF(boleto, contaData)
       console.log('[PDF] PDF gerado, tamanho:', pdfBlob?.size, 'bytes')
 
-      // Criar link para download
+      // Criar URL para preview
       const url = URL.createObjectURL(pdfBlob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `boleto_${boleto.numero_documento || 'documento'}.pdf`
-      document.body.appendChild(link)
-      console.log('[PDF] Trigger download...')
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
+      setPdfPreviewUrl(url)
+      setPdfPreviewOpen(true)
 
       setOpenMenu(null)
-      console.log('[PDF] Sucesso!')
-      alert('Boleto gerado com sucesso!')
+      console.log('[PDF] Sucesso! Preview aberto')
     } catch (error) {
       console.error('[PDF] ERRO CAPTURADO:', error)
       console.error('[PDF] Message:', error.message)
@@ -328,6 +336,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                         >
                           2ª via do boleto
                         </button>
+                        <button
+                          onClick={() => handleOpenDetails(boleto)}
+                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                        >
+                          📋 Detalhes
+                        </button>
                       <button
                         onClick={() => {
                           onEdit(boleto)
@@ -351,6 +365,40 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             </div>
           ))}
         </div>
+
+        {/* Modal de Detalhes */}
+        <BoletoDetailsModal
+          boleto={selectedBoletoDetail}
+          isOpen={detailsModalOpen}
+          onClose={() => setDetailsModalOpen(false)}
+        />
+
+        {/* Modal de Preview da 2ª Via */}
+        {pdfPreviewOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
+                <h2 className="text-white text-sm font-medium">2ª Via do Boleto</h2>
+                <button
+                  onClick={() => setPdfPreviewOpen(false)}
+                  className="text-[#666666] hover:text-white transition text-2xl"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                <iframe
+                  src={pdfPreviewUrl + '#navpanes=0&zoom=75'}
+                  className="w-full h-[950px] border border-[#2a2a2a] rounded"
+                  title="2ª Via Boleto"
+                />
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   )
 }

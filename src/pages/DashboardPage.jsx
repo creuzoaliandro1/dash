@@ -33,6 +33,7 @@ export default function DashboardPage() {
     inadimplentes: 0,
     clientesAtivos: 30,
   })
+  const [boletos, setBoletos] = useState([])
   const [loading, setLoading] = useState(true)
 
   // Lê o ID ativo sempre do localStorage (sem stale closure)
@@ -55,13 +56,16 @@ export default function DashboardPage() {
         }
 
         const resultado = await getBoletos(activeId)
-        const boletos = resultado.data || []
+        const boletosData = resultado.data || []
+
+        // Salvar todos os boletos para exibição na tabela
+        setBoletos(boletosData)
 
         // ============================================================================
         // CARD 1: BOLETOS EM ABERTO
         // Critério: status='pendente' E situacao='Registrado'
         // ============================================================================
-        const boletosAbertos = boletos.filter(b =>
+        const boletosAbertos = boletosData.filter(b =>
           b.status === 'pendente' && b.situacao === 'Registrado'
         )
         const totalAberto = boletosAbertos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
@@ -224,14 +228,38 @@ export default function DashboardPage() {
     ],
   }
 
-  const recentBoletos = [
-    { id: 1, doc: 'DOC-15660992', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '16/04/2026', valor: 0.00, status: 'Atrasado' },
-    { id: 2, doc: 'DOC-15660993', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '09/04/2026', valor: 0.00, status: 'Atrasado' },
-    { id: 3, doc: 'DOC-15660994', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '25/04/2026', valor: 0.00, status: 'Atrasado' },
-    { id: 4, doc: 'DOC-15660995', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '16/04/2026', valor: 0.00, status: 'Atrasado' },
-    { id: 5, doc: 'DOC-15660996', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '16/04/2026', valor: 0.00, status: 'Atrasado' },
-    { id: 6, doc: 'DOC-15660997', client: 'Agro Plantar Ltda', emissao: '23/04/2026', vencimento: '09/04/2026', valor: 0.00, status: 'Atrasado' },
-  ]
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '—'
+    let date
+    if (typeof dateStr === 'string') {
+      if (dateStr.includes('/')) {
+        const [day, month, year] = dateStr.split('/')
+        date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+      } else if (dateStr.includes('-')) {
+        const [year, month, day] = dateStr.split('-')
+        date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+      } else {
+        return dateStr
+      }
+    } else {
+      date = new Date(dateStr)
+    }
+    const day = String(date.getDate()).padStart(2, '0')
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const year = String(date.getFullYear())
+    return `${day}/${month}/${year}`
+  }
+
+  const formatCurrency = (value) => {
+    const num = parseFloat(value) || 0
+    return num.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  }
+
+  // Pega os últimos 10 boletos (ou todos se houver menos)
+  const boletosRecentes = boletos.slice(0, 10)
 
   return (
     <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
@@ -346,20 +374,28 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {recentBoletos.map((boleto) => (
-                <tr key={boleto.id} className="border-b border-[#1f1f1f] hover:bg-[#111111] transition">
-                  <td className="px-4 py-3 text-white font-mono text-xs">{boleto.doc}</td>
-                  <td className="px-4 py-3 text-[#a3a3a3] text-sm">{boleto.client}</td>
-                  <td className="px-4 py-3 text-[#a3a3a3] text-sm">{boleto.emissao}</td>
-                  <td className="px-4 py-3 text-[#a3a3a3] text-sm">{boleto.vencimento}</td>
-                  <td className="px-4 py-3 text-right text-white font-mono text-sm">R$ {boleto.valor.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-center">
-                    <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium text-white border border-[#404040] bg-[#1a1a1a]">
-                      {boleto.status}
-                    </span>
+              {boletosRecentes.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="px-4 py-3 text-center text-[#666666]">
+                    Nenhum boleto encontrado
                   </td>
                 </tr>
-              ))}
+              ) : (
+                boletosRecentes.map((boleto) => (
+                  <tr key={boleto.id} className="border-b border-[#1f1f1f] hover:bg-[#111111] transition">
+                    <td className="px-4 py-3 text-white font-mono text-xs">{boleto.numero_documento || '—'}</td>
+                    <td className="px-4 py-3 text-[#a3a3a3] text-sm">{boleto.sacado_nome || '—'}</td>
+                    <td className="px-4 py-3 text-[#a3a3a3] text-sm">{formatDate(boleto.data_emissao)}</td>
+                    <td className="px-4 py-3 text-[#a3a3a3] text-sm">{formatDate(boleto.data_vencimento)}</td>
+                    <td className="px-4 py-3 text-right text-white font-mono text-sm">R$ {formatCurrency(boleto.valor)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium text-white border border-[#404040] bg-[#1a1a1a] capitalize">
+                        {boleto.status || 'Pendente'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

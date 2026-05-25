@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import FileAttachment from './FileAttachment'
 
 // Converte registro snake_case do banco para chaves UPPERCASE do formulário
 const boletoToFormData = (b) => ({
@@ -36,10 +37,11 @@ const emptyFormData = {
   STATUS: 'pendente', SITUACAO: '',
 }
 
-export default function BoletoFormModal({ boleto, onSave, onClose }) {
+export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
   const [formData, setFormData] = useState(
     boleto ? boletoToFormData(boleto) : emptyFormData
   )
+  const [justSaved, setJustSaved] = useState(false)
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -397,6 +399,26 @@ export default function BoletoFormModal({ boleto, onSave, onClose }) {
               className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition resize-none"
             />
           </div>
+
+          {/* Sugestão: Anexar arquivos após salvar novo boleto */}
+          {!boleto && justSaved && (
+            <div className="p-4 bg-[#1a3a1a] border border-[#2a7a2a] rounded">
+              <p className="text-[#51cf66] text-sm font-medium">
+                💡 Dica: Você pode anexar arquivos (XML, Excel, PDF) ao boleto após salvá-lo.
+              </p>
+            </div>
+          )}
+
+          {/* Seção: Anexos - Mostrar se boleto já existe (foi salvo) */}
+          {boleto && boleto.id && (
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Documentos</h3>
+              <FileAttachment
+                boletoId={boleto.id}
+                contaId={contaId || boleto.conta_id}
+              />
+            </div>
+          )}
 
           {/* Buttons */}
           <div className="flex gap-3 justify-end pt-4 border-t border-[#1f1f1f]">

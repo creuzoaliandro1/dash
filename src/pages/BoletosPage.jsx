@@ -911,6 +911,7 @@ export default function BoletosPage() {
           boleto={editingBoleto}
           onSave={handleSave}
           onClose={() => setShowModal(false)}
+          contaId={getActiveContaId()}
         />
       )}
 

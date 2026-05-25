@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { createBoleto, getAllContas } from '../../services/boletoService'
+import { createBoleto, getAllContas, uploadAnexoBoleto } from '../../services/boletoService'
 import { verificarCodigoBarrasExistente, gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 
@@ -65,7 +65,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const [inlineEditValue, setInlineEditValue] = useState('')
   const [errosImportacao, setErrosImportacao] = useState([])
   const [relatorioPDF, setRelatorioPDF] = useState(null)
+  const [arquivosAnexados, setArquivosAnexados] = useState({}) // { itemIdx: [files] }
   const inputRef = useRef(null)
+  const fileInputRefs = useRef({})
 
   useEffect(() => {
     if (inlineEditingCell && inputRef.current) {
@@ -159,6 +161,39 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     }
   }
 
+  // Funções para gerenciar anexos
+  const handleAnexoFileSelect = (itemIdx, event) => {
+    const files = Array.from(event.target.files || [])
+    if (files.length === 0) return
+
+    const novosArquivos = [...(arquivosAnexados[itemIdx] || [])]
+    files.forEach(file => {
+      // Validar tipo
+      if (!['application/pdf', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/xml', 'application/xml'].includes(file.type)) {
+        alert(`Tipo de arquivo não permitido: ${file.type}`)
+        return
+      }
+      novosArquivos.push(file)
+    })
+
+    setArquivosAnexados({
+      ...arquivosAnexados,
+      [itemIdx]: novosArquivos
+    })
+
+    // Limpar input
+    event.target.value = ''
+  }
+
+  const handleRemoverAnexo = (itemIdx, fileIndex) => {
+    const novosArquivos = [...(arquivosAnexados[itemIdx] || [])]
+    novosArquivos.splice(fileIndex, 1)
+    setArquivosAnexados({
+      ...arquivosAnexados,
+      [itemIdx]: novosArquivos
+    })
+  }
+
   const handleImport = async () => {
     setIsImporting(true)
     let imported = 0
@@ -184,7 +219,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
     for (const rowId of selectedRows) {
       const [itemIdx, recordIdx] = rowId.split('-').map(Number)
-      const boletoData = dataWithInstalments[itemIdx]._records[recordIdx]
+      const boletoData = dataWithInstalments[itemIdx]?._records?.[recordIdx]
+
+      if (!boletoData) {
+        console.error(`[ImportPreview] Dados do boleto não encontrados: itemIdx=${itemIdx}, recordIdx=${recordIdx}`)
+        errors++
+        linhaAtual++
+        continue
+      }
 
       try {
         // 1. Verificar se código de barras já existe (DUPLICADO)
@@ -231,12 +273,25 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         }
 
         // 3. Importar boleto
-        const { error } = await createBoleto(targetUserId, boletoData)
+        const { data: boletoResult, error } = await createBoleto(targetUserId, boletoData)
         if (error) {
           console.error('[ImportPreview] Erro ao salvar boleto:', error)
           errors++
         } else {
           imported++
+
+          // 4. Upload dos anexos se houver
+          if (arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && boletoResult && boletoResult.id) {
+            console.log(`[ImportPreview] Fazendo upload de ${arquivosAnexados[itemIdx].length} arquivo(s) para boleto ${boletoResult.id}`)
+            for (const file of arquivosAnexados[itemIdx]) {
+              try {
+                await uploadAnexoBoleto(boletoResult.id, file, targetUserId)
+                console.log(`[ImportPreview] ✓ Arquivo ${file.name} anexado com sucesso`)
+              } catch (erroAnexo) {
+                console.warn(`[ImportPreview] Erro ao anexar ${file.name}:`, erroAnexo)
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('[ImportPreview] Erro ao importar boleto:', err)
@@ -484,6 +539,55 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                         />
                       ) : (
                         <p className="text-white text-[10px] font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SEÇÃO DE ANEXOS */}
+                  <div className="px-4 py-3 border-t-2 border-[#333333] bg-[#0a0a0a]">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-semibold text-[#a3a3a3] uppercase">📎 Anexar Documentos</p>
+                      <p className="text-[9px] text-[#666666]">PDF, Excel, XML</p>
+                    </div>
+
+                    <div className="flex gap-2 items-start">
+                      <label className="flex-1">
+                        <input
+                          type="file"
+                          accept=".pdf,.xlsx,.xls,.xml"
+                          multiple
+                          onChange={(e) => handleAnexoFileSelect(itemIdx, e)}
+                          ref={el => fileInputRefs.current[itemIdx] = el}
+                          className="hidden"
+                        />
+                        <span className="inline-block px-3 py-1.5 bg-white text-black text-[9px] font-medium rounded hover:opacity-90 transition cursor-pointer whitespace-nowrap">
+                          ➕ Selecionar Arquivo
+                        </span>
+                      </label>
+
+                      {/* Lista de arquivos anexados */}
+                      {arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && (
+                        <div className="flex-1 flex flex-wrap gap-1">
+                          {arquivosAnexados[itemIdx].map((file, fileIdx) => (
+                            <div
+                              key={`${itemIdx}-${fileIdx}`}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-[#1a7f1a] text-white rounded text-[9px]"
+                            >
+                              <span className="truncate max-w-32">{file.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoverAnexo(itemIdx, fileIdx)}
+                                className="ml-1 text-[#cccccc] hover:text-white transition"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {(!arquivosAnexados[itemIdx] || arquivosAnexados[itemIdx].length === 0) && (
+                        <p className="text-[9px] text-[#666666] flex-1">Nenhum arquivo selecionado</p>
                       )}
                     </div>
                   </div>

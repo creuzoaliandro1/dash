@@ -175,7 +175,7 @@ export const createBoleto = async (contaId, boletoData) => {
     try {
       const { data: contaData, error: contaErr } = await supabase
         .from('CONTAS')
-        .select('conta_corrente, juros')
+        .select('nome_correntista, cic, cedente, juros')
         .eq('id', contaId)
         .single()
 
@@ -246,7 +246,7 @@ export const updateBoleto = async (boletoId, updates) => {
         // Buscar dados da conta
         const { data: contaData, error: contaErr } = await supabase
           .from('CONTAS')
-          .select('conta_corrente, juros')
+          .select('nome_correntista, cpf_cnpj, cic, cedente, convenio, juros')
           .eq('id', boletoMerged.conta_id)
           .single()
 
@@ -935,6 +935,133 @@ export const getAllContas = async () => {
           console.error('[getAllContas] Erro ao buscar contas:', err)
           return { data: [], error: err }
     }
+}
+
+// ===== GERENCIAMENTO DE ANEXOS =====
+
+// Fazer upload de arquivo para um boleto
+export const uploadAnexoBoleto = async (boletoId, file, contaId) => {
+  try {
+    if (!file) {
+      throw new Error('Nenhum arquivo selecionado')
+    }
+
+    // Validar tipos de arquivo
+    const tiposPermitidos = ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/xml', 'application/xml', 'application/pdf']
+    if (!tiposPermitidos.includes(file.type)) {
+      throw new Error(`Tipo de arquivo não permitido: ${file.type}. Permitidos: XML, Excel, PDF`)
+    }
+
+    // Gerar nome único para o arquivo
+    const timestamp = new Date().getTime()
+    const ext = file.name.split('.').pop()
+    const nomeArquivo = `boleto_${boletoId}_${timestamp}.${ext}`
+    const caminho = `anexos/${contaId}/${nomeArquivo}`
+    const BUCKET_NAME = 'titulos'
+
+    console.log('[BoletoService] Fazendo upload de anexo:', caminho, 'Tamanho:', file.size, 'Bucket:', BUCKET_NAME)
+
+    // Upload para Storage (bucket deve existir em Supabase)
+    const { error: erroUpload } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(caminho, file, { upsert: false })
+
+    if (erroUpload) {
+      console.error('[BoletoService] Erro ao fazer upload:', erroUpload)
+      throw erroUpload
+    }
+
+    // Registrar metadados do arquivo na tabela
+    const { error: erroMetadados } = await supabase
+      .from('capt_boletos_anexos')
+      .insert([{
+        boleto_id: boletoId,
+        nome_arquivo: file.name,
+        tipo_arquivo: file.type,
+        tamanho_bytes: file.size,
+        caminho_storage: caminho,
+        data_upload: new Date().toISOString()
+      }])
+
+    if (erroMetadados) {
+      console.error('[BoletoService] Erro ao registrar metadados:', erroMetadados)
+      throw erroMetadados
+    }
+
+    console.log('[BoletoService] ✓ Arquivo anexado com sucesso')
+    return { data: { caminho, nomeArquivo }, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao anexar arquivo:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Buscar anexos de um boleto
+export const getAnexosBoleto = async (boletoId) => {
+  try {
+    const { data, error } = await supabase
+      .from('capt_boletos_anexos')
+      .select('*')
+      .eq('boleto_id', boletoId)
+      .order('data_upload', { ascending: false })
+
+    if (error) throw error
+
+    console.log('[BoletoService] Anexos do boleto', boletoId, ':', data?.length || 0)
+    return { data: data || [], error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar anexos:', err)
+    return { data: [], error: err }
+  }
+}
+
+// Deletar anexo de um boleto
+export const deleteAnexoBoleto = async (anexoId, caminhoStorage) => {
+  try {
+    console.log('[BoletoService] Deletando anexo:', anexoId)
+
+    // Deletar arquivo do storage
+    const { error: erroStorage } = await supabase.storage
+      .from('titulos')
+      .remove([caminhoStorage])
+
+    if (erroStorage) {
+      console.warn('[BoletoService] Aviso ao deletar do storage:', erroStorage.message)
+    }
+
+    // Deletar registro de metadados
+    const { error: erroMetadados } = await supabase
+      .from('capt_boletos_anexos')
+      .delete()
+      .eq('id', anexoId)
+
+    if (erroMetadados) {
+      console.error('[BoletoService] Erro ao deletar metadados:', erroMetadados)
+      throw erroMetadados
+    }
+
+    console.log('[BoletoService] ✓ Anexo deletado com sucesso')
+    return { error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao deletar anexo:', err)
+    return { error: err }
+  }
+}
+
+// Gerar URL de download para um anexo
+export const getDownloadUrlAnexo = async (caminhoStorage) => {
+  try {
+    const { data, error } = await supabase.storage
+      .from('titulos')
+      .createSignedUrl(caminhoStorage, 3600) // URL válida por 1 hora
+
+    if (error) throw error
+
+    return { data: data.signedUrl, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao gerar URL de download:', err)
+    return { data: null, error: err }
+  }
 }
 
 // Buscar o próximo COD_OPERACAO para um cedente
