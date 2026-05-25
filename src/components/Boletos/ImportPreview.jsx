@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { createBoleto, getAllContas, uploadAnexoBoleto } from '../../services/boletoService'
+import { createBoleto, getAllContas, uploadAnexoBoleto, getContaInfo } from '../../services/boletoService'
+import { generateDuplicataPDF } from '../../utils/duplicata'
 import { verificarCodigoBarrasExistente, gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 
@@ -280,7 +281,55 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         } else {
           imported++
 
-          // 4. Upload dos anexos se houver
+          // 4. Gerar e fazer upload de Duplicata PDF
+          try {
+            if (boletoResult && boletoResult.id) {
+              console.log('[ImportPreview] Iniciando geração de Duplicata para boleto:', boletoResult.id)
+
+              // Obter dados da conta para a Duplicata
+              const { data: contaData } = await getContaInfo(targetUserId)
+
+              // Mapear dados do boleto para a Duplicata
+              const boletoForDuplicata = {
+                numero_documento: boletoResult.numero_documento || '',
+                valor: boletoResult.valor || 0,
+                data_emissao: boletoResult.data_emissao || '',
+                data_vencimento: boletoResult.data_vencimento || '',
+                sacado_nome: boletoResult.sacado_nome || '',
+                sacado_cic: boletoResult.sacado_cic || '',
+                sacado_endereco: boletoResult.sacado_endereco || '',
+                sacado_cidade: boletoResult.sacado_cidade || '',
+                sacado_uf: boletoResult.sacado_uf || '',
+                sacado_cep: boletoResult.sacado_cep || '',
+              }
+
+              // Obter logo da conta
+              const logoUrl = contaData?.logo_url || null
+
+              // Gerar Duplicata PDF
+              const duplicataBlob = await generateDuplicataPDF(boletoForDuplicata, contaData || {}, logoUrl)
+
+              // Converter Blob para File
+              const duplicataFile = new File(
+                [duplicataBlob],
+                `Duplicata_${boletoResult.numero_documento || boletoResult.id}.pdf`,
+                { type: 'application/pdf' }
+              )
+
+              // Upload da Duplicata
+              const { error: uploadError } = await uploadAnexoBoleto(boletoResult.id, duplicataFile, targetUserId)
+              if (uploadError) {
+                console.warn('[ImportPreview] Erro ao fazer upload de Duplicata:', uploadError)
+              } else {
+                console.log('[ImportPreview] ✓ Duplicata enviada com sucesso para boleto:', boletoResult.id)
+              }
+            }
+          } catch (duplicataError) {
+            console.warn('[ImportPreview] Erro ao gerar/enviar Duplicata:', duplicataError)
+            // Não interromper o fluxo, apenas avisar no console
+          }
+
+          // 5. Upload dos anexos se houver
           if (arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && boletoResult && boletoResult.id) {
             console.log(`[ImportPreview] Fazendo upload de ${arquivosAnexados[itemIdx].length} arquivo(s) para boleto ${boletoResult.id}`)
             for (const file of arquivosAnexados[itemIdx]) {

@@ -3,8 +3,9 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, uploadAnexoBoleto } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
+import { generateDuplicataPDF } from '../utils/duplicata'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
 export default function BoletosPage() {
@@ -24,6 +25,8 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
+  const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
+  const cnab400MenuRef = useRef(null)
   const [dataEmissaoInicio, setDataEmissaoInicio] = useState('')
   const [dataEmissaoFim, setDataEmissaoFim] = useState('')
   const [dataVencimentoInicio, setDataVencimentoInicio] = useState('')
@@ -43,6 +46,17 @@ export default function BoletosPage() {
   useEffect(() => {
     console.log('[BoletosPage] Debug - userType:', userType, 'user:', user)
   }, [userType])
+
+  // Fechar menu CNAB400 ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (cnab400MenuRef.current && !cnab400MenuRef.current.contains(event.target)) {
+        setCnab400MenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Carregar contas se for Master
   useEffect(() => {
@@ -218,12 +232,56 @@ export default function BoletosPage() {
         return
       }
     } else {
-      // Criar novo
-      const { error } = await createBoleto(activeId, formData)
+      // Criar novo boleto
+      const { data: newBoleto, error } = await createBoleto(activeId, formData)
       if (error) {
         alert('Erro ao salvar boleto: ' + error.message)
         setLoading(false)
         return
+      }
+
+      // Gerar e fazer upload de Duplicata PDF
+      try {
+        console.log('[BoletosPage] Iniciando geração de Duplicata para boleto:', newBoleto.id)
+
+        // Mapear formData para estrutura esperada pela generateDuplicataPDF
+        const boletoForDuplicata = {
+          numero_documento: newBoleto.numero_documento || '',
+          valor: newBoleto.valor || 0,
+          data_emissao: newBoleto.data_emissao || '',
+          data_vencimento: newBoleto.data_vencimento || '',
+          sacado_nome: newBoleto.sacado_nome || '',
+          sacado_cic: newBoleto.sacado_cic || '',
+          sacado_endereco: newBoleto.sacado_endereco || '',
+          sacado_cidade: newBoleto.sacado_cidade || '',
+          sacado_uf: newBoleto.sacado_uf || '',
+          sacado_cep: newBoleto.sacado_cep || '',
+        }
+
+        // Obter logo da conta (se disponível)
+        const logoUrl = contaData?.logo_url || null
+
+        // Gerar Duplicata PDF
+        const duplicataBlob = await generateDuplicataPDF(boletoForDuplicata, contaData || {}, logoUrl)
+
+        // Converter Blob para File
+        const duplicataFile = new File(
+          [duplicataBlob],
+          `Duplicata_${newBoleto.numero_documento || newBoleto.id}.pdf`,
+          { type: 'application/pdf' }
+        )
+
+        // Upload para Supabase
+        const { error: uploadError } = await uploadAnexoBoleto(newBoleto.id, duplicataFile, activeId)
+        if (uploadError) {
+          console.error('[BoletosPage] Erro ao fazer upload de Duplicata:', uploadError)
+          // Não interromper o fluxo, apenas avisar no console
+        } else {
+          console.log('[BoletosPage] ✓ Duplicata enviada com sucesso para boleto:', newBoleto.id)
+        }
+      } catch (duplicataError) {
+        console.error('[BoletosPage] Erro ao gerar/enviar Duplicata:', duplicataError)
+        // Não interromper o fluxo, apenas avisar no console
       }
     }
     setShowModal(false)
@@ -409,11 +467,12 @@ export default function BoletosPage() {
     }
   }
 
-  const handleGenerateRemessaCNAB400 = async () => {
+  const handleGenerateRemessaCNAB400 = async (tipoOperacao = '01') => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
       return
     }
+    setCnab400MenuOpen(false)
 
     setGeneratingCNAB400(true)
     setOpenActionsMenu(false)
@@ -443,7 +502,7 @@ export default function BoletosPage() {
                 console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
             }
 
-            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq)
+            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
 
             // Incrementar contador da remessa na conta
             if (contaParaRemessa) {
@@ -670,17 +729,35 @@ export default function BoletosPage() {
           <button className="px-4 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition">
             Exportar CSV
           </button>
-          <button
-            onClick={handleGenerateRemessaCNAB400}
-            disabled={selectedRows.size === 0 || generatingCNAB400}
-            className={`px-4 py-2 text-sm font-medium border rounded transition ${
-              selectedRows.size === 0 || generatingCNAB400
-                ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
-                : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
-            }`}
-          >
-            {generatingCNAB400 ? '⏳ Gerando...' : 'Remessa CNAB400'}
-          </button>
+          <div className="relative" ref={cnab400MenuRef}>
+            <button
+              onClick={() => setCnab400MenuOpen(!cnab400MenuOpen)}
+              disabled={selectedRows.size === 0 || generatingCNAB400}
+              className={`px-4 py-2 text-sm font-medium border rounded transition ${
+                selectedRows.size === 0 || generatingCNAB400
+                  ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
+                  : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
+              }`}
+            >
+              {generatingCNAB400 ? '⏳ Gerando...' : 'Remessa CNAB400'}
+            </button>
+            {cnab400MenuOpen && (
+              <div className="absolute top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-48">
+                <button
+                  onClick={() => handleGenerateRemessaCNAB400('01')}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                >
+                  Registro
+                </button>
+                <button
+                  onClick={() => handleGenerateRemessaCNAB400('06')}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                >
+                  Alterar
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={handleCreateNew}
             className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"

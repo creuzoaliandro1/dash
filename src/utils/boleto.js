@@ -160,7 +160,7 @@ const getTipoPessoa = (cic) => {
 // ============================================================
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
 // ============================================================
-const buildHeader = (conta, nextSeq) => {
+const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
     // Dados do beneficiario/cedente vindos de CONTAS
     const nomeEmpresa  = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
     const cpfCnpjConta = cleanNum(conta.cpf_cnpj || conta.cic || '0')
@@ -199,7 +199,7 @@ const buildHeader = (conta, nextSeq) => {
 // CNAB400 - Registro DETALHE Linha 1 (Tipo 1) - 400 caracteres
 // Conforme documentacao BMP 274 / FEBRABAN CNAB400
 // ============================================================
-const buildDetalhe1 = (boleto, conta, lineSeq) => {
+const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01') => {
     // --- Sacado ---
     const sacadoCic  = cleanNum(boleto.sacado_cic || '')
     const tipoPessoa = getTipoPessoa(sacadoCic)           // '01' CPF / '02' CNPJ
@@ -273,7 +273,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq) => {
     line += '           '                          // pos 095-105    - brancos (11)
     line += '0'                                    // pos 106        - operacao banco
     line += '  '                                   // pos 107-108    - brancos (2)
-    line += '01'                                   // pos 109-110    - codigo ocorrencia (entrada)
+    line += tipoOperacao === '06' ? '06' : '01'    // pos 109-110    - codigo ocorrencia (01=entrada, 06=alteracao)
     line += padRight(tituloNum.slice(0, 10), 10)   // pos 111-120    - seu numero (10)
     line += dtVenc                                 // pos 121-126    - vencimento DDMMAA
     line += fmtValor(valorNum)                     // pos 127-139    - valor (13 centavos)
@@ -349,8 +349,8 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq) => {
-    console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos')
+export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq, tipoOperacao = '01') => {
+    console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
           throw new Error('Nenhum boleto fornecido para gerar remessa CNAB400')
@@ -372,12 +372,12 @@ export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq) => {
         let lineSeq = 1
 
     // Header
-    lines.push(buildHeader(contaInfo, seq))
+    lines.push(buildHeader(contaInfo, seq, tipoOperacao))
     lineSeq++
 
     // Detalhe (2 linhas por boleto)
     for (const boleto of boletos) {
-          lines.push(buildDetalhe1(boleto, contaInfo, lineSeq))
+          lines.push(buildDetalhe1(boleto, contaInfo, lineSeq, tipoOperacao))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
