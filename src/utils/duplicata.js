@@ -30,48 +30,90 @@ const formatDate = (date) => {
   return `${day}/${month}/${year}`
 }
 
-// Converte número para extenso
+// Converte número para extenso no padrão monetário brasileiro (reais e centavos)
+// Ex.: 6456.32 -> "seis mil quatrocentos e cinquenta e seis reais e trinta e dois centavos"
 const converterNumeroParaExtenso = (numero) => {
-  const num = parseFloat(numero)
-  if (isNaN(num)) return ''
+  const valor = typeof numero === 'string'
+    ? parseFloat(numero.replace(/\./g, '').replace(',', '.'))
+    : parseFloat(numero)
+  if (isNaN(valor)) return ''
 
-  const reais = Math.floor(num)
-  const centavos = Math.round((num - reais) * 100)
+  const totalCentavos = Math.round(valor * 100)
+  const reais = Math.floor(totalCentavos / 100)
+  const centavos = totalCentavos % 100
 
-  const unidades = ['', 'Um', 'Dois', 'Três', 'Quatro', 'Cinco', 'Seis', 'Sete', 'Oito', 'Nove']
-  const dez_dezenove = ['Dez', 'Onze', 'Doze', 'Treze', 'Quatorze', 'Quinze', 'Dezesseis', 'Dezessete', 'Dezoito', 'Dezenove']
-  const dezenas = ['', '', 'Vinte', 'Trinta', 'Quarenta', 'Cinquenta', 'Sessenta', 'Setenta', 'Oitenta', 'Noventa']
-  const centenas = ['', 'Cento', 'Duzentos', 'Trezentos', 'Quatrocentos', 'Quinhentos', 'Seiscentos', 'Setecentos', 'Oitocentos', 'Novecentos']
+  const unidades = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove']
+  const dezenas = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa']
+  const centenas = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos']
 
-  let extenso = ''
-
-  if (reais >= 100) {
-    extenso += centenas[Math.floor(reais / 100)]
-    const resto = reais % 100
-    if (resto > 0) extenso += ' e '
-    if (resto > 0 && resto < 10) extenso += unidades[resto]
-    else if (resto >= 10 && resto < 20) extenso += dez_dezenove[resto - 10]
-    else {
-      if (Math.floor(resto / 10) > 0) extenso += dezenas[Math.floor(resto / 10)]
-      if (resto % 10 > 0) extenso += ' e ' + unidades[resto % 10]
+  // Converte um grupo de 0..999 em extenso
+  const ate999 = (n) => {
+    if (n === 0) return ''
+    if (n === 100) return 'cem'
+    let s = ''
+    const c = Math.floor(n / 100)
+    const resto = n % 100
+    if (c > 0) s += centenas[c]
+    if (resto > 0) {
+      if (c > 0) s += ' e '
+      if (resto < 20) s += unidades[resto]
+      else {
+        s += dezenas[Math.floor(resto / 10)]
+        if (resto % 10 > 0) s += ' e ' + unidades[resto % 10]
+      }
     }
-  } else if (reais >= 10 && reais < 20) {
-    extenso += dez_dezenove[reais - 10]
-  } else if (reais >= 20) {
-    extenso += dezenas[Math.floor(reais / 10)]
-    if (reais % 10 > 0) extenso += ' e ' + unidades[reais % 10]
-  } else if (reais > 0) {
-    extenso += unidades[reais]
+    return s
   }
 
-  extenso += ' Real'
-  if (reais !== 1) extenso += 'is'
+  // Converte um inteiro qualquer (até bilhões) em extenso
+  const inteiroExtenso = (n) => {
+    if (n === 0) return 'zero'
+    const grupos = [
+      { div: 1000000000, sing: ' bilhão', plur: ' bilhões' },
+      { div: 1000000, sing: ' milhão', plur: ' milhões' },
+      { div: 1000, sing: ' mil', plur: ' mil' },
+      { div: 1, sing: '', plur: '' },
+    ]
+    let restante = n
+    const partes = []
+    for (const g of grupos) {
+      const q = Math.floor(restante / g.div)
+      restante = restante % g.div
+      if (q > 0) {
+        if (g.div === 1000) {
+          partes.push(q === 1 ? 'mil' : ate999(q) + ' mil')
+        } else if (g.div === 1) {
+          partes.push(ate999(q))
+        } else {
+          partes.push(ate999(q) + (q === 1 ? g.sing : g.plur))
+        }
+      }
+    }
+    // Junta os grupos; usa " e " antes do último grupo quando ele for < 100 ou centena exata
+    const ultimo = n % 1000
+    const ligaUltimo = ultimo > 0 && (ultimo < 100 || ultimo % 100 === 0)
+    let texto = ''
+    for (let i = 0; i < partes.length; i++) {
+      if (i === 0) texto = partes[i]
+      else {
+        const isLast = i === partes.length - 1
+        texto += (isLast && ligaUltimo ? ' e ' : ' ') + partes[i]
+      }
+    }
+    return texto
+  }
 
+  let resultado = ''
+  if (reais > 0) {
+    resultado += inteiroExtenso(reais) + (reais === 1 ? ' real' : ' reais')
+  }
   if (centavos > 0) {
-    extenso += ' e ' + centavos + ' Centavos'
+    if (reais > 0) resultado += ' e '
+    resultado += inteiroExtenso(centavos) + (centavos === 1 ? ' centavo' : ' centavos')
   }
+  if (reais === 0 && centavos === 0) resultado = 'zero reais'
 
-  return extenso
+  return resultado
 }
 
 // Função auxiliar para converter número da célula em posição (row, col)
@@ -115,6 +157,63 @@ const drawMergedRect = (pdf, startX, startY, colWidth, rowHeight, cells, cols, c
     pdf.text(String(cardNumber), centerX, centerY, { align: 'center', baseline: 'middle' })
     pdf.setTextColor(0, 0, 0) // Voltar para preto
   }
+}
+
+// Grade de referência (papel milimetrado) de cellSize x cellSize mm.
+// Desenha linhas finas em cinza claro e rótulos: colunas A,B,...,Z,AA,... no topo
+// e linhas 1,2,... à esquerda. Serve como auxílio para posicionar labels/campos.
+const drawReferenceGrid = (pdf, startX, startY, width, height, cellSize = 5) => {
+  const numCols = Math.floor(width / cellSize)
+  const numRows = Math.floor(height / cellSize)
+
+  // Converte índice 0-based em rótulo de coluna estilo planilha (A..Z, AA, AB, ...)
+  const colLabel = (n) => {
+    let s = ''
+    n++
+    while (n > 0) {
+      const rem = (n - 1) % 26
+      s = String.fromCharCode(65 + rem) + s
+      n = Math.floor((n - 1) / 26)
+    }
+    return s
+  }
+
+  // Linhas finas em cinza claro
+  pdf.setDrawColor(170, 170, 170)
+  pdf.setLineWidth(0.1)
+
+  // Linhas verticais (colunas)
+  for (let c = 0; c <= numCols; c++) {
+    const x = startX + c * cellSize
+    pdf.line(x, startY, x, startY + numRows * cellSize)
+  }
+  // Linhas horizontais (linhas)
+  for (let r = 0; r <= numRows; r++) {
+    const y = startY + r * cellSize
+    pdf.line(startX, y, startX + numCols * cellSize, y)
+  }
+
+  // Rótulos — fonte adaptada ao tamanho da célula para caber em células pequenas
+  const labelFont = Math.max(2.5, Math.min(5, cellSize - 0.5))
+  pdf.setFontSize(labelFont)
+  pdf.setFont(undefined, 'normal')
+  pdf.setTextColor(120, 120, 120)
+
+  // Colunas (A, B, ...) acima de cada coluna, centralizadas
+  for (let c = 0; c < numCols; c++) {
+    const cx = startX + c * cellSize + cellSize / 2
+    pdf.text(colLabel(c), cx, startY - 0.8, { align: 'center', baseline: 'bottom' })
+  }
+  // Linhas (1, 2, ...) à esquerda de cada linha, centralizadas verticalmente
+  for (let r = 0; r < numRows; r++) {
+    const cy = startY + r * cellSize + cellSize / 2
+    pdf.text(String(r + 1), startX - 1, cy, { align: 'right', baseline: 'middle' })
+  }
+
+  // Restaurar padrões (preto / linha padrão)
+  pdf.setTextColor(0, 0, 0)
+  pdf.setDrawColor(0, 0, 0)
+  pdf.setLineWidth(0.4)
 }
 
 export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
@@ -236,41 +335,49 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     const cedenteX = card1X + card1LogoWidth + 1
     const cedenteY = card1Y + 1
 
-    pdf.setFont(undefined, 'normal')
-    pdf.text('RAZÃO SOCIAL:', cedenteX, cedenteY)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.nome_correntista || 'EMPRESA').toUpperCase(), cedenteX, cedenteY + 3, { maxWidth: card1DataWidth - 2 })
+    // Posicionamento pela grade de referência de 2mm:
+    // coluna X = startX + indice*2 ; linha Y (centro da faixa) = startY + (linha-1)*2 + 1
+    const GRID_MM = 2
+    const gridColX = (idx0) => startX + idx0 * GRID_MM
+    const gridRowY = (rowNum) => startY + (rowNum - 1) * GRID_MM + GRID_MM / 2
+    const colS_X = gridColX(18)   // coluna S
+    const colAH_X = gridColX(33)  // coluna AH
+    const colAI_X = gridColX(34)  // coluna AI
+    const colAL_X = gridColX(37)  // coluna AL
+    const colAW_X = gridColX(48)  // coluna AW
+    const colAZ_X = gridColX(51)  // coluna AZ
+    const colBB_X = gridColX(53)  // coluna BB
+    const colBH_X = gridColX(59)  // coluna BH
+    const colBN_X = gridColX(65)  // coluna BN
+    const colBO_X = gridColX(66)  // coluna BO
+    const colBQ_X = gridColX(68)  // coluna BQ
+    const colCA_X = gridColX(78)  // coluna CA
+    const razaoMaxWidth = colBN_X - colS_X - 2
+    const cnpjMaxWidth = (card1X + card1Width) - colBN_X - 1
 
+    // Razão Social (coluna S): label na linha 2, nome da empresa na linha 4
     pdf.setFont(undefined, 'normal')
-    pdf.text('CNPJ:', cedenteX, cedenteY + 5)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.cic || '00.000.000/0000-00').toUpperCase(), cedenteX, cedenteY + 8, { maxWidth: card1DataWidth - 2 })
+    pdf.text('RAZÃO SOCIAL:', colS_X, gridRowY(2), { baseline: 'middle' })
+    pdf.text((conta?.nome_correntista || 'EMPRESA').toUpperCase(), colS_X, gridRowY(4), { baseline: 'middle', maxWidth: razaoMaxWidth })
 
-    pdf.setFont(undefined, 'normal')
-    pdf.text('ENDEREÇO:', cedenteX, cedenteY + 10)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.endereco || 'RUA').toUpperCase(), cedenteX, cedenteY + 13, { maxWidth: card1DataWidth - 2 })
+    // Endereço (coluna S): label na linha 6, rua na linha 8
+    pdf.text('ENDEREÇO:', colS_X, gridRowY(6), { baseline: 'middle' })
+    pdf.text((conta?.endereco || 'RUA').toUpperCase(), colS_X, gridRowY(8), { baseline: 'middle', maxWidth: razaoMaxWidth })
 
-    // Município/UF, CEP e Telefone na mesma linha (3 colunas)
-    const card1ColWidth = card1DataWidth / 3
-    const card1MunX = cedenteX
-    const card1CepX = cedenteX + card1ColWidth
-    const card1TelX = cedenteX + card1ColWidth * 2
+    // CNPJ (coluna BN): label na linha 2, número na linha 4
+    pdf.text('CNPJ:', colBN_X, gridRowY(2), { baseline: 'middle' })
+    pdf.text((conta?.cic || '00.000.000/0000-00').toUpperCase(), colBN_X, gridRowY(4), { baseline: 'middle', maxWidth: cnpjMaxWidth })
 
+    // Município (coluna S), CEP (coluna AI), Telefone (coluna AW) — labels linha 10, campos linha 12
     pdf.setFont(undefined, 'normal')
-    pdf.text('MUNICÍPIO / UF:', card1MunX, cedenteY + 15)
-    pdf.setFont(undefined, 'normal')
-    pdf.text(((conta?.cidade || '') + ' - ' + (conta?.uf || '')).toUpperCase(), card1MunX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
+    pdf.text('MUNICÍPIO:', colS_X, gridRowY(10), { baseline: 'middle' })
+    pdf.text(((conta?.cidade || '') + ' - ' + (conta?.uf || '')).toUpperCase(), colS_X, gridRowY(12), { baseline: 'middle', maxWidth: colAL_X - colS_X - 2 })
 
-    pdf.setFont(undefined, 'normal')
-    pdf.text('CEP:', card1CepX, cedenteY + 15)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.cep || '00000-000').toUpperCase(), card1CepX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
+    pdf.text('CEP:', colAL_X, gridRowY(10), { baseline: 'middle' })
+    pdf.text((conta?.cep || '00000-000').toUpperCase(), colAL_X, gridRowY(12), { baseline: 'middle', maxWidth: colAW_X - colAL_X - 2 })
 
-    pdf.setFont(undefined, 'normal')
-    pdf.text('TELEFONE:', card1TelX, cedenteY + 15)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.telefone || '').toUpperCase(), card1TelX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
+    pdf.text('TELEFONE:', colAW_X, gridRowY(10), { baseline: 'middle' })
+    pdf.text((conta?.telefone || '').toUpperCase(), colAW_X, gridRowY(12), { baseline: 'middle', maxWidth: (card1X + card1Width) - colAW_X - 1 })
 
     // ===== CARD 3: DUPLICATA (centralizado vertical) =====
     const card3Positions = [6,12].map(cell => getCellPosition(cell, cols))
@@ -338,6 +445,13 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     // Coluna 4: "VENCIMENTO"
     const col4CenterX = card5Col3X + (card5X + card5Width - card5Col3X) / 2
     pdf.text('VENCIMENTO', col4CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
+
+    // Valores do título (linha 21): valor (coluna AL), número documento (coluna BB), vencimento (coluna BQ)
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(formatMoeda(boleto?.valor || 0), colAL_X, gridRowY(21), { baseline: 'middle' })
+    pdf.text(String(boleto?.numero_documento || ''), colBB_X, gridRowY(21), { baseline: 'middle' })
+    pdf.text(formatDate(boleto?.data_vencimento), colBQ_X, gridRowY(21), { baseline: 'middle' })
 
     // ===== CARD 6: PARA USO DA INSTITUIÇÃO =====
     const card6Positions = [24,30,36].map(cell => getCellPosition(cell, cols))
@@ -410,61 +524,63 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
 
     pdf.setFont(undefined, 'normal')
     pdf.setFontSize(8)
-    pdf.text('DADOS DO SACADO:', card9X, card9Y + 7)
+    pdf.text('DADOS DO SACADO:', colS_X, gridRowY(30), { baseline: 'middle' })
 
-    pdf.setFont(undefined, 'normal')
+    // Razão Social (coluna S): label linha 33, campo linha 35
+    pdf.text('RAZÃO SOCIAL:', colS_X, gridRowY(33), { baseline: 'middle' })
+    pdf.text((boleto.sacado_nome || '').toUpperCase(), colS_X, gridRowY(35), { baseline: 'middle', maxWidth: colCA_X - colS_X })
+
+    // CNPJ/CPF (coluna S): label linha 37, campo linha 39
+    pdf.text('CNPJ/CPF:', colS_X, gridRowY(37), { baseline: 'middle' })
+    pdf.text((boleto.sacado_cic || '').toUpperCase(), colS_X, gridRowY(39), { baseline: 'middle' })
+
+    // Endereço (coluna S): label linha 41, campo linha 43
+    pdf.text('ENDEREÇO:', colS_X, gridRowY(41), { baseline: 'middle' })
+    pdf.text((boleto.sacado_endereco || '').toUpperCase(), colS_X, gridRowY(43), { baseline: 'middle', maxWidth: colCA_X - colS_X })
+
+    // Linha inferior (labels linha 45, campos linha 47): Município/UF (S), CEP (AI), CEL (BH), TELEFONE (CA)
+    pdf.text('MUNICÍPIO/UF:', colS_X, gridRowY(45), { baseline: 'middle' })
+    pdf.text(((boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || '')).toUpperCase(), colS_X, gridRowY(47), { baseline: 'middle', maxWidth: colAI_X - colS_X - 2 })
+
+    pdf.text('CEP:', colAI_X, gridRowY(45), { baseline: 'middle' })
+    pdf.text((boleto.sacado_cep || '').toUpperCase(), colAI_X, gridRowY(47), { baseline: 'middle', maxWidth: colBH_X - colAI_X - 2 })
+
+    pdf.text('CEL:', colBH_X, gridRowY(45), { baseline: 'middle' })
+    pdf.text((boleto.sacado_celular || '').toUpperCase(), colBH_X, gridRowY(47), { baseline: 'middle', maxWidth: colCA_X - colBH_X - 2 })
+
+    pdf.text('TELEFONE:', colCA_X, gridRowY(45), { baseline: 'middle' })
+    pdf.text((boleto.sacado_telefone || '').toUpperCase(), colCA_X, gridRowY(47), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colCA_X - 1 })
+
+    // ===== CARD 10: VALOR POR EXTENSO =====
+    const card10Positions = [68,69,70,71,72].map(cell => getCellPosition(cell, cols))
+    const card10MinCol = Math.min(...card10Positions.map(p => p.col))
+    const card10MaxCol = Math.max(...card10Positions.map(p => p.col))
+    const card10MinRow = Math.min(...card10Positions.map(p => p.row))
+    const card10MaxRow = Math.max(...card10Positions.map(p => p.row))
+
+    const card10X = startX + card10MinCol * colWidth + spacing
+    const card10Y = startY + card10MinRow * rowHeight + spacing
+    const card10Width = (card10MaxCol - card10MinCol + 1) * colWidth - spacing * 2
+    const card10Height = (card10MaxRow - card10MinRow + 1) * rowHeight - spacing * 2
+
+    // Linha vertical dividindo o primeiro quinto da largura do card
+    const card10DivX = card10X + card10Width / 5
+    pdf.setDrawColor(0, 0, 0)
+    pdf.setLineWidth(0.4)
+    pdf.line(card10DivX, card10Y, card10DivX, card10Y + card10Height)
+
+    // Label "Valor por extenso" (linha 53, coluna S) e valor por extenso (linha 53, coluna AH)
     pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('Valor por extenso', colS_X, gridRowY(53), { baseline: 'middle' })
+    pdf.text(converterNumeroParaExtenso(boleto?.valor || 0), colAH_X, gridRowY(53), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colAH_X - 2 })
 
-    // Razão Social - posicionada no mesmo alinhamento que "Dados do Sacado:"
-    const card9DataStartY = card9Y + 11 // Logo após "Dados do Sacado:" (7 + 4mm de espaço)
-    const card9DataX = card9X + 5 // Recuo de 5mm para o lado esquerdo
-    pdf.setFont(undefined, 'normal')
-    pdf.text('RAZÃO SOCIAL:', card9DataX, card9DataStartY)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_nome || '').toUpperCase(), card9DataX, card9DataStartY + 2, { maxWidth: card9Width - 2 })
-
-    // CNPJ/CPF - linha seguinte
-    pdf.setFont(undefined, 'normal')
-    pdf.text('CNPJ/CPF:', card9DataX, card9DataStartY + 6)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_cic || '').toUpperCase(), card9DataX, card9DataStartY + 8)
-
-    // Endereço - linha seguinte
-    pdf.setFont(undefined, 'normal')
-    pdf.text('ENDEREÇO:', card9DataX, card9DataStartY + 12)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_endereco || '').toUpperCase(), card9DataX, card9DataStartY + 14, { maxWidth: card9Width - 2 })
-
-    // Município/UF, CEP, Celular e Telefone na mesma linha
-    const bottomLineY = card9DataStartY + 19
-    const colWidth1 = card9Width / 4 - 1
-    const colWidth2 = card9Width / 4 - 1
-    const colWidth3 = card9Width / 4 - 1
-    const colWidth4 = card9Width / 4 - 1
-
-    // Município/UF
-    pdf.setFont(undefined, 'normal')
-    pdf.text('MUNICÍPIO/UF:', card9DataX, bottomLineY - 2)
-    pdf.setFont(undefined, 'normal')
-    pdf.text(((boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || '')).toUpperCase(), card9DataX, bottomLineY, { maxWidth: colWidth1 })
-
-    // CEP
-    pdf.setFont(undefined, 'normal')
-    pdf.text('CEP:', card9DataX + colWidth1 + 1, bottomLineY - 2)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_cep || '').toUpperCase(), card9DataX + colWidth1 + 1, bottomLineY, { maxWidth: colWidth2 })
-
-    // Celular
-    pdf.setFont(undefined, 'normal')
-    pdf.text('CEL:', card9DataX + (colWidth1 + colWidth2) + 2, bottomLineY - 2)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_celular || '').toUpperCase(), card9DataX + (colWidth1 + colWidth2) + 2, bottomLineY, { maxWidth: colWidth3 })
-
-    // Telefone
-    pdf.setFont(undefined, 'normal')
-    pdf.text('TELEFONE:', card9DataX + (colWidth1 + colWidth2 + colWidth3) + 3, bottomLineY - 2)
-    pdf.setFont(undefined, 'normal')
-    pdf.text((boleto.sacado_telefone || '').toUpperCase(), card9DataX + (colWidth1 + colWidth2 + colWidth3) + 3, bottomLineY, { maxWidth: colWidth4 })
+    // Grade de referência 5mm x 5mm (auxílio de posicionamento).
+    // Defina como false para ocultar na versão final.
+    const SHOW_REFERENCE_GRID = true
+    if (SHOW_REFERENCE_GRID) {
+      drawReferenceGrid(pdf, startX, startY, duplicataWidth, duplicataHeight, 2)
+    }
 
     const blob = pdf.output('blob')
     return blob
