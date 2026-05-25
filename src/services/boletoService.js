@@ -171,6 +171,15 @@ export const createBoleto = async (contaId, boletoData) => {
       descricao: boletoData.DESCRICAO || '',
     }
 
+    // Campos opcionais vindos da importação do Efactor (OPEITE)
+    if (boletoData.NUM_LANCAMENTO !== undefined && boletoData.NUM_LANCAMENTO !== null && boletoData.NUM_LANCAMENTO !== '') {
+      const numLanc = Number(boletoData.NUM_LANCAMENTO)
+      if (!isNaN(numLanc)) dataToInsert.num_lancamento = numLanc
+    }
+    if (boletoData.STATUS_EFACTOR) {
+      dataToInsert.status_efactor = boletoData.STATUS_EFACTOR
+    }
+
     // Gerar codigo de barras automaticamente e calcular juros
     try {
       const { data: contaData, error: contaErr } = await supabase
@@ -812,7 +821,7 @@ export const getOPEITEByCedente = async (codCedente) => {
 
       const { data, error } = await supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('COD_CEDENTE', codCedente)
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
@@ -877,6 +886,8 @@ export const getOPEITEByCedente = async (codCedente) => {
         numero_documento: opeite.NUM_LANCAMENTO || '',
         sacado_nome: sacado.NOME_CORRENTISTA || '',
         sacado_cic: sacado.CIC || '',
+        avalista_nome: opeite.NOME_AVALISTA || '',
+        avalista_cic: opeite.CIC_AVALISTA || '',
         status: 'pendente',
         status_efactor: 'Registrado',
         num_lancamento: opeite.NUM_LANCAMENTO || '',
@@ -892,6 +903,121 @@ export const getOPEITEByCedente = async (codCedente) => {
   } catch (err) {
     console.error('[BoletoService] Erro ao carregar OPEITE:', err)
     return { data: [], error: err }
+  }
+}
+
+// Importar registros do Efactor (OPEITE) para capt_boletos
+// Mapeia OPEITE + SACADO + CONTAS -> capt_boletos, gerando nosso_numero novo.
+// Pula registros cujo num_lancamento já exista em capt_boletos para a conta.
+export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
+  try {
+    if (!contaId) {
+      return { data: null, error: new Error('Conta não identificada') }
+    }
+    if (!Array.isArray(opeiteRecords) || opeiteRecords.length === 0) {
+      return { data: { imported: 0, skipped: 0, errors: 0, total: 0, errorDetails: [] }, error: null }
+    }
+
+    console.log(`[Import OPEITE] Iniciando importação de ${opeiteRecords.length} registro(s) para conta ${contaId}`)
+
+    // 1) Detectar duplicados: num_lancamento já existentes em capt_boletos para a conta
+    const numLancamentos = opeiteRecords
+      .map(r => Number(r.num_lancamento))
+      .filter(n => !isNaN(n) && n > 0)
+
+    const existentes = new Set()
+    if (numLancamentos.length > 0) {
+      const pageSize = 1000
+      for (let i = 0; i < numLancamentos.length; i += pageSize) {
+        const batch = numLancamentos.slice(i, i + pageSize)
+        const { data: jaImportados, error: dupError } = await supabase
+          .from('capt_boletos')
+          .select('num_lancamento')
+          .eq('conta_id', contaId)
+          .in('num_lancamento', batch)
+        if (dupError) {
+          console.warn('[Import OPEITE] Aviso ao checar duplicados:', dupError.message)
+        } else if (jaImportados) {
+          jaImportados.forEach(b => existentes.add(Number(b.num_lancamento)))
+        }
+      }
+    }
+    console.log(`[Import OPEITE] ${existentes.size} num_lancamento já existem na conta (serão pulados)`)
+
+    // 2) Buscar dados completos de SACADO (endereço/cidade/uf/cep) por COD_SACADO
+    const codSacadoSet = new Set(opeiteRecords.map(r => r._COD_SACADO).filter(Boolean))
+    const sacadoMap = {}
+    if (codSacadoSet.size > 0) {
+      const codArray = Array.from(codSacadoSet)
+      const pageSize = 1000
+      for (let i = 0; i < codArray.length; i += pageSize) {
+        const batch = codArray.slice(i, i + pageSize)
+        const { data: sacados, error: sacError } = await supabase
+          .from('SACADO')
+          .select('COD_SACADO, NOME_CORRENTISTA, CIC, ENDERECO, BAIRRO, CIDADE, UF, CEP')
+          .in('COD_SACADO', batch)
+        if (!sacError && sacados) {
+          sacados.forEach(s => { sacadoMap[s.COD_SACADO] = s })
+        } else if (sacError) {
+          console.warn('[Import OPEITE] Aviso ao buscar SACADO:', sacError.message)
+        }
+      }
+    }
+
+    // 3) Importar cada registro (pulando duplicados) via createBoleto
+    let imported = 0
+    let skipped = 0
+    let errors = 0
+    const errorDetails = []
+
+    for (const rec of opeiteRecords) {
+      const numLanc = Number(rec.num_lancamento)
+      if (!isNaN(numLanc) && numLanc > 0 && existentes.has(numLanc)) {
+        skipped++
+        continue
+      }
+
+      const sac = sacadoMap[rec._COD_SACADO] || {}
+      const payload = {
+        NUM_TITULO: rec.num_titulo || rec.numero_documento || '',
+        EMISSAO: rec.data_emissao || null,
+        VENCIMENTO: rec.data_vencimento || null,
+        VALOR: rec.valor || 0,
+        SACADO_NOME: sac.NOME_CORRENTISTA || rec.sacado_nome || '',
+        SACADO_CIC: sac.CIC || rec.sacado_cic || '',
+        SACADO_ENDERECO: sac.ENDERECO || '',
+        SACADO_BAIRRO: sac.BAIRRO || '',
+        SACADO_CIDADE: sac.CIDADE || '',
+        SACADO_UF: sac.UF || '',
+        SACADO_CEP: sac.CEP || '',
+        AVALISTA_NOME: rec.avalista_nome || '',
+        AVALISTA_CIC: rec.avalista_cic || '',
+        STATUS: 'pendente',
+        SITUACAO: 'Registrado',
+        STATUS_EFACTOR: rec.status_efactor || 'Registrado',
+        NUM_LANCAMENTO: rec.num_lancamento || '',
+        DESCRICAO: '',
+      }
+
+      const { error } = await createBoleto(contaId, payload)
+      if (error) {
+        errors++
+        errorDetails.push({ num_lancamento: rec.num_lancamento, message: error.message })
+        console.error('[Import OPEITE] Erro ao importar num_lancamento', rec.num_lancamento, ':', error.message)
+      } else {
+        imported++
+        if (!isNaN(numLanc) && numLanc > 0) existentes.add(numLanc) // evita duplicar dentro da própria seleção
+      }
+    }
+
+    console.log(`[Import OPEITE] Concluído: ${imported} importados, ${skipped} pulados, ${errors} erros`)
+    return {
+      data: { imported, skipped, errors, total: opeiteRecords.length, errorDetails },
+      error: null,
+    }
+  } catch (err) {
+    console.error('[Import OPEITE] Erro geral:', err)
+    return { data: null, error: err }
   }
 }
 

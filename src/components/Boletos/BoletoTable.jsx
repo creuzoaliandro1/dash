@@ -318,7 +318,11 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
       {/* Rows */}
       <div className="divide-y divide-[#1f1f1f]">
-          {sortedBoletos.map((boleto, index) => (
+          {sortedBoletos.map((boleto) => {
+            // Índice no array ORIGINAL (boletos), não na ordem ordenada.
+            // A seleção (selectedRows) e os handlers do parent usam o índice do array original.
+            const index = boletos.indexOf(boleto)
+            return (
             <div
               key={index}
               className={`flex items-center gap-4 px-4 py-3 hover:bg-[#111111] transition ${
@@ -429,7 +433,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 </div>
               </div>
             </div>
-          ))}
+          )})}
         </div>
 
         {/* Modal de Detalhes */}

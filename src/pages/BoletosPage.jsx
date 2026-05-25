@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 
@@ -23,6 +23,7 @@ export default function BoletosPage() {
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
+  const [importingOpeite, setImportingOpeite] = useState(false)
   const [contaData, setContaData] = useState(null)
   const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
   const cnab400MenuRef = useRef(null)
@@ -586,6 +587,57 @@ export default function BoletosPage() {
     }
   }
 
+  const handleImportOpeite = async () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um registro do Efactor para importar')
+      return
+    }
+
+    const filteredBoletos = getFilteredBoletos()
+    const registrosSelecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b && b._ORIGEM === 'OPEITE')
+
+    if (registrosSelecionados.length === 0) {
+      alert('Nenhum registro do Efactor (OPEITE) selecionado para importar.')
+      return
+    }
+
+    if (!window.confirm(`Importar ${registrosSelecionados.length} registro(s) do Efactor para a tabela de boletos?`)) {
+      return
+    }
+
+    setOpenActionsMenu(false)
+    setImportingOpeite(true)
+
+    try {
+      const activeId = getActiveContaId()
+      console.log('[Ações] Importando', registrosSelecionados.length, 'registros OPEITE para conta', activeId)
+
+      const { data: resultado, error } = await importOpeiteToBoletos(activeId, registrosSelecionados)
+
+      if (error) {
+        alert('Erro ao importar registros: ' + error.message)
+        console.error('[Ações] Erro ao importar OPEITE:', error)
+      } else {
+        let mensagem = `Importação concluída:\n\n`
+        mensagem += `✓ Importados: ${resultado.imported}\n`
+        mensagem += `⏭ Pulados (já existiam): ${resultado.skipped}\n`
+        if (resultado.errors > 0) {
+          mensagem += `✗ Erros: ${resultado.errors}`
+        }
+        alert(mensagem)
+        setSelectedRows(new Set())
+        await loadBoletos()
+      }
+    } catch (error) {
+      console.error('[Ações] Erro ao importar OPEITE:', error)
+      alert('Erro ao importar registros: ' + error.message)
+    } finally {
+      setImportingOpeite(false)
+    }
+  }
+
   const handleDeleteSelectedBoletos = async () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
@@ -900,6 +952,15 @@ export default function BoletosPage() {
 
           {openActionsMenu && (
             <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-56">
+              {efactorActive && (
+                <button
+                  onClick={handleImportOpeite}
+                  disabled={importingOpeite}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {importingOpeite ? '⏳ Importando...' : '📨 Importar'}
+                </button>
+              )}
               <button
                 onClick={handleGenerateSecondViaZip}
                 disabled={generatingZip}

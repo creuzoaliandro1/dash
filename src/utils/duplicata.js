@@ -239,32 +239,38 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setFont(undefined, 'normal')
     pdf.text('RAZÃO SOCIAL:', cedenteX, cedenteY)
     pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.nome_correntista || 'EMPRESA').toUpperCase(), cedenteX, cedenteY + 2.5, { maxWidth: card1DataWidth - 2 })
+    pdf.text((conta?.nome_correntista || 'EMPRESA').toUpperCase(), cedenteX, cedenteY + 3, { maxWidth: card1DataWidth - 2 })
 
     pdf.setFont(undefined, 'normal')
     pdf.text('CNPJ:', cedenteX, cedenteY + 5)
     pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.cic || '00.000.000/0000-00').toUpperCase(), cedenteX, cedenteY + 7, { maxWidth: card1DataWidth - 2 })
+    pdf.text((conta?.cic || '00.000.000/0000-00').toUpperCase(), cedenteX, cedenteY + 8, { maxWidth: card1DataWidth - 2 })
 
     pdf.setFont(undefined, 'normal')
     pdf.text('ENDEREÇO:', cedenteX, cedenteY + 10)
     pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.endereco || 'RUA').toUpperCase(), cedenteX, cedenteY + 12, { maxWidth: card1DataWidth - 2 })
+    pdf.text((conta?.endereco || 'RUA').toUpperCase(), cedenteX, cedenteY + 13, { maxWidth: card1DataWidth - 2 })
+
+    // Município/UF, CEP e Telefone na mesma linha (3 colunas)
+    const card1ColWidth = card1DataWidth / 3
+    const card1MunX = cedenteX
+    const card1CepX = cedenteX + card1ColWidth
+    const card1TelX = cedenteX + card1ColWidth * 2
 
     pdf.setFont(undefined, 'normal')
-    pdf.text('MUNICÍPIO / UF:', cedenteX, cedenteY + 15)
+    pdf.text('MUNICÍPIO / UF:', card1MunX, cedenteY + 15)
     pdf.setFont(undefined, 'normal')
-    pdf.text(((conta?.cidade || '') + ' - ' + (conta?.uf || '')).toUpperCase(), cedenteX, cedenteY + 17, { maxWidth: card1DataWidth - 2 })
+    pdf.text(((conta?.cidade || '') + ' - ' + (conta?.uf || '')).toUpperCase(), card1MunX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
 
     pdf.setFont(undefined, 'normal')
-    pdf.text('CEP:', cedenteX, cedenteY + 20)
+    pdf.text('CEP:', card1CepX, cedenteY + 15)
     pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.cep || '00000-000').toUpperCase(), cedenteX, cedenteY + 22, { maxWidth: card1DataWidth / 2 - 2 })
+    pdf.text((conta?.cep || '00000-000').toUpperCase(), card1CepX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
 
     pdf.setFont(undefined, 'normal')
-    pdf.text('TELEFONE:', cedenteX + card1DataWidth / 2, cedenteY + 20)
+    pdf.text('TELEFONE:', card1TelX, cedenteY + 15)
     pdf.setFont(undefined, 'normal')
-    pdf.text((conta?.telefone || '').toUpperCase(), cedenteX + card1DataWidth / 2, cedenteY + 22, { maxWidth: card1DataWidth / 2 - 2 })
+    pdf.text((conta?.telefone || '').toUpperCase(), card1TelX, cedenteY + 18, { maxWidth: card1ColWidth - 2 })
 
     // ===== CARD 3: DUPLICATA (centralizado vertical) =====
     const card3Positions = [6,12].map(cell => getCellPosition(cell, cols))
@@ -309,8 +315,8 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.line(card5Col2X, card5Y, card5Col2X, card5Y + card5Height) // 2ª linha vertical (50%)
     pdf.line(card5Col3X, card5Y, card5Col3X, card5Y + card5Height) // 3ª linha vertical (75%)
 
-    // Labels nas 4 colunas do Card 5 - alinhados verticalmente com o centro da linha horizontal
-    const card5LabelY = card5Y + card5Height / 2 // Centro da linha horizontal
+    // Labels nas 4 colunas do Card 5 - centralizados verticalmente na primeira metade (topo) do card
+    const card5LabelY = card5Y + card5Height / 4 // Centro da metade superior
 
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
@@ -377,8 +383,10 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     const textX = card8LineX + 4 // um pouco à direita da linha
 
     // Calcular ponto de início para centralizar o texto pela altura
+    // O texto é desenhado de cima para baixo, então o primeiro caractere
+    // começa acima do centro por metade da altura total do bloco
     const totalTextHeight = labelVertical.length * charSpacing
-    const textStartY = card8CenterY + (totalTextHeight / 2) // começar do centro
+    const textStartY = card8CenterY - (totalTextHeight / 2) // centralizado na altura do card
 
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
