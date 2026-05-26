@@ -273,7 +273,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01') => {
     line += '           '                          // pos 095-105    - brancos (11)
     line += '0'                                    // pos 106        - operacao banco
     line += '  '                                   // pos 107-108    - brancos (2)
-    line += tipoOperacao === '06' ? '06' : '01'    // pos 109-110    - codigo ocorrencia (01=entrada, 06=alteracao)
+    line += ['01', '02', '06'].includes(tipoOperacao) ? tipoOperacao : '01' // pos 109-110 - codigo ocorrencia (01=entrada/registro, 02=baixa, 06=alteracao)
     line += padRight(tituloNum.slice(0, 10), 10)   // pos 111-120    - seu numero (10)
     line += dtVenc                                 // pos 121-126    - vencimento DDMMAA
     line += fmtValor(valorNum)                     // pos 127-139    - valor (13 centavos)

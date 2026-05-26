@@ -6,6 +6,8 @@ import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
+import { generateDuplicataPDF } from '../utils/duplicata'
+import { criarDocumentoAssinatura } from '../services/zapsignService'
 
 export default function BoletosPage() {
   const [showModal, setShowModal] = useState(false)
@@ -24,6 +26,7 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
+  const [assinandoZapsign, setAssinandoZapsign] = useState(false)
   const [contaData, setContaData] = useState(null)
   const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
   const cnab400MenuRef = useRef(null)
@@ -638,6 +641,83 @@ export default function BoletosPage() {
     }
   }
 
+  const handleAssinarZapsign = async () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto para enviar à assinatura')
+      return
+    }
+
+    if (!window.confirm(`Enviar ${selectedRows.size} duplicata(s) para assinatura na ZapSign?`)) {
+      return
+    }
+
+    setOpenActionsMenu(false)
+    setAssinandoZapsign(true)
+
+    try {
+      const filteredBoletos = getFilteredBoletos()
+      const selecionados = Array.from(selectedRows)
+        .map(index => filteredBoletos[index])
+        .filter(b => b)
+
+      let ok = 0
+      let fail = 0
+      const links = []
+
+      for (const boleto of selecionados) {
+        try {
+          // PDF a assinar = Duplicata gerada pelo nosso sistema
+          const pdfBlob = await generateDuplicataPDF(boleto, contaData)
+
+          const { data, error } = await criarDocumentoAssinatura({
+            name: `Duplicata ${boleto.numero_documento || boleto.nosso_numero || ''}`.trim(),
+            pdfBlob,
+            signerName: boleto.sacado_nome || 'Sacado',
+            signerEmail: boleto.sacado_email || '',
+            signerPhone: boleto.sacado_telefone || '',
+          })
+
+          if (error) {
+            fail++
+            console.error('[ZapSign] Erro ao criar documento:', error)
+            continue
+          }
+
+          ok++
+          if (data?.sign_url) {
+            links.push(`${boleto.sacado_nome || boleto.numero_documento || ''}: ${data.sign_url}`)
+          }
+
+          // Persistir token/link/status no banco
+          if (boleto.id && data?.doc_token) {
+            await updateBoleto(boleto.id, {
+              zapsign_doc_token: data.doc_token,
+              zapsign_sign_url: data.sign_url || '',
+              zapsign_status: 'pendente',
+            })
+          }
+        } catch (e) {
+          fail++
+          console.error('[ZapSign] Exceção ao processar boleto:', boleto?.id, e)
+        }
+      }
+
+      let msg = `Assinatura ZapSign:\n\n✓ Documentos criados: ${ok}\n✗ Falhas: ${fail}`
+      if (links.length > 0) {
+        msg += `\n\nLinks de assinatura:\n${links.join('\n')}`
+      }
+      alert(msg)
+
+      setSelectedRows(new Set())
+      await loadBoletos()
+    } catch (error) {
+      console.error('[ZapSign] Erro geral:', error)
+      alert('Erro ao enviar para assinatura: ' + error.message)
+    } finally {
+      setAssinandoZapsign(false)
+    }
+  }
+
   const handleDeleteSelectedBoletos = async () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
@@ -758,9 +838,15 @@ export default function BoletosPage() {
                 </button>
                 <button
                   onClick={() => handleGenerateRemessaCNAB400('06')}
-                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                 >
                   Alterar
+                </button>
+                <button
+                  onClick={() => handleGenerateRemessaCNAB400('02')}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                >
+                  Baixa
                 </button>
               </div>
             )}
@@ -974,6 +1060,13 @@ export default function BoletosPage() {
                 className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
+              </button>
+              <button
+                onClick={handleAssinarZapsign}
+                disabled={assinandoZapsign}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}
               </button>
               <button
                 onClick={handleDeleteSelectedBoletos}

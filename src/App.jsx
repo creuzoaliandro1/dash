@@ -42,12 +42,15 @@ export default function App() {
     return <LoginPage onLoginSuccess={() => checkUser()} />
   }
 
+  // Operações (Conta Capt / E-Factor) são exclusivas de usuários Master
+  const isMaster = user?.tipo === 'M'
+
   return (
     <MainLayout currentPage={currentPage} setCurrentPage={setCurrentPage}>
       {currentPage === 'dashboard' && <DashboardPage />}
       {currentPage === 'boletos' && <BoletosPage />}
-      {currentPage === 'conta-capt' && <ContaCaptPage />}
-      {currentPage === 'efactor' && <EfactorPage />}
+      {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
+      {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>

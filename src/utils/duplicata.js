@@ -108,7 +108,7 @@ const converterNumeroParaExtenso = (numero) => {
     resultado += inteiroExtenso(reais) + (reais === 1 ? ' real' : ' reais')
   }
   if (centavos > 0) {
-    if (reais > 0) resultado += ' e '
+    if (reais > 0) resultado += ' '
     resultado += inteiroExtenso(centavos) + (centavos === 1 ? ' centavo' : ' centavos')
   }
   if (reais === 0 && centavos === 0) resultado = 'zero reais'
@@ -145,26 +145,14 @@ const drawMergedRect = (pdf, startX, startY, colWidth, rowHeight, cells, cols, c
 
   // Desenhar retângulo com cantos arredondados
   pdf.roundedRect(x, y, width, height, radius, radius)
-
-  // Adicionar número do card no centro
-  if (cardNumber !== null) {
-    const centerX = x + width / 2
-    const centerY = y + height / 2
-
-    pdf.setFontSize(8)
-    pdf.setTextColor(180, 180, 180) // Cinza claro
-    pdf.setFont(undefined, 'normal')
-    pdf.text(String(cardNumber), centerX, centerY, { align: 'center', baseline: 'middle' })
-    pdf.setTextColor(0, 0, 0) // Voltar para preto
-  }
 }
 
 // Grade de referência (papel milimetrado) de cellSize x cellSize mm.
 // Desenha linhas finas em cinza claro e rótulos: colunas A,B,...,Z,AA,... no topo
 // e linhas 1,2,... à esquerda. Serve como auxílio para posicionar labels/campos.
-const drawReferenceGrid = (pdf, startX, startY, width, height, cellSize = 5) => {
+const drawReferenceGrid = (pdf, startX, startY, width, height, cellSize = 5, rowsOverride = null) => {
   const numCols = Math.floor(width / cellSize)
-  const numRows = Math.floor(height / cellSize)
+  const numRows = rowsOverride != null ? rowsOverride : Math.floor(height / cellSize)
 
   // Converte índice 0-based em rótulo de coluna estilo planilha (A..Z, AA, AB, ...)
   const colLabel = (n) => {
@@ -240,6 +228,19 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
   try {
     pdf.setDrawColor(0, 0, 0)
     pdf.setLineWidth(0.4)
+
+    // ===== MOLDURA EXTERNA (todo o polígono da duplicata, cantos arredondados) =====
+    // Posicionada 1,5mm para fora dos cards externos (mesma folga entre os cards)
+    const frameSpacing = 0.75 // metade da folga de 1,5mm entre cards
+    const frameTop = startY - frameSpacing
+    const frameBottom = startY + 130 // estende a moldura para cobrir a área de aceite/assinatura abaixo dos cards
+    pdf.roundedRect(
+      startX - frameSpacing,
+      frameTop,
+      duplicataWidth + frameSpacing * 2,
+      frameBottom - frameTop,
+      3, 3
+    )
 
     // ===== DESENHAR GRID COM MESCLAGENS =====
 
@@ -347,11 +348,15 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     const colAW_X = gridColX(48)  // coluna AW
     const colAZ_X = gridColX(51)  // coluna AZ
     const colBB_X = gridColX(53)  // coluna BB
+    const colBE_X = gridColX(56)  // coluna BE
     const colBH_X = gridColX(59)  // coluna BH
+    const colBJ_X = gridColX(61)  // coluna BJ
     const colBN_X = gridColX(65)  // coluna BN
     const colBO_X = gridColX(66)  // coluna BO
     const colBQ_X = gridColX(68)  // coluna BQ
+    const colBV_X = gridColX(73)  // coluna BV
     const colCA_X = gridColX(78)  // coluna CA
+    const colCC_X = gridColX(80)  // coluna CC
     const razaoMaxWidth = colBN_X - colS_X - 2
     const cnpjMaxWidth = (card1X + card1Width) - colBN_X - 1
 
@@ -422,8 +427,8 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.line(card5Col2X, card5Y, card5Col2X, card5Y + card5Height) // 2ª linha vertical (50%)
     pdf.line(card5Col3X, card5Y, card5Col3X, card5Y + card5Height) // 3ª linha vertical (75%)
 
-    // Labels nas 4 colunas do Card 5 - centralizados verticalmente na primeira metade (topo) do card
-    const card5LabelY = card5Y + card5Height / 4 // Centro da metade superior
+    // Labels nas 4 colunas do Card 5 - na linha 16 da grade, mantendo as posições de largura
+    const card5LabelY = gridRowY(16) // linha 16 (y=41)
 
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
@@ -432,15 +437,15 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     const col1CenterX = card5X + (card5Col1X - card5X) / 2
     pdf.text('NF-FATURA', col1CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
 
-    // Coluna 2: "DUPLICATA VALOR R$" (com quebra de linha)
+    // Coluna 2: "DUPLICATA VALOR R$" (com quebra de linha) - linha de cima na L16
     const col2CenterX = card5Col1X + (card5Col2X - card5Col1X) / 2
-    pdf.text('DUPLICATA', col2CenterX, card5LabelY - 1.5, { align: 'center' })
-    pdf.text('VALOR R$', col2CenterX, card5LabelY + 1.5, { align: 'center' })
+    pdf.text('DUPLICATA', col2CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
+    pdf.text('VALOR R$', col2CenterX, card5LabelY + 3, { align: 'center', baseline: 'middle' })
 
-    // Coluna 3: "DUPLICATA Nº"
+    // Coluna 3: "DUPLICATA Nº" - linha de cima na L16
     const col3CenterX = card5Col2X + (card5Col3X - card5Col2X) / 2
-    pdf.text('DUPLICATA', col3CenterX, card5LabelY - 1.5, { align: 'center' })
-    pdf.text('Nº', col3CenterX, card5LabelY + 1.5, { align: 'center' })
+    pdf.text('DUPLICATA', col3CenterX, card5LabelY, { align: 'center', baseline: 'middle' })
+    pdf.text('Nº', col3CenterX, card5LabelY + 3, { align: 'center', baseline: 'middle' })
 
     // Coluna 4: "VENCIMENTO"
     const col4CenterX = card5Col3X + (card5X + card5Width - card5Col3X) / 2
@@ -469,6 +474,12 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setFont(undefined, 'normal')
     pdf.text('USO DA INSTITUIÇÃO', card6X + card6Width / 2, card6Y + card6Height / 6, { align: 'center', baseline: 'middle' })
 
+    // ===== CARD 7: DESCONTO / CONDIÇÕES ESPECIAIS =====
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('DESCONTO DE             %                    SOBRE R$                     ATÉ', colS_X, gridRowY(25), { baseline: 'middle' })
+    pdf.text('CONDIÇÕES ESPECIAIS', colS_X, gridRowY(27), { baseline: 'middle' })
+
     // ===== CARD 8: LINHA PARA ASSINATURA =====
     const card8Positions = [19,25,31,37,43,49,55,61,67,73,79].map(cell => getCellPosition(cell, cols))
     const card8MinCol = Math.min(...card8Positions.map(p => p.col))
@@ -489,26 +500,10 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setLineWidth(0.2) // Linha mais fina
     pdf.line(card8LineX, card8SignatureLineStartY, card8LineX, card8SignatureLineEndY)
 
-    // Label "ASSINATURA DO EMITENTE" vertical ao lado direito da linha, centralizado pela altura do card
-    // Desenhar letra por letra (90 graus rotacionado)
-    const labelVertical = 'ASSINATURA DO EMITENTE'
-    const charSpacing = 1.2 // espaço entre caracteres
-    const card8CenterY = card8Y + card8Height / 2 // altura central do card
-    const textX = card8LineX + 4 // um pouco à direita da linha
-
-    // Calcular ponto de início para centralizar o texto pela altura
-    // O texto é desenhado de cima para baixo, então o primeiro caractere
-    // começa acima do centro por metade da altura total do bloco
-    const totalTextHeight = labelVertical.length * charSpacing
-    const textStartY = card8CenterY - (totalTextHeight / 2) // centralizado na altura do card
-
+    // Label "ASSINATURA DO EMITENTE" rotacionado 90° para a esquerda, ancorado em X=56 / Y=102 (mm)
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
-    let currentY = textStartY
-    for (let i = labelVertical.length - 1; i >= 0; i--) {
-      pdf.text(labelVertical[i], textX, currentY, { align: 'left' })
-      currentY += charSpacing
-    }
+    pdf.text('ASSINATURA DO EMITENTE', 56, 102, { align: 'center', baseline: 'middle', angle: 90 })
 
     // ===== CARD 9: DADOS DO SACADO =====
     const card9Positions = [38,39,40,41,42,44,45,46,47,48,50,51,52,53,54,56,57,58,59,60,62,63,64,65,66].map(cell => getCellPosition(cell, cols))
@@ -528,22 +523,23 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
 
     // Razão Social (coluna S): label linha 33, campo linha 35
     pdf.text('RAZÃO SOCIAL:', colS_X, gridRowY(33), { baseline: 'middle' })
-    pdf.text((boleto.sacado_nome || '').toUpperCase(), colS_X, gridRowY(35), { baseline: 'middle', maxWidth: colCA_X - colS_X })
+    pdf.text((boleto.sacado_nome || '').toUpperCase(), colS_X, gridRowY(35), { baseline: 'middle', maxWidth: colBH_X - colS_X - 2 })
 
-    // CNPJ/CPF (coluna S): label linha 37, campo linha 39
-    pdf.text('CNPJ/CPF:', colS_X, gridRowY(37), { baseline: 'middle' })
-    pdf.text((boleto.sacado_cic || '').toUpperCase(), colS_X, gridRowY(39), { baseline: 'middle' })
+    // CNPJ/CPF (coluna BH): label linha 33, campo linha 35
+    pdf.text('CNPJ/CPF:', colBH_X, gridRowY(33), { baseline: 'middle' })
+    pdf.text((boleto.sacado_cic || '').toUpperCase(), colBH_X, gridRowY(35), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colBH_X - 2 })
 
-    // Endereço (coluna S): label linha 41, campo linha 43
-    pdf.text('ENDEREÇO:', colS_X, gridRowY(41), { baseline: 'middle' })
-    pdf.text((boleto.sacado_endereco || '').toUpperCase(), colS_X, gridRowY(43), { baseline: 'middle', maxWidth: colCA_X - colS_X })
+    // Endereço (coluna S): label linha 37, campo linha 39
+    pdf.text('ENDEREÇO:', colS_X, gridRowY(37), { baseline: 'middle' })
+    pdf.text((boleto.sacado_endereco || '').toUpperCase(), colS_X, gridRowY(39), { baseline: 'middle', maxWidth: colCA_X - colS_X })
 
-    // Linha inferior (labels linha 45, campos linha 47): Município/UF (S), CEP (AI), CEL (BH), TELEFONE (CA)
-    pdf.text('MUNICÍPIO/UF:', colS_X, gridRowY(45), { baseline: 'middle' })
-    pdf.text(((boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || '')).toUpperCase(), colS_X, gridRowY(47), { baseline: 'middle', maxWidth: colAI_X - colS_X - 2 })
+    // Município/UF (coluna S): label linha 41, campo linha 43
+    pdf.text('MUNICÍPIO/UF:', colS_X, gridRowY(41), { baseline: 'middle' })
+    pdf.text(((boleto.sacado_cidade || '') + ' - ' + (boleto.sacado_uf || '')).toUpperCase(), colS_X, gridRowY(43), { baseline: 'middle', maxWidth: colCA_X - colS_X })
 
-    pdf.text('CEP:', colAI_X, gridRowY(45), { baseline: 'middle' })
-    pdf.text((boleto.sacado_cep || '').toUpperCase(), colAI_X, gridRowY(47), { baseline: 'middle', maxWidth: colBH_X - colAI_X - 2 })
+    // Linha inferior (labels linha 45, campos linha 47): CEP (S), CEL (BH), TELEFONE (CA)
+    pdf.text('CEP:', colS_X, gridRowY(45), { baseline: 'middle' })
+    pdf.text((boleto.sacado_cep || '').toUpperCase(), colS_X, gridRowY(47), { baseline: 'middle', maxWidth: colBH_X - colS_X - 2 })
 
     pdf.text('CEL:', colBH_X, gridRowY(45), { baseline: 'middle' })
     pdf.text((boleto.sacado_celular || '').toUpperCase(), colBH_X, gridRowY(47), { baseline: 'middle', maxWidth: colCA_X - colBH_X - 2 })
@@ -572,14 +568,23 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     // Label "Valor por extenso" (linha 53, coluna S) e valor por extenso (linha 53, coluna AH)
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
-    pdf.text('Valor por extenso', colS_X, gridRowY(53), { baseline: 'middle' })
-    pdf.text(converterNumeroParaExtenso(boleto?.valor || 0), colAH_X, gridRowY(53), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colAH_X - 2 })
+    pdf.text('VALOR EXTENSO', colS_X, gridRowY(53), { baseline: 'middle' })
+    const valorExtenso = converterNumeroParaExtenso(boleto?.valor || 0)
+    const valorExtensoCap = valorExtenso ? valorExtenso.charAt(0).toUpperCase() + valorExtenso.slice(1) : ''
+    pdf.text(valorExtensoCap, colAH_X, gridRowY(53), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colAH_X - 2 })
+
+    // ===== ACEITE / ASSINATURA DO SACADO (abaixo da duplicata) =====
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('DATA DO ACEITE EM ____/____/_____', colS_X, gridRowY(64), { baseline: 'middle' })
+    pdf.text('______________________________________________', colBE_X, gridRowY(62), { baseline: 'middle' })
+    pdf.text('ASSINATURA DO SACADO', colBN_X, gridRowY(64), { baseline: 'middle' })
 
     // Grade de referência 5mm x 5mm (auxílio de posicionamento).
     // Defina como false para ocultar na versão final.
-    const SHOW_REFERENCE_GRID = true
+    const SHOW_REFERENCE_GRID = false
     if (SHOW_REFERENCE_GRID) {
-      drawReferenceGrid(pdf, startX, startY, duplicataWidth, duplicataHeight, 2)
+      drawReferenceGrid(pdf, startX, startY, duplicataWidth, duplicataHeight, 2, 65)
     }
 
     const blob = pdf.output('blob')
