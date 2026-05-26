@@ -312,10 +312,18 @@ function parseNFe(xmlDoc) {
     // Fallback: se tudo falhar, usar 'SEM_NUMERO'
     if (!nNF) nNF = 'SEM_NUMERO'
 
-    console.log('[NFe Parser] Extraído - NNF:', nNF, 'Destinatário:', destXNome, 'Valor:', vNF, 'Descrição:', descricao)
+    // Formata data ISO (YYYY-MM-DD) para DD/MM/YYYY sem problemas de fuso horário
+    const fmtDataBR = (iso) => {
+      if (!iso) return ''
+      const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/)
+      if (m) return `${m[3]}/${m[2]}/${m[1]}`
+      const d = new Date(iso)
+      return isNaN(d.getTime()) ? '' : d.toLocaleDateString('pt-BR')
+    }
 
-    return [{
-      NUM_TITULO: nNF,
+    const emissaoBR = fmtDataBR((dhEmi || '').split('T')[0]) || new Date().toLocaleDateString('pt-BR')
+
+    const sacadoFields = {
       SACADO_NOME: destXNome || 'CLIENTE SEM NOME',
       SACADO_CIC: destCNPJ || destCPF || '',
       SACADO_ENDERECO: destEndereco || '',
@@ -324,12 +332,53 @@ function parseNFe(xmlDoc) {
       SACADO_UF: destUF || '',
       SACADO_CEP: destCEP || '',
       SACADO_EMAIL: destEmail || '',
-      EMISSAO: dhEmi ? new Date(dhEmi).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
-      VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
-      VALOR: converterValor(vNF),
       DESCRICAO: descricao || '',
-      NOSSO_NUMERO: nNF,
       STATUS: 'pendente',
+    }
+
+    // Uma parcela por <dup> dentro de <cobr>:
+    //   título = nNF-nDup (ex.: 6840-1, 6840-2), valor = vDup, vencimento = dVenc
+    const dups = Array.from(xmlDoc.getElementsByTagName('dup'))
+    console.log('[NFe Parser] NNF:', nNF, 'Destinatário:', destXNome, 'Parcelas (dup):', dups.length)
+
+    if (dups.length > 0) {
+      // Monta as parcelas no formato esperado pelo ImportPreview (_parcelas):
+      // um único cadastro (sacado) com as parcelas exibidas abaixo, como no parcelamento manual.
+      const parcelas = dups.map((dup) => {
+        const nDup = getChildElementText(dup, 'nDup') || ''
+        const dVenc = getChildElementText(dup, 'dVenc') || ''
+        const vDup = getChildElementText(dup, 'vDup') || '0'
+        const parcela = parseInt(nDup, 10)
+        const tituloNum = `${nNF}-${isNaN(parcela) ? nDup : parcela}`
+        return {
+          number: tituloNum,
+          dueDate: fmtDataBR(dVenc),
+          value: converterValor(vDup),
+          emission: emissaoBR,
+        }
+      })
+
+      const primeira = parcelas[0]
+      return [{
+        ...sacadoFields,
+        NUM_TITULO: primeira.number,
+        NOSSO_NUMERO: primeira.number,
+        EMISSAO: primeira.emission,
+        VENCIMENTO: primeira.dueDate,
+        VALOR: primeira.value,
+        _parcelas: parcelas,
+      }]
+    }
+
+    // Sem parcelas (NF à vista): um único boleto com o valor total
+    const vencAvista = fmtDataBR(getElementText(xmlDoc, 'dVenc'))
+    return [{
+      ...sacadoFields,
+      NUM_TITULO: nNF,
+      NOSSO_NUMERO: nNF,
+      EMISSAO: emissaoBR,
+      VENCIMENTO: vencAvista || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
+      VALOR: converterValor(vNF),
     }]
   } catch (error) {
     console.error('[NFe Parser] Erro:', error)

@@ -77,6 +77,8 @@ serve(async (req) => {
       signers: [signer],
     }
 
+    console.log("[zapsign] base:", ZAPSIGN_BASE_URL, "token_len:", ZAPSIGN_API_TOKEN.length)
+
     const resp = await fetch(`${ZAPSIGN_BASE_URL}/api/v1/docs/`, {
       method: "POST",
       headers: {
@@ -89,6 +91,7 @@ serve(async (req) => {
     const data = await resp.json().catch(() => ({}))
 
     if (!resp.ok) {
+      console.error("[zapsign] ZapSign respondeu", resp.status, "body:", JSON.stringify(data))
       return json({ error: "Erro na ZapSign", status: resp.status, details: data }, resp.status)
     }
 

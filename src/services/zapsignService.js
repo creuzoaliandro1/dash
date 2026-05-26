@@ -32,7 +32,17 @@ export const criarDocumentoAssinatura = async ({ name, pdfBlob, signerName, sign
       },
     })
 
-    if (error) return { data: null, error }
+    if (error) {
+      // supabase-js esconde o corpo da resposta em error.context (um Response)
+      let detail = error.message || 'Erro na Edge Function'
+      try {
+        if (error.context && typeof error.context.json === 'function') {
+          const body = await error.context.json()
+          if (body) detail = body.details ? JSON.stringify(body.details) : (body.error || detail)
+        }
+      } catch (_) { /* corpo não-JSON, mantém mensagem padrão */ }
+      return { data: null, error: new Error(detail) }
+    }
     if (data?.error) return { data: null, error: new Error(data.error) }
     return { data, error: null }
   } catch (err) {
