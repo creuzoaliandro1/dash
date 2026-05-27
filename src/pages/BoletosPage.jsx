@@ -37,6 +37,8 @@ export default function BoletosPage() {
   const [dataGeradoInicio, setDataGeradoInicio] = useState('')
   const [dataGeradoFim, setDataGeradoFim] = useState('')
   const [filterType, setFilterType] = useState('emissao')
+  // Filtro de STATUS por checkbox (inicia somente "Pendentes" marcado)
+  const [statusChecks, setStatusChecks] = useState({ pago: false, cancelado: false, pendente: true })
   const [efactorActive, setEfactorActive] = useState(false)
 
   // Obter tipo de usuário e conta selecionada
@@ -313,6 +315,15 @@ export default function BoletosPage() {
     if (statusFilter !== 'todos') {
       filtered = filtered.filter(boleto => boleto.status === statusFilter)
     }
+
+    // Filtro por STATUS via checkboxes (Pago / Cancelado / Pendentes)
+    // 'pago' e 'cancelado' são exatos; qualquer outro status (pendente, atrasado, vazio) entra em "Pendentes"
+    filtered = filtered.filter(boleto => {
+      const s = (boleto.status || '').toLowerCase()
+      if (s === 'pago') return statusChecks.pago
+      if (s === 'cancelado') return statusChecks.cancelado
+      return statusChecks.pendente
+    })
 
     // Filter by data de emissão
     if (filterType === 'emissao') {
@@ -952,6 +963,37 @@ export default function BoletosPage() {
               className="w-4 h-4 cursor-pointer"
             />
             <span className="text-xs text-white cursor-pointer">Gerado</span>
+          </label>
+        </div>
+
+        {/* Filtro de STATUS por checkbox */}
+        <div className="flex gap-3 items-center pl-3 border-l border-[#2a2a2a]">
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.pendente}
+              onChange={(e) => setStatusChecks({ ...statusChecks, pendente: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Pendentes</span>
+          </label>
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.pago}
+              onChange={(e) => setStatusChecks({ ...statusChecks, pago: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Pago</span>
+          </label>
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.cancelado}
+              onChange={(e) => setStatusChecks({ ...statusChecks, cancelado: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Cancelado</span>
           </label>
         </div>
 

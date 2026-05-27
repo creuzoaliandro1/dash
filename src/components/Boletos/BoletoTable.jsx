@@ -65,9 +65,9 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   const [duplicataPdfUrl, setDuplicataPdfUrl] = useState(null)
   const [generatingDuplicata, setGeneratingDuplicata] = useState(false)
 
-  // Estado para ordenação
-  const [sortColumn, setSortColumn] = useState('data_emissao')
-  const [sortDirection, setSortDirection] = useState('desc')
+  // Estado para ordenação (padrão: vencimento crescente, do menor para o maior)
+  const [sortColumn, setSortColumn] = useState('data_vencimento')
+  const [sortDirection, setSortDirection] = useState('asc')
 
 
   const getStatusBadge = (status) => {
