@@ -5,6 +5,7 @@ import DashboardPage from './pages/DashboardPage'
 import BoletosPage from './pages/BoletosPage'
 import EfactorPage from './pages/EfactorPage'
 import ContaCaptPage from './pages/ContaCaptPage'
+import ExtratoPage from './pages/ExtratoPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -49,6 +50,7 @@ export default function App() {
     <MainLayout currentPage={currentPage} setCurrentPage={setCurrentPage}>
       {currentPage === 'dashboard' && <DashboardPage />}
       {currentPage === 'boletos' && <BoletosPage />}
+      {currentPage === 'extrato' && isMaster && <ExtratoPage />}
       {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}

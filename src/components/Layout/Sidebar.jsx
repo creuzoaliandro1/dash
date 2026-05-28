@@ -58,6 +58,19 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
         </svg>
       )
     },
+    // Extrato — visível apenas para usuários Master
+    ...(isMaster ? [{
+      id: 'extrato',
+      label: 'Extrato',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <line x1="3" y1="10" x2="21" y2="10"></line>
+          <line x1="7" y1="14" x2="14" y2="14"></line>
+          <line x1="7" y1="17" x2="11" y2="17"></line>
+        </svg>
+      )
+    }] : []),
   ]
 
   return (
