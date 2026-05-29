@@ -516,6 +516,22 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
     const loadTime = ((Date.now() - loadStartTime) / 1000).toFixed(2)
     console.log(`[Reconciliação] ✓ Dados carregados em ${loadTime}s\n`)
 
+    // Regra: TODO boleto que já possui num_lancamento deve ficar com status_efactor='Antecipado'
+    // (executado sempre que clicar em Reconciliar OPEITE, varrendo todos os registros)
+    try {
+      const { error: errSweepAntecipado } = await supabase
+        .from('capt_boletos')
+        .update({ status_efactor: 'Antecipado' })
+        .not('num_lancamento', 'is', null)
+      if (errSweepAntecipado) {
+        console.warn('[Reconciliação] Aviso ao marcar status_efactor=Antecipado:', errSweepAntecipado.message)
+      } else {
+        console.log('[Reconciliação] ✓ status_efactor=Antecipado aplicado aos boletos com num_lancamento')
+      }
+    } catch (e) {
+      console.warn('[Reconciliação] Falha no sweep de status_efactor:', e.message)
+    }
+
     if (!boletos || boletos.length === 0) {
       return {
         success: true,
@@ -745,7 +761,8 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
       const updatePromises = batch.map(update =>
         supabase
           .from('capt_boletos')
-          .update({ num_lancamento: update.num_lancamento })
+          // Ao reconciliar com OPEITE: grava o num_lancamento e marca como 'Antecipado'
+          .update({ num_lancamento: update.num_lancamento, status_efactor: 'Antecipado' })
           .eq('id', update.id)
       )
 
@@ -1398,6 +1415,20 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     if (erroOPEITEWEB) {
       console.error('[BoletoService] Erro ao inserir OPEITEWEB:', erroOPEITEWEB)
       throw erroOPEITEWEB
+    }
+
+    // Marca os boletos enviados para antecipação como status_efactor = 'Enviado'
+    const idsBoletosEnviados = boletosParaAntecipar.map(b => b.id).filter(Boolean)
+    if (idsBoletosEnviados.length > 0) {
+      const { error: errStatusEfactor } = await supabase
+        .from('capt_boletos')
+        .update({ status_efactor: 'Enviado' })
+        .in('id', idsBoletosEnviados)
+      if (errStatusEfactor) {
+        console.warn('[BoletoService] Aviso ao atualizar status_efactor=Enviado:', errStatusEfactor.message)
+      } else {
+        console.log(`[BoletoService] status_efactor='Enviado' atualizado em ${idsBoletosEnviados.length} boleto(s)`)
+      }
     }
 
     console.log('[BoletoService] ✓ Antecipação criada com sucesso')
