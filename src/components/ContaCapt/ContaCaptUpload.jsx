@@ -23,6 +23,8 @@ export default function ContaCaptUpload({ onShowPreview }) {
       NOSSO_NUMERO: excelRow['Nosso número'] || '',
       // Linha digitável (47 díg.) — guardada em codigo_barras p/ deduplicação em reimportações
       CODIGO_BARRAS: String(excelRow['Linha digitável'] || '').replace(/\D/g, ''),
+      // Código da conta (7 díg.) extraído da linha digitável — vincula o boleto ao perfil correto
+      CONTA_CODIGO: String(excelRow['Linha digitável'] || '').replace(/\D/g, '').substring(23, 30),
       VALOR: excelRow['Valor do título'] || 0,
       EMISSAO: excelRow['Data de emissão'] || '',
       VENCIMENTO: excelRow['Data de vencimento'] || '',

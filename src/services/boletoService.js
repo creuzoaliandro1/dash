@@ -236,6 +236,110 @@ export const createBoleto = async (contaId, boletoData) => {
   }
 }
 
+// Inserção EM LOTE (otimizada) — usada na importação Conta Capt.
+// Lê CONTAS uma vez, gera nosso_numero/barcode/juros em memória e insere em lotes,
+// em vez de chamar createBoleto (que faz ~4 queries por boleto).
+export const createBoletosBulk = async (contaId, boletosData) => {
+  try {
+    if (!Array.isArray(boletosData) || boletosData.length === 0) {
+      return { data: { imported: 0, errors: 0, total: 0 }, error: null }
+    }
+
+    // 1) Lê a conta uma única vez (contador + dados para barcode/juros)
+    const { data: conta, error: contaErr } = await supabase
+      .from('CONTAS')
+      .select('id, nnumero, nnumero_dv, nome_correntista, cic, cedente, juros, conta')
+      .eq('id', contaId)
+      .single()
+    if (contaErr || !conta) {
+      return { data: null, error: contaErr || new Error('Conta não encontrada') }
+    }
+
+    let nnumeroBase = Number(conta.nnumero || 0)
+
+    // 2) Monta todos os registros em memória
+    const registros = boletosData.map((boletoData) => {
+      nnumeroBase += 1
+      const dataToInsert = {
+        conta_id: contaId,
+        numero_documento: boletoData.NUM_TITULO || boletoData.NUMERO_DOCUMENTO || '',
+        sacado_nome: boletoData.SACADO_NOME || '',
+        data_emissao: convertDateToPG(boletoData.EMISSAO || boletoData.DATA_EMISSAO),
+        data_vencimento: convertDateToPG(boletoData.VENCIMENTO || boletoData.DATA_VENCIMENTO),
+        valor: parseFloat(boletoData.VALOR || 0),
+        nosso_numero: String(nnumeroBase),
+        status: boletoData.STATUS || 'pendente',
+        situacao: boletoData.SITUACAO || 'Registrado',
+        sacado_cic: boletoData.SACADO_CIC || '',
+        sacado_endereco: boletoData.SACADO_ENDERECO || '',
+        sacado_bairro: boletoData.SACADO_BAIRRO || '',
+        sacado_cidade: boletoData.SACADO_CIDADE || '',
+        sacado_uf: boletoData.SACADO_UF || '',
+        sacado_cep: boletoData.SACADO_CEP || '',
+        sacado_telefone: boletoData.SACADO_TELEFONE || '',
+        sacado_email: boletoData.SACADO_EMAIL || '',
+        avalista_nome: boletoData.AVALISTA_NOME || '',
+        avalista_cic: boletoData.AVALISTA_CIC || '',
+        valor_pagamento: parseFloat(boletoData.VALOR_PAGAMENTO || 0),
+        data_pagamento: boletoData.DATA_PAGAMENTO ? convertDateToPG(boletoData.DATA_PAGAMENTO) : null,
+        descricao: boletoData.DESCRICAO || '',
+      }
+
+      // Código de barras (gerado) — sobrescrito pela Linha digitável importada, se houver
+      try {
+        dataToInsert.codigo_barras = generateBarcodeFromBoleto(dataToInsert, conta)
+      } catch (e) {
+        dataToInsert.codigo_barras = ''
+      }
+      const cbImportado = String(boletoData.CODIGO_BARRAS || '').replace(/\D/g, '')
+      if (cbImportado) dataToInsert.codigo_barras = cbImportado
+
+      // Juros diário a partir de CONTAS.juros
+      if (conta.juros && dataToInsert.valor) {
+        dataToInsert.juros = Math.round(((dataToInsert.valor * conta.juros) / 3000) * 100) / 100
+      }
+
+      // Campos opcionais (Efactor)
+      if (boletoData.NUM_LANCAMENTO !== undefined && boletoData.NUM_LANCAMENTO !== null && boletoData.NUM_LANCAMENTO !== '') {
+        const n = Number(boletoData.NUM_LANCAMENTO)
+        if (!isNaN(n)) dataToInsert.num_lancamento = n
+      }
+      if (boletoData.STATUS_EFACTOR) dataToInsert.status_efactor = boletoData.STATUS_EFACTOR
+
+      return dataToInsert
+    })
+
+    // 3) Insere em lotes
+    let imported = 0
+    let errors = 0
+    const batchSize = 500
+    for (let i = 0; i < registros.length; i += batchSize) {
+      const lote = registros.slice(i, i + batchSize)
+      const { error } = await supabase.from('capt_boletos').insert(lote)
+      if (error) {
+        console.error('[BoletoService][Bulk] Erro ao inserir lote:', error.message)
+        errors += lote.length
+      } else {
+        imported += lote.length
+      }
+    }
+
+    // 4) Atualiza o contador da conta uma única vez (até onde foi usado)
+    try {
+      const novoDv = calcNossoNumeroDV(String(nnumeroBase))
+      await supabase.from('CONTAS').update({ nnumero: nnumeroBase, nnumero_dv: novoDv }).eq('id', contaId)
+    } catch (e) {
+      console.warn('[BoletoService][Bulk] Aviso ao atualizar contador da conta:', e.message)
+    }
+
+    console.log(`[BoletoService][Bulk] ${imported} inserido(s), ${errors} erro(s)`)
+    return { data: { imported, errors, total: registros.length }, error: null }
+  } catch (err) {
+    console.error('[BoletoService][Bulk] Erro geral:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Atualizar boleto
 export const updateBoleto = async (boletoId, updates) => {
   try {
