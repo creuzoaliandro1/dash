@@ -70,7 +70,7 @@ export const getBoletos = async (contaId) => {
 
       const { data, error } = await supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url')
         .eq('conta_id', contaId)
         .order('created_at', { ascending: false })
         .range(start, end)
@@ -206,6 +206,13 @@ export const createBoleto = async (contaId, boletoData) => {
     } catch (err) {
       console.error('[BoletoService] Erro ao gerar codigo_barras:', err)
       dataToInsert.codigo_barras = ''
+    }
+
+    // Se veio a Linha digitável da importação (CODIGO_BARRAS), preserva-a em codigo_barras
+    // (mantém a chave estável para deduplicação em reimportações)
+    const cbImportado = String(boletoData.CODIGO_BARRAS || '').replace(/\D/g, '')
+    if (cbImportado) {
+      dataToInsert.codigo_barras = cbImportado
     }
 
     console.log('[BoletoService] Criando boleto com dados:', dataToInsert)

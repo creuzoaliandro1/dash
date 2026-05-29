@@ -311,6 +311,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             <div style={{ flex: '0.5' }} className="text-center">Status</div>
             <div style={{ flex: '1' }} className="text-center">Antecipação</div>
             <div style={{ flex: '1' }} className="text-center">Registro</div>
+            <div style={{ flex: '0.5' }} className="text-center">Assinado</div>
             <div style={{ flex: '0.5' }} className="text-center">Ações</div>
           </div>
         </div>
@@ -369,7 +370,10 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                   {boleto.status_efactor || '—'}
                 </div>
                 <div style={{ flex: '1' }} className="text-center text-white">
-                  {boleto.status_efator || '—'}
+                  {boleto.situacao || '—'}
+                </div>
+                <div style={{ flex: '0.5' }} className="text-center text-white">
+                  {boleto.zapsign_status ? 'Sim' : 'Não'}
                 </div>
                 <div style={{ flex: '0.5' }} className="flex justify-center relative" ref={menuRef}>
                   <button

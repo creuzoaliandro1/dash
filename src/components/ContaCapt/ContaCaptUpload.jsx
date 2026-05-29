@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import * as XLSX from 'xlsx'
 
 export default function ContaCaptUpload({ onShowPreview }) {
   const [isDragging, setIsDragging] = useState(false)
@@ -20,6 +21,8 @@ export default function ContaCaptUpload({ onShowPreview }) {
       SACADO_EMAIL: excelRow['Email do pagador'] || '',
       SACADO_TELEFONE: excelRow['Telefone do pagador'] || '',
       NOSSO_NUMERO: excelRow['Nosso número'] || '',
+      // Linha digitável (47 díg.) — guardada em codigo_barras p/ deduplicação em reimportações
+      CODIGO_BARRAS: String(excelRow['Linha digitável'] || '').replace(/\D/g, ''),
       VALOR: excelRow['Valor do título'] || 0,
       EMISSAO: excelRow['Data de emissão'] || '',
       VENCIMENTO: excelRow['Data de vencimento'] || '',
@@ -53,27 +56,14 @@ export default function ContaCaptUpload({ onShowPreview }) {
     setError(null)
 
     try {
-      // Carregar biblioteca XLSX dinamicamente
-      if (!window.XLSX) {
-        const script = document.createElement('script')
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.min.js'
-        script.async = true
-
-        await new Promise((resolve, reject) => {
-          script.onload = resolve
-          script.onerror = reject
-          document.head.appendChild(script)
-        })
-      }
-
       const reader = new FileReader()
 
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target.result)
-          const workbook = window.XLSX.read(data, { type: 'array' })
+          const workbook = XLSX.read(data, { type: 'array' })
           const sheet = workbook.Sheets[workbook.SheetNames[0]]
-          const jsonData = window.XLSX.utils.sheet_to_json(sheet)
+          const jsonData = XLSX.utils.sheet_to_json(sheet)
 
           if (jsonData.length === 0) {
             setError('O arquivo está vazio')

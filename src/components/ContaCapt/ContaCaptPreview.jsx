@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { createBoleto } from '../../services/boletoService'
+import { supabase } from '../../lib/supabase'
 
 export default function ContaCaptPreview({ previewData, onCancel }) {
   const [selectedRows, setSelectedRows] = useState(
@@ -66,9 +67,43 @@ export default function ContaCaptPreview({ previewData, onCancel }) {
 
     let imported = 0
     let errors = 0
+    let pulados = 0
+
+    // Deduplicação: carrega (paginado) os codigo_barras já existentes na conta
+    // Evita URL gigante de um .in() com centenas de linhas digitáveis.
+    const existentes = new Set()
+    try {
+      const pageSize = 1000
+      let from = 0
+      while (true) {
+        const { data: jaExistem, error: errDup } = await supabase
+          .from('capt_boletos')
+          .select('codigo_barras')
+          .eq('conta_id', activeId)
+          .not('codigo_barras', 'is', null)
+          .range(from, from + pageSize - 1)
+        if (errDup) {
+          console.warn('[ContaCaptPreview] Aviso ao checar duplicados:', errDup.message)
+          break
+        }
+        if (!jaExistem || jaExistem.length === 0) break
+        jaExistem.forEach(b => { if (b.codigo_barras) existentes.add(String(b.codigo_barras).replace(/\D/g, '')) })
+        if (jaExistem.length < pageSize) break
+        from += pageSize
+      }
+    } catch (e) {
+      console.warn('[ContaCaptPreview] Falha ao carregar duplicados:', e.message)
+    }
 
     for (const idx of selectedRows) {
       const boletoData = editedData[idx]
+      const cb = String(boletoData?.CODIGO_BARRAS || '').replace(/\D/g, '')
+
+      // Pula se a Linha digitável já existir em capt_boletos
+      if (cb && existentes.has(cb)) {
+        pulados++
+        continue
+      }
 
       try {
         const { error } = await createBoleto(activeId, boletoData)
@@ -76,6 +111,7 @@ export default function ContaCaptPreview({ previewData, onCancel }) {
           errors++
         } else {
           imported++
+          if (cb) existentes.add(cb) // evita duplicar dentro da própria seleção
         }
       } catch (err) {
         errors++
@@ -84,7 +120,7 @@ export default function ContaCaptPreview({ previewData, onCancel }) {
 
     setIsImporting(false)
 
-    const message = `Importação concluída!\n${imported} boleto(s) importado(s) com sucesso.\n${errors} erro(s) durante o processo.`
+    const message = `Importação concluída!\n${imported} boleto(s) importado(s) com sucesso.\n${pulados} já existente(s) (pulado(s)).\n${errors} erro(s) durante o processo.`
     alert(message)
     onCancel()
   }
