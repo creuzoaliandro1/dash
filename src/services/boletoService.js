@@ -1354,6 +1354,14 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
       // Prefixo (8) + nosso_numero (9) = 17 dígitos
       const nossoNumeroCompleto = PREFIXO_NOSSO_NUMERO + (boleto.nosso_numero || '').padStart(9, '0')
 
+      // NUMERO é varchar(8): se for numérico, remove zeros à esquerda; pega os últimos 8
+      const numeroDocRaw = String(boleto.numero_documento || '').trim()
+      const numeroDoc = (/^\d+$/.test(numeroDocRaw) ? numeroDocRaw.replace(/^0+/, '') : numeroDocRaw).slice(-8) || '0'
+
+      // CICs são varchar(14): mantém só dígitos e limita a 14
+      const cicEmit = String(boleto.sacado_cic || '').replace(/\D/g, '').slice(0, 14)
+      const cicAval = String(boleto.avalista_cic || '').replace(/\D/g, '').slice(0, 14)
+
       const registro = {
         COD_CEDENTE: contaData.cod_cedente,
         COD_BORDERO: proximoCodBordero,
@@ -1362,16 +1370,16 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
         DT_BORDERO: dtRecepcao,
         VR_FACE: parseFloat(boleto.valor) || 0,
         DT_VENCIMENTO: boleto.data_vencimento || null,
-        NUMERO: truncarString(boleto.numero_documento, 25),
-        NOME_EMITENTE: truncarString(boleto.sacado_nome, 25),
-        CIC_EMITENTE: truncarString(boleto.sacado_cic, 25),
-        NOSSO_NUMERO: nossoNumeroCompleto.substring(0, 25),
-        NOME_AVALISTA: truncarString(boleto.avalista_nome, 25),
-        CIC_AVALISTA: truncarString(boleto.avalista_cic, 25),
+        NUMERO: numeroDoc,                                  // varchar(8)
+        NOME_EMITENTE: truncarString(boleto.sacado_nome, 60), // varchar(60)
+        CIC_EMITENTE: cicEmit,                              // varchar(14)
+        NOSSO_NUMERO: nossoNumeroCompleto.substring(0, 30), // varchar(30)
+        NOME_AVALISTA: truncarString(boleto.avalista_nome, 25), // varchar(25)
+        CIC_AVALISTA: cicAval,                              // varchar(14)
         STATUS: 'R'
       }
 
-      console.log(`[BoletoService] NOSSO_NUMERO: ${boleto.nosso_numero || ''} → ${nossoNumeroCompleto} (17 dígitos)`)
+      console.log(`[BoletoService] NUMERO: ${numeroDocRaw} → ${numeroDoc} | NOSSO_NUMERO: ${boleto.nosso_numero || ''} → ${nossoNumeroCompleto}`)
 
       return registro
     })
