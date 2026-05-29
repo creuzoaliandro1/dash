@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF } from '../utils/duplicata'
@@ -27,6 +27,7 @@ export default function BoletosPage() {
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   const [assinandoZapsign, setAssinandoZapsign] = useState(false)
+  const [retornandoAntecipacao, setRetornandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
   const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
   const cnab400MenuRef = useRef(null)
@@ -652,6 +653,52 @@ export default function BoletosPage() {
     }
   }
 
+  const handleRetornarAntecipacao = async () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    if (!window.confirm(`Retornar (desfazer) a antecipação de ${selectedRows.size} boleto(s)?`)) {
+      return
+    }
+
+    setOpenActionsMenu(false)
+    setRetornandoAntecipacao(true)
+
+    try {
+      const filteredBoletos = getFilteredBoletos()
+      const selecionados = Array.from(selectedRows)
+        .map(index => filteredBoletos[index])
+        .filter(b => b)
+
+      const { data, error } = await retornarAntecipacao(selecionados, contaData)
+
+      if (error) {
+        alert('Erro ao retornar antecipação: ' + error.message)
+        console.error('[Ações] Erro ao retornar antecipação:', error)
+      } else {
+        let msg = `Retorno de antecipação:\n\n↩️ Retornados: ${data.retornados}`
+        if (data.bloqueados > 0) {
+          msg += `\n🔒 Não é possível retornar (borderô não está com STATUS=R): ${data.bloqueados}`
+          if (data.bloqueadosTitulos && data.bloqueadosTitulos.length > 0) {
+            msg += `\nTítulos: ${data.bloqueadosTitulos.join(', ')}`
+          }
+        }
+        if (data.naoEncontrados > 0) {
+          msg += `\nℹ️ Sem antecipação encontrada: ${data.naoEncontrados}`
+        }
+        alert(msg)
+        setSelectedRows(new Set())
+        await loadBoletos()
+      }
+    } catch (error) {
+      console.error('[Ações] Erro ao retornar antecipação:', error)
+      alert('Erro ao retornar antecipação: ' + error.message)
+    } finally {
+      setRetornandoAntecipacao(false)
+    }
+  }
+
   const handleAssinarZapsign = async () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto para enviar à assinatura')
@@ -1102,6 +1149,13 @@ export default function BoletosPage() {
                 className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
+              </button>
+              <button
+                onClick={handleRetornarAntecipacao}
+                disabled={retornandoAntecipacao}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
               </button>
               <button
                 onClick={handleAssinarZapsign}

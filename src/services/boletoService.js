@@ -1417,6 +1417,105 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
   }
 }
 
+// Retornar (desfazer) antecipação: remove os registros gravados pelo Antecipar.
+// Regra: se o título em OPEITEWEB estiver com STATUS = 'R', NÃO é possível retornar.
+// (condição isolada em STATUS_BLOQUEIA_RETORNO para fácil ajuste/inversão)
+export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
+  try {
+    if (!contaData || !contaData.cod_cedente) {
+      throw new Error('Conta sem cod_cedente definido')
+    }
+
+    const PREFIXO_NOSSO_NUMERO = '36877480'
+    const STATUS_PERMITE_RETORNO = 'R' // OPECABWEB.STATUS = 'R' => permite retornar
+
+    // Monta as chaves NOSSO_NUMERO (mesma regra usada no criarAntecipacao)
+    const chaves = (boletosParaRetornar || [])
+      .map(b => PREFIXO_NOSSO_NUMERO + String(b.nosso_numero || '').padStart(9, '0'))
+      .filter(Boolean)
+
+    if (chaves.length === 0) {
+      return { data: { retornados: 0, bloqueados: 0, naoEncontrados: (boletosParaRetornar || []).length, bloqueadosTitulos: [] }, error: null }
+    }
+
+    // 1) Localiza os títulos em OPEITEWEB
+    const { data: rows, error: errBusca } = await supabase
+      .from('OPEITEWEB')
+      .select('ID, COD_BORDERO, NOSSO_NUMERO, NUMERO')
+      .eq('COD_CEDENTE', contaData.cod_cedente)
+      .in('NOSSO_NUMERO', chaves)
+
+    if (errBusca) throw errBusca
+
+    const encontrados = rows || []
+    const chavesEncontradas = new Set(encontrados.map(r => r.NOSSO_NUMERO))
+    const naoEncontrados = chaves.filter(c => !chavesEncontradas.has(c)).length
+
+    if (encontrados.length === 0) {
+      return { data: { retornados: 0, bloqueados: 0, naoEncontrados, bloqueadosTitulos: [] }, error: null }
+    }
+
+    // 2) Carrega o STATUS de OPECABWEB para cada borderô envolvido
+    const borderos = [...new Set(encontrados.map(r => r.COD_BORDERO).filter(v => v != null))]
+    const statusPorBordero = {}
+    if (borderos.length > 0) {
+      const { data: cabs, error: errCab } = await supabase
+        .from('OPECABWEB')
+        .select('COD_BORDERO, STATUS')
+        .eq('COD_CEDENTE', contaData.cod_cedente)
+        .in('COD_BORDERO', borderos)
+      if (errCab) throw errCab
+      ;(cabs || []).forEach(c => { statusPorBordero[c.COD_BORDERO] = c.STATUS })
+    }
+
+    // 3) Permite retornar quando OPECABWEB.STATUS = 'R'; caso contrário, bloqueia
+    const permitidos = encontrados.filter(r => statusPorBordero[r.COD_BORDERO] === STATUS_PERMITE_RETORNO)
+    const bloqueados = encontrados.filter(r => statusPorBordero[r.COD_BORDERO] !== STATUS_PERMITE_RETORNO)
+
+    console.log(`[BoletoService] Retornar antecipação: ${encontrados.length} encontrados, ${permitidos.length} permitidos (OPECABWEB.STATUS=R), ${bloqueados.length} bloqueados`)
+
+    let retornados = 0
+    if (permitidos.length > 0) {
+      // Remove os títulos permitidos de OPEITEWEB
+      const ids = permitidos.map(r => r.ID)
+      const { error: errDel } = await supabase.from('OPEITEWEB').delete().in('ID', ids)
+      if (errDel) throw errDel
+      retornados = permitidos.length
+
+      // Remove o cabeçalho OPECABWEB do borderô quando não restarem títulos
+      const borderosAfetados = [...new Set(permitidos.map(r => r.COD_BORDERO).filter(v => v != null))]
+      for (const bordero of borderosAfetados) {
+        const { count } = await supabase
+          .from('OPEITEWEB')
+          .select('*', { count: 'exact', head: true })
+          .eq('COD_CEDENTE', contaData.cod_cedente)
+          .eq('COD_BORDERO', bordero)
+        if (!count || count === 0) {
+          const { error: errCabDel } = await supabase
+            .from('OPECABWEB')
+            .delete()
+            .eq('COD_CEDENTE', contaData.cod_cedente)
+            .eq('COD_BORDERO', bordero)
+          if (errCabDel) console.warn('[BoletoService] Aviso ao remover OPECABWEB do borderô', bordero, errCabDel.message)
+        }
+      }
+    }
+
+    return {
+      data: {
+        retornados,
+        bloqueados: bloqueados.length,
+        naoEncontrados,
+        bloqueadosTitulos: bloqueados.map(r => r.NUMERO),
+      },
+      error: null,
+    }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao retornar antecipação:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Contar quantas remessas ja foram geradas para uma conta (pelo cedente)
 // Usado como fallback quando cnab400 esta corrompido/nulo
 export const getContaRemessaCount = async (cedente) => {
