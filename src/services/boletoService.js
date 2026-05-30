@@ -340,6 +340,175 @@ export const createBoletosBulk = async (contaId, boletosData) => {
   }
 }
 
+// Buscar Lançamento (E-Factor): para os boletos SEM num_lancamento, pareia cada um
+// com o melhor candidato OPEITE do MESMO sacado (CIC). Retorna linhas comparativas.
+export const buscarLancamentos = async (boletos) => {
+  try {
+    const alvos = (boletos || []).filter(b => !b.num_lancamento)
+    if (alvos.length === 0) return { data: [], error: null }
+
+    const onlyDigits = (v) => String(v || '').replace(/\D/g, '')
+    const normData = (d) => (d ? String(d).slice(0, 10) : '')
+    const cicsAlvo = new Set(alvos.map(b => onlyDigits(b.sacado_cic)).filter(Boolean))
+
+    // 1) SACADO: COD_SACADO -> CIC
+    const cicPorCod = {}
+    {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
+        if (error) { console.warn('[buscarLancamentos] SACADO:', error.message); break }
+        if (!data || data.length === 0) break
+        data.forEach(s => { cicPorCod[s.COD_SACADO] = onlyDigits(s.CIC) })
+        if (data.length < ps) break
+        from += ps
+      }
+    }
+
+    // 2) OPEITE agrupado por CIC (apenas dos sacados-alvo)
+    const opeitePorCic = {}
+    {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('OPEITE')
+          .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO')
+          .range(from, from + ps - 1)
+        if (error) { console.warn('[buscarLancamentos] OPEITE:', error.message); break }
+        if (!data || data.length === 0) break
+        data.forEach(o => {
+          const cic = cicPorCod[o.COD_SACADO]
+          if (!cic || !cicsAlvo.has(cic)) return
+          ;(opeitePorCic[cic] = opeitePorCic[cic] || []).push(o)
+        })
+        if (data.length < ps) break
+        from += ps
+      }
+    }
+
+    // 3) Melhor candidato por boleto (prefere valor+venc, depois valor, depois venc)
+    const rows = alvos.map(b => {
+      const cic = onlyDigits(b.sacado_cic)
+      const valor = parseFloat(b.valor) || 0
+      const venc = normData(b.data_vencimento)
+      const cands = opeitePorCic[cic] || []
+      let best = null, bestScore = -1
+      for (const o of cands) {
+        const mv = (parseFloat(o.VR_FACE) || 0) === valor
+        const md = normData(o.DT_VENCI) === venc
+        const score = (mv ? 2 : 0) + (md ? 1 : 0)
+        if (score > bestScore) { bestScore = score; best = o }
+      }
+      return {
+        boleto_id: b.id,
+        boleto_num_lancamento: b.num_lancamento || '',
+        opeite_num_lancamento: best ? (best.NUM_LANCAMENTO ?? '') : '',
+        boleto_numero_documento: b.numero_documento || '',
+        opeite_num_titulo: best ? (best.NUM_TITULO ?? '') : '',
+        boleto_valor: valor,
+        opeite_vr_face: best ? (parseFloat(best.VR_FACE) || 0) : '',
+        boleto_vencimento: b.data_vencimento || '',
+        opeite_dt_venci: best ? (best.DT_VENCI ?? '') : '',
+        boleto_sacado_cic: cic,
+        sacado_cic: best ? cic : '',
+      }
+    })
+
+    return { data: rows, error: null }
+  } catch (err) {
+    console.error('[buscarLancamentos] Erro:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Buscar Lançamento (E-Factor): retorna os lançamentos OPEITE do mesmo sacado (CIC)
+// de um boleto. Usado para escolher manualmente o NUM_LANCAMENTO.
+export const buscarOpeitePorCic = async (sacadoCic) => {
+  try {
+    const cic = String(sacadoCic || '').replace(/\D/g, '')
+    if (!cic) return { data: [], error: null }
+
+    // 1) COD_SACADO(s) com esse CIC
+    const { data: sacados, error: e1 } = await supabase
+      .from('SACADO')
+      .select('COD_SACADO, CIC')
+      .eq('CIC', cic)
+    if (e1) throw e1
+    const cods = (sacados || []).map(s => s.COD_SACADO)
+    if (cods.length === 0) return { data: [], error: null }
+
+    // 2) OPEITE desses sacados (paginado)
+    let all = []
+    const ps = 1000
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO')
+        .in('COD_SACADO', cods)
+        .in('STATUS', ['DO', 'PR', 'IN'])
+        .range(from, from + ps - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      all = all.concat(data)
+      if (data.length < ps) break
+      from += ps
+    }
+    return { data: all, error: null }
+  } catch (err) {
+    console.error('[buscarOpeitePorCic] Erro:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Monta conjuntos de valores/vencimentos do OPEITE por CIC.
+// Usado para filtrar na E-Factor os boletos que têm valor/vencimento com correspondência no OPEITE.
+export const getOpeiteMatchMaps = async () => {
+  try {
+    const cicPorCod = {}
+    {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
+        if (error) { console.warn('[getOpeiteMatchMaps] SACADO:', error.message); break }
+        if (!data || data.length === 0) break
+        data.forEach(s => { cicPorCod[s.COD_SACADO] = String(s.CIC || '').replace(/\D/g, '') })
+        if (data.length < ps) break
+        from += ps
+      }
+    }
+
+    const valoresPorCic = {}      // cic -> Set(cents)
+    const vencimentosPorCic = {}  // cic -> Set('YYYY-MM-DD')
+    const porTitulo = {}          // `${cic}|${tituloNormalizado}` -> { cents, venc }
+    {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('OPEITE').select('NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO').range(from, from + ps - 1)
+        if (error) { console.warn('[getOpeiteMatchMaps] OPEITE:', error.message); break }
+        if (!data || data.length === 0) break
+        data.forEach(o => {
+          const cic = cicPorCod[o.COD_SACADO]
+          if (!cic) return
+          const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
+          ;(valoresPorCic[cic] = valoresPorCic[cic] || new Set()).add(cents)
+          const dv = o.DT_VENCI ? String(o.DT_VENCI).slice(0, 10) : ''
+          if (dv) (vencimentosPorCic[cic] = vencimentosPorCic[cic] || new Set()).add(dv)
+          // Mapa por título (CIC + NUM_TITULO normalizado, só dígitos sem zeros à esquerda)
+          const tit = String(o.NUM_TITULO || '').replace(/\D/g, '').replace(/^0+/, '')
+          if (tit) porTitulo[`${cic}|${tit}`] = { cents, venc: dv }
+        })
+        if (data.length < ps) break
+        from += ps
+      }
+    }
+
+    return { data: { valoresPorCic, vencimentosPorCic, porTitulo }, error: null }
+  } catch (err) {
+    console.error('[getOpeiteMatchMaps] Erro:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Atualizar boleto
 export const updateBoleto = async (boletoId, updates) => {
   try {

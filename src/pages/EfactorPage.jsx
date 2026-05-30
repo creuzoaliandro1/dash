@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
-import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, reconciliateOpeiteWithBoletos } from '../services/boletoService'
+import BuscarLancamentoModal from '../components/Boletos/BuscarLancamentoModal'
+import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, reconciliateOpeiteWithBoletos, getOpeiteMatchMaps } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { formatDate, formatCurrency, formatCurrencyWithPrefix } from '../utils/formatters'
@@ -18,6 +19,13 @@ export default function EfactorPage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  const [showBuscarLancamento, setShowBuscarLancamento] = useState(false)
+  const [boletoBusca, setBoletoBusca] = useState(null)
+  // Filtros por correspondência no OPEITE (mesmo CIC): valor e/ou vencimento
+  const [filtroValorOpeite, setFiltroValorOpeite] = useState(false)
+  const [filtroVencOpeite, setFiltroVencOpeite] = useState(false)
+  const [opeiteMaps, setOpeiteMaps] = useState(null)
+  const [loadingOpeiteMaps, setLoadingOpeiteMaps] = useState(false)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [reconciling, setReconciling] = useState(false)
   const [reconciliationResult, setReconciliationResult] = useState(null)
@@ -120,8 +128,22 @@ export default function EfactorPage() {
     setLoading(false)
   }
 
+  // Carrega os conjuntos de valor/vencimento do OPEITE quando um dos filtros é ativado
+  useEffect(() => {
+    if ((filtroValorOpeite || filtroVencOpeite) && !opeiteMaps && !loadingOpeiteMaps) {
+      setLoadingOpeiteMaps(true)
+      getOpeiteMatchMaps()
+        .then(({ data }) => setOpeiteMaps(data || { valoresPorCic: {}, vencimentosPorCic: {} }))
+        .catch(() => setOpeiteMaps({ valoresPorCic: {}, vencimentosPorCic: {} }))
+        .finally(() => setLoadingOpeiteMaps(false))
+    }
+  }, [filtroValorOpeite, filtroVencOpeite, opeiteMaps, loadingOpeiteMaps])
+
   const getFilteredBoletos = () => {
     let filtered = boletos
+
+    // E-Factor: não exibir boletos com status 'pago'
+    filtered = filtered.filter(boleto => boleto.status !== 'pago')
 
     // Filter by search term
     if (searchTerm.trim()) {
@@ -159,6 +181,30 @@ export default function EfactorPage() {
       return false
     })
 
+    // Filtro por correspondência no OPEITE (mesmo CIC): valor e/ou vencimento
+    if ((filtroValorOpeite || filtroVencOpeite) && opeiteMaps) {
+      filtered = filtered.filter(boleto => {
+        const cic = String(boleto.sacado_cic || '').replace(/\D/g, '')
+        if (!cic) return false
+        // Pareia com o OPEITE do MESMO título (CIC + número do documento) e compara
+        // valor/vencimento contra ESSE lançamento específico.
+        const tit = String(boleto.numero_documento || '').replace(/\D/g, '').replace(/^0+/, '')
+        const op = opeiteMaps.porTitulo?.[`${cic}|${tit}`]
+        if (!op) return false // sem OPEITE correspondente (mesmo CIC + título)
+        // OU: basta um dos filtros marcados corresponder
+        let ok = false
+        if (filtroValorOpeite) {
+          const cents = Math.round((parseFloat(boleto.valor) || 0) * 100)
+          if (op.cents === cents) ok = true
+        }
+        if (filtroVencOpeite) {
+          const venc = boleto.data_vencimento ? String(boleto.data_vencimento).slice(0, 10) : ''
+          if (venc && op.venc === venc) ok = true
+        }
+        return ok
+      })
+    }
+
     return filtered
   }
 
@@ -190,6 +236,21 @@ export default function EfactorPage() {
     } finally {
       setGeneratingZip(false)
     }
+  }
+
+  const handleBuscarLancamento = () => {
+    setOpenActionsMenu(false)
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b && !b.num_lancamento) // só os sem lançamento
+    if (selecionados.length === 0) {
+      alert('Selecione um boleto SEM número de lançamento.')
+      return
+    }
+    // Considera o primeiro registro selecionado (sem lançamento)
+    setBoletoBusca(selecionados[0])
+    setShowBuscarLancamento(true)
   }
 
   const handleConciliarDivergencias = async () => {
@@ -748,8 +809,8 @@ export default function EfactorPage() {
         </div>
       )}
 
-      {/* Search and Filter */}
-      <div className="flex gap-3 items-center">
+      {/* Search and Filter (fixo no topo ao rolar) */}
+      <div className="sticky top-0 z-30 bg-[#0a0a0a] flex gap-3 items-center py-3">
         <div className="flex-1 relative">
           <input
             type="text"
@@ -797,6 +858,12 @@ export default function EfactorPage() {
               >
                 {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
               </button>
+              <button
+                onClick={handleBuscarLancamento}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+              >
+                🔎 Buscar Lançamento
+              </button>
             </div>
           )}
         </div>
@@ -821,6 +888,31 @@ export default function EfactorPage() {
               className="w-4 h-4 accent-white cursor-pointer"
             />
             <span className="text-sm text-white">Sem</span>
+          </label>
+        </div>
+
+        {/* Filtro por correspondência no OPEITE (mesmo CIC) */}
+        <div className="flex items-center gap-3 pl-3 border-l border-[#2a2a2a]">
+          <span className="text-sm text-[#666666] whitespace-nowrap">
+            OPEITE:{loadingOpeiteMaps ? ' ⏳' : ''}
+          </span>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filtroValorOpeite}
+              onChange={(e) => setFiltroValorOpeite(e.target.checked)}
+              className="w-4 h-4 accent-white cursor-pointer"
+            />
+            <span className="text-sm text-white">Valor</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filtroVencOpeite}
+              onChange={(e) => setFiltroVencOpeite(e.target.checked)}
+              className="w-4 h-4 accent-white cursor-pointer"
+            />
+            <span className="text-sm text-white">Vencimento</span>
           </label>
         </div>
       </div>
@@ -1160,6 +1252,15 @@ export default function EfactorPage() {
           boleto={editingBoleto}
           onSave={handleSave}
           onClose={() => setShowModal(false)}
+        />
+      )}
+
+      {/* Modal Buscar Lançamento */}
+      {showBuscarLancamento && boletoBusca && (
+        <BuscarLancamentoModal
+          boleto={boletoBusca}
+          onUpdated={loadBoletos}
+          onClose={() => { setShowBuscarLancamento(false); loadBoletos() }}
         />
       )}
     </div>
