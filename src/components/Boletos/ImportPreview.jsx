@@ -11,30 +11,37 @@ function formatarValorBrasileiro(valor) {
   return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-// Função para formatar data em padrão brasileiro (dd/mm/aa)
+// Função para formatar data em padrão brasileiro dd/mm/aa (ano com 2 dígitos)
 function formatarDataBrasileira(data) {
   if (!data) return '—'
-  // Se já está em formato dd/mm/aa ou dd/mm/yyyy, retorna como está
-  if (typeof data === 'string' && /^\d{2}\/\d{2}/.test(data)) return data
-  // Se vem em formato yyyy-mm-dd, converte
-  if (typeof data === 'string' && /^\d{4}-\d{2}-\d{2}/.test(data)) {
-    const [year, month, day] = data.split('-')
-    const shortYear = year.slice(-2)
-    return `${day}/${month}/${shortYear}`
-  }
-  return data
+  const s = String(data).trim()
+  // yyyy-mm-dd -> dd/mm/aa
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return `${m[3]}/${m[2]}/${m[1].slice(-2)}`
+  // dd/mm/yyyy ou dd/mm/aa -> dd/mm/aa
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2,4})/)
+  if (m) return `${m[1]}/${m[2]}/${m[3].slice(-2)}`
+  return s
 }
 
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
+  // Avalista padrão = dados do perfil logado (conta ativa, ou usuário do localStorage)
+  const _loggedUser = JSON.parse(localStorage.getItem('user') || '{}')
+  const _activeId = localStorage.getItem('activeContaId') || userId || _loggedUser.id
+  const _activeConta = (allContas || []).find(c => String(c.id) === String(_activeId))
+  const avalistaNome = _activeConta?.nome_correntista || _loggedUser.name || _loggedUser.nome || ''
+  const avalistaCic = String(_activeConta?.cic || _loggedUser.cic || '').replace(/\D/g, '')
+
   const [dataWithInstalments, setDataWithInstalments] = useState(
     previewData.map(item => {
+      // Preenche AVALISTA com o perfil logado por padrão
+      const base = { ...item, AVALISTA_NOME: avalistaNome, AVALISTA_CIC: avalistaCic }
       // Se o item já tem parcelas pré-preenchidas (de arquivo OS com múltiplos vencimentos)
-      if (item._parcelas && item._parcelas.length > 0) {
-        console.log(`[ImportPreview] Item ${item.NUM_TITULO} tem ${item._parcelas.length} parcelas pré-preenchidas`)
+      if (base._parcelas && base._parcelas.length > 0) {
         return {
-          ...item,
-          _records: item._parcelas.map(parcela => ({
-            ...item,
+          ...base,
+          _records: base._parcelas.map(parcela => ({
+            ...base,
             NUM_TITULO: parcela.number,
             VENCIMENTO: parcela.dueDate,
             VALOR: parcela.value,
@@ -43,8 +50,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         }
       }
       return {
-        ...item,
-        _records: [item]
+        ...base,
+        _records: [base]
       }
     })
   )
@@ -320,7 +327,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-6xl w-full max-h-[90vh] flex flex-col">
+      <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-[95vw] w-full max-h-[90vh] flex flex-col">
         <div className="border-b border-[#1f1f1f] px-5 py-3">
           <h2 className="text-base font-semibold text-white">Visualizar dados para importação</h2>
           <p className="text-xs text-[#666666]">
@@ -342,23 +349,23 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 <div className="bg-[#151515]">
 
                   {/* LINHA 1: Dados do Correntista */}
-                  <div className="px-4 py-2 border-b border-[#000000] flex items-start gap-2 text-[10px] overflow-x-auto">
+                  <div className="px-4 py-2 border-b border-[#000000] flex items-start gap-2 text-sm overflow-x-auto">
                     {/* Nome */}
                     <div
                       className="flex-1 flex-shrink-0 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_NOME', firstRecord.SACADO_NOME || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Nome</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Nome</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_NOME` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_NOME')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_NOME')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_NOME || '—'}</p>
+                        <p className="text-white text-sm truncate">{firstRecord.SACADO_NOME || '—'}</p>
                       )}
                     </div>
                     {/* CPF/CNPJ */}
@@ -366,17 +373,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIC', firstRecord.SACADO_CIC || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">CPF/CNPJ</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">CPF/CNPJ</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CIC` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIC')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIC')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_CIC || '—'}</p>
+                        <p className="text-white text-sm font-mono">{firstRecord.SACADO_CIC || '—'}</p>
                       )}
                     </div>
                     {/* Telefone */}
@@ -384,17 +391,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_TELEFONE', firstRecord.SACADO_TELEFONE || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Telefone</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Telefone</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_TELEFONE` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_TELEFONE')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_TELEFONE')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px]">{firstRecord.SACADO_TELEFONE || '—'}</p>
+                        <p className="text-white text-sm">{firstRecord.SACADO_TELEFONE || '—'}</p>
                       )}
                     </div>
                     {/* Email */}
@@ -402,17 +409,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_EMAIL', firstRecord.SACADO_EMAIL || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Email</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Email</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_EMAIL` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_EMAIL')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_EMAIL')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
+                        <p className="text-white text-sm truncate">{firstRecord.SACADO_EMAIL || '—'}</p>
                       )}
                     </div>
                     {/* Endereço */}
@@ -420,17 +427,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_ENDERECO', firstRecord.SACADO_ENDERECO || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Endereço</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Endereço</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_ENDERECO` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_ENDERECO')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_ENDERECO')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_ENDERECO || '—'}</p>
+                        <p className="text-white text-sm truncate whitespace-nowrap">{String(firstRecord.SACADO_ENDERECO || '—').substring(0, 30)}</p>
                       )}
                     </div>
                     {/* Bairro */}
@@ -438,17 +445,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_BAIRRO', firstRecord.SACADO_BAIRRO || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Bairro</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Bairro</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_BAIRRO` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_BAIRRO')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_BAIRRO')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_BAIRRO || '—'}</p>
+                        <p className="text-white text-sm truncate">{firstRecord.SACADO_BAIRRO || '—'}</p>
                       )}
                     </div>
                     {/* CEP */}
@@ -456,17 +463,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CEP', firstRecord.SACADO_CEP || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">CEP</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">CEP</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CEP` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CEP')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CEP')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_CEP || '—'}</p>
+                        <p className="text-white text-sm font-mono">{firstRecord.SACADO_CEP || '—'}</p>
                       )}
                     </div>
                     {/* Cidade */}
@@ -474,17 +481,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_CIDADE', firstRecord.SACADO_CIDADE || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Cidade</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Cidade</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_CIDADE` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_CIDADE')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_CIDADE')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.SACADO_CIDADE || '—'}</p>
+                        <p className="text-white text-sm truncate">{firstRecord.SACADO_CIDADE || '—'}</p>
                       )}
                     </div>
                     {/* UF */}
@@ -492,17 +499,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'SACADO_UF', firstRecord.SACADO_UF || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">UF</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">UF</p>
                       {inlineEditingCell === `${itemIdx}-0-SACADO_UF` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'SACADO_UF')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'SACADO_UF')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] font-mono">{firstRecord.SACADO_UF || '—'}</p>
+                        <p className="text-white text-sm font-mono">{firstRecord.SACADO_UF || '—'}</p>
                       )}
                     </div>
                     {/* Avalista */}
@@ -510,17 +517,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_NOME', firstRecord.AVALISTA_NOME || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Avalista</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Avalista</p>
                       {inlineEditingCell === `${itemIdx}-0-AVALISTA_NOME` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_NOME')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_NOME')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] truncate">{firstRecord.AVALISTA_NOME || '—'}</p>
+                        <p className="text-white text-sm truncate">{firstRecord.AVALISTA_NOME || '—'}</p>
                       )}
                     </div>
                     {/* Avalista CIC */}
@@ -528,66 +535,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                       className="flex-1 cursor-pointer hover:opacity-80 transition"
                       onClick={() => handleInlineEdit(itemIdx, 0, 'AVALISTA_CIC', firstRecord.AVALISTA_CIC || '')}
                     >
-                      <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Av. CIC</p>
+                      <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Av. CIC</p>
                       {inlineEditingCell === `${itemIdx}-0-AVALISTA_CIC` ? (
                         <input ref={inputRef} type="text" value={inlineEditValue}
                           onChange={(e) => setInlineEditValue(e.target.value)}
                           onBlur={() => handleInlineBlur(itemIdx, 0, 'AVALISTA_CIC')}
                           onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, 0, 'AVALISTA_CIC')}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                          className="w-full px-2 py-0.5 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                         />
                       ) : (
-                        <p className="text-white text-[10px] font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* SEÇÃO DE ANEXOS */}
-                  <div className="px-4 py-3 border-t-2 border-[#333333] bg-[#0a0a0a]">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] font-semibold text-[#a3a3a3] uppercase">📎 Anexar Documentos</p>
-                      <p className="text-[9px] text-[#666666]">PDF, Excel, XML</p>
-                    </div>
-
-                    <div className="flex gap-2 items-start">
-                      <label className="flex-1">
-                        <input
-                          type="file"
-                          accept=".pdf,.xlsx,.xls,.xml"
-                          multiple
-                          onChange={(e) => handleAnexoFileSelect(itemIdx, e)}
-                          ref={el => fileInputRefs.current[itemIdx] = el}
-                          className="hidden"
-                        />
-                        <span className="inline-block px-3 py-1.5 bg-white text-black text-[9px] font-medium rounded hover:opacity-90 transition cursor-pointer whitespace-nowrap">
-                          ➕ Selecionar Arquivo
-                        </span>
-                      </label>
-
-                      {/* Lista de arquivos anexados */}
-                      {arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && (
-                        <div className="flex-1 flex flex-wrap gap-1">
-                          {arquivosAnexados[itemIdx].map((file, fileIdx) => (
-                            <div
-                              key={`${itemIdx}-${fileIdx}`}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-[#1a7f1a] text-white rounded text-[9px]"
-                            >
-                              <span className="truncate max-w-32">{file.name}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoverAnexo(itemIdx, fileIdx)}
-                                className="ml-1 text-[#cccccc] hover:text-white transition"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {(!arquivosAnexados[itemIdx] || arquivosAnexados[itemIdx].length === 0) && (
-                        <p className="text-[9px] text-[#666666] flex-1">Nenhum arquivo selecionado</p>
+                        <p className="text-white text-sm font-mono">{firstRecord.AVALISTA_CIC || '—'}</p>
                       )}
                     </div>
                   </div>
@@ -600,7 +558,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                     return (
                       <div
                         key={rowId}
-                        className={`transition flex items-center gap-3 px-4 py-2 border-b border-[#1a1a1a] text-[10px] ${
+                        className={`transition flex items-center gap-3 px-4 py-2 border-b border-[#1a1a1a] text-sm ${
                           recordIdx > 0 ? 'border-t-2 border-[#444444]' : 'border-t-2 border-[#333333]'
                         } ${isSelected ? 'bg-[#151515]' : 'bg-[#151515]'}`}
                       >
@@ -629,12 +587,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'EMISSAO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'EMISSAO')}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                             />
                           ) : (
                             <>
-                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Emissão</p>
-                              <p className="text-white text-[10px]">{formatarDataBrasileira(record.EMISSAO) || '—'}</p>
+                              <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Emissão</p>
+                              <p className="text-white text-sm">{formatarDataBrasileira(record.EMISSAO) || '—'}</p>
                             </>
                           )}
                         </div>
@@ -653,12 +611,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'NUM_TITULO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'NUM_TITULO')}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                             />
                           ) : (
                             <>
-                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Número</p>
-                              <p className="text-white text-[10px] font-mono">{record.NUM_TITULO || '—'}</p>
+                              <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Número</p>
+                              <p className="text-white text-sm font-mono">{record.NUM_TITULO || '—'}</p>
                             </>
                           )}
                         </div>
@@ -677,12 +635,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VENCIMENTO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VENCIMENTO')}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                             />
                           ) : (
                             <>
-                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Vencimento</p>
-                              <p className="text-white text-[10px]">{formatarDataBrasileira(record.VENCIMENTO) || '—'}</p>
+                              <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Data</p>
+                              <p className="text-white text-sm">{formatarDataBrasileira(record.VENCIMENTO) || '—'}</p>
                             </>
                           )}
                         </div>
@@ -701,12 +659,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VALOR')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VALOR')}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                             />
                           ) : (
                             <>
-                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Valor</p>
-                              <p className="text-white text-[10px] font-mono">
+                              <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Valor</p>
+                              <p className="text-white text-sm font-mono">
                                 {formatarValorBrasileiro(record.VALOR)}
                               </p>
                             </>
@@ -727,12 +685,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'DESCRICAO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'DESCRICAO')}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-[10px]"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"
                             />
                           ) : (
                             <>
-                              <p className="text-[10px] text-[#707070] uppercase font-semibold leading-none mb-0.5">Descrição</p>
-                              <p className="text-white text-[10px] truncate line-clamp-1">{record.DESCRICAO || '—'}</p>
+                              <p className="text-sm text-[#707070] uppercase font-semibold leading-none mb-0.5">Descrição</p>
+                              <p className="text-white text-sm truncate line-clamp-1">{record.DESCRICAO || '—'}</p>
                             </>
                           )}
                         </div>
@@ -777,9 +735,47 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                             +
                           </button>
                         )}
+
+                        {/* Anexar — ao lado direito do + (apenas na 1ª parcela) */}
+                        {recordIdx === 0 && (
+                          <label className="cursor-pointer shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="file"
+                              accept=".pdf,.xlsx,.xls,.xml"
+                              multiple
+                              onChange={(e) => handleAnexoFileSelect(itemIdx, e)}
+                              ref={el => fileInputRefs.current[itemIdx] = el}
+                              className="hidden"
+                            />
+                            <span className="inline-flex items-center gap-1 text-xs text-white font-medium hover:opacity-80 whitespace-nowrap">
+                              <span className="text-base leading-none">➕</span> Anexar
+                            </span>
+                          </label>
+                        )}
                       </div>
                     )
                   })}
+
+                  {/* Arquivos anexados — abaixo das últimas parcelas */}
+                  {arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && (
+                    <div className="px-4 py-2 border-t border-[#1a1a1a] flex flex-wrap gap-1 bg-[#0a0a0a]">
+                      {arquivosAnexados[itemIdx].map((file, fileIdx) => (
+                        <div
+                          key={`${itemIdx}-${fileIdx}`}
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-[#1a7f1a] text-white rounded text-xs"
+                        >
+                          <span className="truncate max-w-xs">{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoverAnexo(itemIdx, fileIdx)}
+                            className="ml-1 text-[#cccccc] hover:text-white transition"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )
@@ -801,7 +797,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             {relatorioPDF && (
               <button
                 onClick={() => downloadPDFRelatorio(relatorioPDF, `relatorio_importacao_${new Date().getTime()}.pdf`)}
-                className="px-6 py-2 bg-[#1a5490] text-white text-[10px] font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
+                className="px-6 py-2 bg-[#1a5490] text-white text-sm font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
               >
                 📄 Baixar Relatório de Erros
               </button>
@@ -809,14 +805,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             <button
               onClick={onCancel}
               disabled={isImporting}
-              className="px-6 py-2 bg-transparent text-white text-[10px] font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50"
+              className="px-6 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               onClick={handleImport}
               disabled={isImporting || selectedRows.size === 0}
-              className="px-6 py-2 bg-white text-black text-[10px] font-medium rounded hover:opacity-90 transition disabled:opacity-50"
+              className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50"
             >
               {isImporting ? 'Importando...' : `Importar (${selectedRows.size})`}
             </button>

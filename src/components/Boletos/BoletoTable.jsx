@@ -300,18 +300,18 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             className="w-4 h-4 cursor-pointer accent-white flex-shrink-0"
           />
           <div className="flex-1 flex gap-4 text-xs font-semibold text-[#666666] uppercase tracking-wider">
-            <SortableHeader column="num_lancamento" label="Num Lançamento" flex="1" align="text-right" />
-            <SortableHeader column="created_at" label="Gerado" flex="1" align="text-right" />
-            <SortableHeader column="data_emissao" label="Emissão" flex="1" align="text-right" />
+            <SortableHeader column="num_lancamento" label="NUM_LANC" flex="1" align="text-right" />
+            <SortableHeader column="created_at" label="Gerado" flex="1" align="text-center" />
+            <SortableHeader column="data_emissao" label="Emissão" flex="1" align="text-center" />
             <SortableHeader column="numero_documento" label="Documento" flex="1" align="text-right" />
             <SortableHeader column="valor" label="Valor" flex="1" align="text-right" />
-            <SortableHeader column="data_vencimento" label="Vencimento" flex="1" align="text-right" />
-            <SortableHeader column="sacado_nome" label="Nome Sacado" flex="3" align="text-center" />
-            <SortableHeader column="sacado_cic" label="CIC Sacado" flex="1" align="text-right" />
+            <SortableHeader column="data_vencimento" label="Vence" flex="1" align="text-center" />
+            <SortableHeader column="sacado_nome" label="Nome Sacado" flex="3" align="text-left" />
+            <SortableHeader column="sacado_cic" label="CIC" flex="1" align="text-center" />
             <div style={{ flex: '0.5' }} className="text-center">Status</div>
-            <div style={{ flex: '1' }} className="text-center">Antecipação</div>
-            <div style={{ flex: '1' }} className="text-center">Registro</div>
-            <div style={{ flex: '0.5' }} className="text-center">Assinado</div>
+            <div style={{ flex: '1' }} className="text-center">ANTECIPA</div>
+            <div style={{ flex: '1' }} className="text-center">CONTA</div>
+            <div style={{ flex: '0.5' }} className="text-center">ASSINA</div>
             <div style={{ flex: '0.5' }} className="text-center">Ações</div>
           </div>
         </div>
@@ -340,10 +340,10 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 <div style={{ flex: '1' }} className="text-white text-right">
                   {boleto.num_lancamento || '—'}
                 </div>
-                <div style={{ flex: '1' }} className="text-white text-right">
+                <div style={{ flex: '1' }} className="text-white text-center">
                   {boleto.created_at ? formatDate(boleto.created_at) : '—'}
                 </div>
-                <div style={{ flex: '1' }} className="text-white text-right">
+                <div style={{ flex: '1' }} className="text-white text-center">
                   {boleto.data_emissao ? formatDate(boleto.data_emissao) : '—'}
                 </div>
                 <div style={{ flex: '1' }} className="text-white font-medium text-right">
@@ -352,22 +352,26 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 <div style={{ flex: '1' }} className="text-white font-mono text-right">
                   {boleto.valor ? formatCurrency(boleto.valor) : '0,00'}
                 </div>
-                <div style={{ flex: '1' }} className="text-[#a3a3a3] text-right">
+                <div style={{ flex: '1' }} className="text-[#a3a3a3] text-center">
                   {boleto.data_vencimento ? formatDate(boleto.data_vencimento) : '—'}
                 </div>
                 <div style={{ flex: '3' }} className="text-white truncate text-left">
                   {boleto.sacado_nome || '—'}
                 </div>
-                <div style={{ flex: '1' }} className="text-[#a3a3a3] font-mono text-right">
+                <div style={{ flex: '1' }} className="text-[#a3a3a3] font-mono text-center">
                   {boleto.sacado_cic || '—'}
                 </div>
-                <div style={{ flex: '0.5' }} className="text-center">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-medium ${getStatusBadge(boleto.status)}`}>
-                    {boleto.status ? boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1) : 'Pendente'}
-                  </span>
+                <div style={{ flex: '0.5' }} className="text-center text-white">
+                  {(() => {
+                    const s = (boleto.status || 'pendente').toLowerCase()
+                    if (s === 'pendente') return 'Vencer'
+                    return boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1)
+                  })()}
                 </div>
                 <div style={{ flex: '1' }} className="text-center text-white">
-                  {boleto.status_efactor || '—'}
+                  {boleto.status_efactor === 'Antecipado'
+                    ? 'Sim'
+                    : (boleto.status_efactor === 'Enviado' ? 'Enviado' : 'Não')}
                 </div>
                 <div style={{ flex: '1' }} className="text-center text-white">
                   {boleto.situacao || '—'}

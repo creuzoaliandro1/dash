@@ -870,52 +870,6 @@ export default function BoletosPage() {
             </div>
           )
         })()}
-        <div className="flex gap-3">
-          <button className="px-4 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition">
-            Exportar CSV
-          </button>
-          <div className="relative" ref={cnab400MenuRef}>
-            <button
-              onClick={() => setCnab400MenuOpen(!cnab400MenuOpen)}
-              disabled={selectedRows.size === 0 || generatingCNAB400}
-              className={`px-4 py-2 text-sm font-medium border rounded transition ${
-                selectedRows.size === 0 || generatingCNAB400
-                  ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
-                  : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
-              }`}
-            >
-              {generatingCNAB400 ? '⏳ Gerando...' : 'Remessa CNAB400'}
-            </button>
-            {cnab400MenuOpen && (
-              <div className="absolute top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-48">
-                <button
-                  onClick={() => handleGenerateRemessaCNAB400('01')}
-                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
-                >
-                  Registro
-                </button>
-                <button
-                  onClick={() => handleGenerateRemessaCNAB400('06')}
-                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
-                >
-                  Alterar
-                </button>
-                <button
-                  onClick={() => handleGenerateRemessaCNAB400('02')}
-                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                >
-                  Baixa
-                </button>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleCreateNew}
-            className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"
-          >
-            + Emitir boleto
-          </button>
-        </div>
       </div>
 
       {/* Upload Area */}
@@ -932,7 +886,7 @@ export default function BoletosPage() {
       />
 
       {/* Search and Filter - All in one line */}
-      <div className="flex gap-3 items-end">
+      <div className="flex gap-3 items-start">
         {/* Busca por texto */}
         <div className="flex-1 relative">
           <input
@@ -947,21 +901,8 @@ export default function BoletosPage() {
           </svg>
         </div>
 
-        {/* Filtro de Status */}
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white text-sm focus:border-white outline-none transition"
-        >
-          <option value="todos">Todos os status</option>
-          <option value="pendente">Pendente</option>
-          <option value="pago">Pago</option>
-          <option value="atrasado">Atrasado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
-
-        {/* Filtro de Datas - Tipo */}
-        <div className="flex gap-2 items-center">
+        {/* Filtro de Datas - Tipo (empilhado verticalmente) */}
+        <div className="flex flex-col gap-1 justify-center">
           <label className="flex items-center gap-2 whitespace-nowrap">
             <input
               type="radio"
@@ -1013,8 +954,64 @@ export default function BoletosPage() {
           </label>
         </div>
 
-        {/* Filtro de STATUS por checkbox */}
-        <div className="flex gap-3 items-center pl-3 border-l border-[#2a2a2a]">
+        {/* Filtro de Datas - Campos (à direita do filtro de tipo) */}
+        <div className="flex flex-col gap-1">
+          {filterType === 'emissao' ? (
+            <>
+              <input
+                type="date"
+                value={dataEmissaoInicio}
+                onChange={(e) => setDataEmissaoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataEmissaoFim}
+                onChange={(e) => setDataEmissaoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          ) : filterType === 'vencimento' ? (
+            <>
+              <input
+                type="date"
+                value={dataVencimentoInicio}
+                onChange={(e) => setDataVencimentoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataVencimentoFim}
+                onChange={(e) => setDataVencimentoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          ) : (
+            <>
+              <input
+                type="date"
+                value={dataGeradoInicio}
+                onChange={(e) => setDataGeradoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataGeradoFim}
+                onChange={(e) => setDataGeradoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          )}
+        </div>
+
+        {/* Filtro de STATUS por checkbox (empilhado verticalmente) */}
+        <div className="flex flex-col gap-1 justify-center pl-3 border-l border-[#2a2a2a]">
           <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
             <input
               type="checkbox"
@@ -1044,72 +1041,47 @@ export default function BoletosPage() {
           </label>
         </div>
 
-        {/* Filtro de Datas - Campos */}
-        {filterType === 'emissao' ? (
-          <>
-            <input
-              type="date"
-              value={dataEmissaoInicio}
-              onChange={(e) => setDataEmissaoInicio(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de início"
-            />
-            <input
-              type="date"
-              value={dataEmissaoFim}
-              onChange={(e) => setDataEmissaoFim(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de fim"
-            />
-          </>
-        ) : filterType === 'vencimento' ? (
-          <>
-            <input
-              type="date"
-              value={dataVencimentoInicio}
-              onChange={(e) => setDataVencimentoInicio(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de início"
-            />
-            <input
-              type="date"
-              value={dataVencimentoFim}
-              onChange={(e) => setDataVencimentoFim(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de fim"
-            />
-          </>
-        ) : (
-          <>
-            <input
-              type="date"
-              value={dataGeradoInicio}
-              onChange={(e) => setDataGeradoInicio(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de início"
-            />
-            <input
-              type="date"
-              value={dataGeradoFim}
-              onChange={(e) => setDataGeradoFim(e.target.value)}
-              className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-              title="Data de fim"
-            />
-          </>
-        )}
-
-        {/* Botão Filtrar com Lupa */}
-        <button
-          onClick={() => {
-            // Trigger filter (getFilteredBoletos é chamado automaticamente)
-          }}
-          className="p-2 bg-white text-black rounded hover:bg-[#e0e0e0] transition flex items-center justify-center"
-          title="Filtrar por datas"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+        {/* Exportar CSV */}
+        <button className="px-4 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition whitespace-nowrap">
+          Exportar CSV
         </button>
+
+        {/* Remessa CNAB400 */}
+        <div className="relative" ref={cnab400MenuRef}>
+          <button
+            onClick={() => setCnab400MenuOpen(!cnab400MenuOpen)}
+            disabled={selectedRows.size === 0 || generatingCNAB400}
+            className={`px-4 py-2 text-sm font-medium border rounded transition whitespace-nowrap ${
+              selectedRows.size === 0 || generatingCNAB400
+                ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
+                : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
+            }`}
+          >
+            {generatingCNAB400 ? '⏳ Gerando...' : 'CNAB400'}
+          </button>
+          {cnab400MenuOpen && (
+            <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-48">
+              <button
+                onClick={() => handleGenerateRemessaCNAB400('01')}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+              >
+                Registro
+              </button>
+              <button
+                onClick={() => handleGenerateRemessaCNAB400('06')}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+              >
+                Alterar
+              </button>
+              <button
+                onClick={() => handleGenerateRemessaCNAB400('02')}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+              >
+                Baixa
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Botão Ações com Dropdown */}
         <div className="relative">
@@ -1173,6 +1145,14 @@ export default function BoletosPage() {
             </div>
           )}
         </div>
+
+        {/* Emitir boleto — ao lado direito de Ações */}
+        <button
+          onClick={handleCreateNew}
+          className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition whitespace-nowrap"
+        >
+          + Emitir boleto
+        </button>
       </div>
 
       {/* Tabela de Boletos — overflow-auto gerencia x+y; header da tabela usa sticky top-0 */}
