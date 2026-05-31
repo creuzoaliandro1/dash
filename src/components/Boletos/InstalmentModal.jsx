@@ -1,22 +1,61 @@
 import { useState, useRef, useEffect } from 'react'
 
+// ---- Helpers ----
+const parseValorFlex = (v) => {
+  if (typeof v === 'number') return v
+  const s = String(v ?? '').trim()
+  if (!s) return 0
+  // Formato brasileiro "2.199,54"
+  if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0
+  return parseFloat(s) || 0
+}
+
+// Normaliza qualquer entrada de data para dd/mm/aaaa
+const toDDMMYYYY = (val) => {
+  const s = String(val ?? '').trim()
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (m) return `${m[1]}/${m[2]}/${m[3]}`
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/)
+  if (m) return `${m[1]}/${m[2]}/20${m[3]}`
+  return s
+}
+
+// Converte dd/mm/aaaa (ou yyyy-mm-dd) para Date
+const parseDateFlex = (str) => {
+  const s = String(str ?? '').trim()
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1])
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3])
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? null : d
+}
+
 export default function InstalmentModal({ item, onConfirm, onCancel }) {
   const [numInstalments, setNumInstalments] = useState(1)
   const [frequencyType, setFrequencyType] = useState('days') // 'days' ou 'monthly'
   const [frequencyValue, setFrequencyValue] = useState(30)
   const [monthlyDay, setMonthlyDay] = useState('')
   const [instalments, setInstalments] = useState([])
+  const [hasCalculated, setHasCalculated] = useState(false)
   const [editingInstalment, setEditingInstalment] = useState(null)
   const [editValues, setEditValues] = useState({})
+
+  // Data (1º vencimento) e Valor total — vêm da tela anterior e são editáveis.
+  const [baseDate, setBaseDate] = useState(toDDMMYYYY(item.VENCIMENTO))
+  const [totalValue, setTotalValue] = useState(parseValorFlex(item.VALOR))
+
   const inputRef = useRef(null)
 
-  // Extrair dia da emissão
+  // Dia base para parcelamento mensal, derivado da Data (1º vencimento)
   useEffect(() => {
-    if (typeof item.EMISSAO === 'string') {
-      const [day] = item.EMISSAO.split('/')
-      setMonthlyDay(day)
-    }
-  }, [item])
+    const d = parseDateFlex(baseDate)
+    if (d) setMonthlyDay(String(d.getDate()))
+    // só na montagem
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (editingInstalment !== null && inputRef.current) {
@@ -25,52 +64,58 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
     }
   }, [editingInstalment])
 
-  // Calcular parcelas
-  const calculateInstalments = () => {
-    // Parse EMISSAO in DD/MM/YYYY format
-    let baseDate
-    if (typeof item.EMISSAO === 'string') {
-      const [day, month, year] = item.EMISSAO.split('/')
-      baseDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
-    } else {
-      baseDate = new Date(item.EMISSAO)
-    }
+  // Constrói as parcelas. A 1ª parcela vence exatamente na Data informada;
+  // as seguintes somam o intervalo (dias) ou os meses a partir dessa Data.
+  const buildInstalments = () => {
+    const base = parseDateFlex(baseDate)
+    if (!base) return []
 
-    const baseValue = parseFloat(item.VALOR) || 0
-    const totalInstalments = parseInt(numInstalments) || 1
-    const valuePerInstalment = baseValue / totalInstalments
+    const baseValue = parseValorFlex(totalValue)
+    const total = parseInt(numInstalments) || 1
+    const valuePerInstalment = baseValue / total
 
-    const newInstalments = []
-
-    for (let i = 0; i < totalInstalments; i++) {
-      let dueDate = new Date(baseDate)
+    const arr = []
+    for (let i = 0; i < total; i++) {
+      const due = new Date(base)
 
       if (frequencyType === 'days') {
-        // Adicionar dias
         const days = parseInt(frequencyValue) || 30
-        dueDate.setDate(dueDate.getDate() + days * (i + 1))
+        due.setDate(base.getDate() + days * i) // i=0 -> própria Data
       } else {
-        // Adicionar meses - usar o dia selecionado
-        const months = parseInt(frequencyValue) || 1
-        const dayToUse = parseInt(monthlyDay) || baseDate.getDate()
-        dueDate.setMonth(dueDate.getMonth() + months * (i + 1))
-        dueDate.setDate(dayToUse)
+        // mensal: 1ª parcela na própria Data; demais somam meses
+        if (i > 0) {
+          const months = parseInt(frequencyValue) || 1
+          const dayToUse = parseInt(monthlyDay) || base.getDate()
+          due.setMonth(base.getMonth() + months * i)
+          due.setDate(dayToUse)
+        }
       }
 
-      const dueDateStr = dueDate.toLocaleDateString('pt-BR')
-
-      newInstalments.push({
+      arr.push({
         number: `${item.NUM_TITULO}-${i + 1}`,
         originalNumber: item.NUM_TITULO,
         installmentIndex: i + 1,
         value: valuePerInstalment,
-        dueDate: dueDateStr,
+        dueDate: due.toLocaleDateString('pt-BR'),
         emission: item.EMISSAO,
       })
     }
-
-    setInstalments(newInstalments)
+    return arr
   }
+
+  const calculateInstalments = () => {
+    const next = buildInstalments()
+    if (next.length > 0) setInstalments(next)
+    setHasCalculated(true)
+  }
+
+  // Recalcular automaticamente ao alterar Data, Valor total, quantidade ou frequência
+  useEffect(() => {
+    if (!hasCalculated) return
+    const next = buildInstalments()
+    if (next.length > 0) setInstalments(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseDate, totalValue, numInstalments, frequencyType, frequencyValue, monthlyDay, hasCalculated])
 
   const handleFrequencyTypeChange = (type) => {
     setFrequencyType(type)
@@ -114,9 +159,31 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
           <h3 className="text-lg font-semibold text-white">
             Parcelar: {item.NUM_TITULO}
           </h3>
-          <p className="text-sm text-[#666666] mt-1">
-            Valor total: R$ {parseFloat(item.VALOR).toFixed(2)}
-          </p>
+          <div className="mt-3 flex items-end gap-4">
+            {/* Data (1º vencimento) — à esquerda do Valor total */}
+            <div>
+              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1">Data (1º venc.)</label>
+              <input
+                type="text"
+                value={baseDate}
+                onChange={(e) => setBaseDate(e.target.value)}
+                placeholder="dd/mm/aaaa"
+                className="w-32 px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition"
+              />
+            </div>
+            {/* Valor total */}
+            <div>
+              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1">Valor total</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={totalValue}
+                onChange={(e) => setTotalValue(e.target.value)}
+                className="w-36 px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition"
+              />
+            </div>
+          </div>
         </div>
 
         {/* Content */}
@@ -209,7 +276,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
               <div className="flex items-center justify-between mb-4">
                 <h4 className="text-white font-semibold">Parcelas Calculadas</h4>
                 <button
-                  onClick={() => setInstalments([])}
+                  onClick={() => { setInstalments([]); setHasCalculated(false) }}
                   className="text-[#666666] hover:text-white text-sm transition"
                 >
                   ← Voltar

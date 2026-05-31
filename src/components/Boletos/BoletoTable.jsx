@@ -292,14 +292,14 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     <div className="min-w-max w-full">
       {/* Header — sticky dentro do container overflow-auto do pai */}
       <div className="sticky top-0 z-10">
-        <div className="flex items-center gap-4 bg-[#111111] border-b border-[#1f1f1f] px-4 py-3">
+        <div className="flex items-center gap-2 bg-[#111111] border-b border-[#1f1f1f] px-3 py-3">
           <input
             type="checkbox"
             checked={rows.size === boletos.length && boletos.length > 0}
             onChange={toggleAll}
             className="w-4 h-4 cursor-pointer accent-white flex-shrink-0"
           />
-          <div className="flex-1 flex gap-4 text-xs font-semibold text-[#666666] uppercase tracking-wider">
+          <div className="flex-1 flex gap-2 text-xs font-semibold text-[#666666] uppercase tracking-wider">
             <SortableHeader column="num_lancamento" label="NUM_LANC" flex="1" align="text-right" />
             <SortableHeader column="created_at" label="Gerado" flex="1" align="text-center" />
             <SortableHeader column="data_emissao" label="Emissão" flex="1" align="text-center" />
@@ -326,7 +326,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             return (
             <div
               key={index}
-              className={`flex items-center gap-4 px-4 py-3 hover:bg-[#111111] transition ${
+              className={`flex items-center gap-2 px-3 py-3 hover:bg-[#111111] transition ${
                 rows.has(index) ? 'bg-[#111111]' : ''
               }`}
             >
@@ -336,7 +336,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 onChange={() => toggleRow(index)}
                 className="w-4 h-4 cursor-pointer accent-white flex-shrink-0"
               />
-              <div className="flex-1 flex gap-4 text-sm items-center">
+              <div className="flex-1 flex gap-2 text-sm items-center">
                 <div style={{ flex: '1' }} className="text-white text-right">
                   {boleto.num_lancamento || '—'}
                 </div>
@@ -374,7 +374,9 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                     : (boleto.status_efactor === 'Enviado' ? 'Enviado' : 'Não')}
                 </div>
                 <div style={{ flex: '1' }} className="text-center text-white">
-                  {boleto.situacao || '—'}
+                  {String(boleto.situacao || '').toLowerCase() === 'registrado'
+                    ? 'Sim'
+                    : (boleto.situacao || '—')}
                 </div>
                 <div style={{ flex: '0.5' }} className="text-center text-white">
                   {boleto.zapsign_status ? 'Sim' : 'Não'}

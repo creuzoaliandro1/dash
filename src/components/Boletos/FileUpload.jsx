@@ -182,19 +182,21 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         )}
       </div>
 
-      {/* Botão Efactor — fora do card */}
-      <button
-        onClick={handleOpenEfactorModal}
-        disabled={isLoading}
-        className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
-          efactorActive
-            ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
-            : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
-        }`}
-        title={efactorActive ? 'Desativar Efactor' : 'Ativar Efactor'}
-      >
-        {efactorActive ? '✓ Efactor' : 'Efactor'}
-      </button>
+      {/* Botão Efactor — fora do card, apenas para Master */}
+      {userType === 'M' && (
+        <button
+          onClick={handleOpenEfactorModal}
+          disabled={isLoading}
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+            efactorActive
+              ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
+              : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
+          }`}
+          title={efactorActive ? 'Desativar Efactor' : 'Ativar Efactor'}
+        >
+          {efactorActive ? '✓ Efactor' : 'Efactor'}
+        </button>
+      )}
     </div>
   )
 }
