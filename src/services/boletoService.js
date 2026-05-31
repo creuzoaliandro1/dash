@@ -1203,6 +1203,110 @@ export const getOPEITEByCedente = async (codCedente) => {
   }
 }
 
+// ============================================================================
+// BORDERÔ: monta os dados do borderô (operação) de um título.
+// Fluxo:
+//   capt_boletos.num_lancamento = OPEITE.NUM_LANCAMENTO
+//   -> OPEITE (linha do título) fornece COD_OPERACAO + COD_CEDENTE
+//   -> OPECAB (header da operação, STATUS em BI/LC) fornece os valores
+//   -> CEDENTE (qualificação da empresa) por COD_CEDENTE
+//   -> OPEITE (todos os títulos da mesma operação) compõem o borderô
+//   -> SACADO fornece o nome do sacado de cada título
+// Retorna { data: { cedente, cabecalho, titulos }, error }
+// ============================================================================
+export const getBorderoData = async (numLancamento) => {
+  try {
+    const numLanc = Number(numLancamento)
+    if (!numLanc || isNaN(numLanc)) {
+      return { data: null, error: new Error('Título sem num_lancamento (não vinculado ao Efactor).') }
+    }
+
+    // 1) Linha do título no OPEITE -> COD_OPERACAO + COD_CEDENTE
+    const { data: itemRows, error: itemErr } = await supabase
+      .from('OPEITE')
+      .select('NUM_LANCAMENTO, COD_OPERACAO, COD_CEDENTE')
+      .eq('NUM_LANCAMENTO', numLanc)
+      .limit(1)
+    if (itemErr) throw itemErr
+    if (!itemRows || itemRows.length === 0) {
+      return { data: null, error: new Error(`Nenhum lançamento OPEITE encontrado para NUM_LANCAMENTO ${numLanc}.`) }
+    }
+    const codOperacao = itemRows[0].COD_OPERACAO
+    const codCedente = itemRows[0].COD_CEDENTE
+
+    // 2) Header da operação (OPECAB) — apenas STATUS BI/LC
+    const { data: cabRows, error: cabErr } = await supabase
+      .from('OPECAB')
+      .select('COD_CEDENTE, COD_OPERACAO, DATA, VR_FACE, VR_DESAGIO, VR_COMPRA, QTD_TITULOS, VR_IOF, VR_CPMF, VR_ADVALOREM, VR_ISS, VR_COBRANCA, VR_LIQUIDO, PRAZO_MEDIO, STATUS, STATUS_PAGAMENTO')
+      .eq('COD_OPERACAO', codOperacao)
+      .eq('COD_CEDENTE', codCedente)
+      .in('STATUS', ['BI', 'LC'])
+      .limit(1)
+    if (cabErr) throw cabErr
+    if (!cabRows || cabRows.length === 0) {
+      return { data: null, error: new Error(`Operação ${codOperacao} não disponível para borderô (status diferente de BI/LC).`) }
+    }
+    const cabecalho = cabRows[0]
+
+    // 3) Qualificação do CEDENTE
+    const { data: cedRows, error: cedErr } = await supabase
+      .from('CEDENTE')
+      .select('COD_CEDENTE, RAZAO_SOCIAL, NOME_FANTASIA, ENDERECO, BAIRRO, CIDADE, UF, CEP, CIC, TELEFONE, ATIVIDADE')
+      .eq('COD_CEDENTE', codCedente)
+      .limit(1)
+    if (cedErr) throw cedErr
+    const cedente = (cedRows && cedRows[0]) || { COD_CEDENTE: codCedente, RAZAO_SOCIAL: '' }
+
+    // 4) Todos os títulos da operação (OPEITE)
+    const { data: titRows, error: titErr } = await supabase
+      .from('OPEITE')
+      .select('NUM_LANCAMENTO, NUM_TITULO, TIPO_TITULO, DT_VENCI, VR_FACE, COD_SACADO')
+      .eq('COD_OPERACAO', codOperacao)
+      .eq('COD_CEDENTE', codCedente)
+    if (titErr) throw titErr
+
+    // 5) Nomes dos sacados
+    const codSacadoSet = Array.from(new Set((titRows || []).map(t => t.COD_SACADO).filter(Boolean)))
+    const sacadoMap = {}
+    if (codSacadoSet.length > 0) {
+      const { data: sacados } = await supabase
+        .from('SACADO')
+        .select('COD_SACADO, NOME_CORRENTISTA, CIC')
+        .in('COD_SACADO', codSacadoSet)
+      ;(sacados || []).forEach(s => { sacadoMap[s.COD_SACADO] = { nome: s.NOME_CORRENTISTA || '', cic: s.CIC || '' } })
+    }
+
+    // Data do borderô (para cálculo de dias)
+    const dataBordero = cabecalho.DATA ? new Date(cabecalho.DATA) : null
+
+    const titulos = (titRows || []).map(t => {
+      const venc = t.DT_VENCI ? new Date(t.DT_VENCI) : null
+      let dias = ''
+      if (dataBordero && venc && !isNaN(dataBordero.getTime()) && !isNaN(venc.getTime())) {
+        dias = Math.round((venc - dataBordero) / (1000 * 60 * 60 * 24))
+      }
+      const sac = sacadoMap[t.COD_SACADO] || {}
+      return {
+        tipo: t.TIPO_TITULO || '',
+        numero: t.NUM_TITULO || String(t.NUM_LANCAMENTO || ''),
+        vencimento: t.DT_VENCI || '',
+        valor: parseFloat(t.VR_FACE) || 0,
+        nome: sac.nome || '',
+        cic: sac.cic || '',
+        dias,
+      }
+    })
+
+    // Ordenar por vencimento
+    titulos.sort((a, b) => String(a.vencimento).localeCompare(String(b.vencimento)))
+
+    return { data: { cedente, cabecalho, titulos }, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao montar borderô:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Importar registros do Efactor (OPEITE) para capt_boletos
 // Mapeia OPEITE + SACADO + CONTAS -> capt_boletos, gerando nosso_numero novo.
 // Pula registros cujo num_lancamento já exista em capt_boletos para a conta.

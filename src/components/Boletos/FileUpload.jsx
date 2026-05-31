@@ -168,11 +168,11 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
             </p>
           </div>
         ) : (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center justify-center gap-4">
             <svg className="w-5 h-5 text-[#666666] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
             </svg>
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 text-center">
               <span className="text-white font-semibold text-sm">Importar</span>
               <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
                 Clique ou arraste Excel, CSV, TXT ou XML

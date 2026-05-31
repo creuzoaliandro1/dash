@@ -455,8 +455,14 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
     pdf.text(formatMoeda(boleto?.valor || 0), colAL_X, gridRowY(21), { baseline: 'middle' })
-    pdf.text(String(boleto?.numero_documento || ''), colBB_X, gridRowY(21), { baseline: 'middle' })
+    pdf.text(String(boleto?.numero_documento || ''), gridColX(50), gridRowY(21), { baseline: 'middle' })
     pdf.text(formatDate(boleto?.data_vencimento), colBQ_X, gridRowY(21), { baseline: 'middle' })
+
+    // DATA EMISSÃO — abaixo do bloco CNPJ / DUPLICATA, na 1ª coluna do Card 5
+    pdf.setFontSize(7)
+    pdf.text('DATA EMISSÃO:', col1CenterX, gridRowY(20), { align: 'center', baseline: 'middle' })
+    pdf.text(formatDate(boleto?.data_emissao), col1CenterX, gridRowY(22), { align: 'center', baseline: 'middle' })
+    pdf.setFontSize(8)
 
     // ===== CARD 6: PARA USO DA INSTITUIÇÃO =====
     const card6Positions = [24,30,36].map(cell => getCellPosition(cell, cols))

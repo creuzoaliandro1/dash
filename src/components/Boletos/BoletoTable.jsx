@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
 import { generateDuplicataPDF } from '../../utils/duplicata'
-import { getContaInfo } from '../../services/boletoService'
+import { generateBorderoPDF } from '../../utils/bordero'
+import { getContaInfo, getBorderoData } from '../../services/boletoService'
 import BoletoDetailsModal from './BoletoDetailsModal'
 
 const formatDate = (dateStr) => {
@@ -64,6 +65,11 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   const [duplicataPdfOpen, setDuplicataPdfOpen] = useState(false)
   const [duplicataPdfUrl, setDuplicataPdfUrl] = useState(null)
   const [generatingDuplicata, setGeneratingDuplicata] = useState(false)
+
+  // Estado para preview de PDF do Borderô
+  const [borderoPdfOpen, setBorderoPdfOpen] = useState(false)
+  const [borderoPdfUrl, setBorderoPdfUrl] = useState(null)
+  const [generatingBordero, setGeneratingBordero] = useState(false)
 
   // Estado para ordenação (padrão: vencimento crescente, do menor para o maior)
   const [sortColumn, setSortColumn] = useState('data_vencimento')
@@ -279,6 +285,34 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     }
   }
 
+  const handleGenerateBordero = async (boleto) => {
+    setOpenMenu(null)
+    if (!boleto.num_lancamento) {
+      alert('Este título não possui Num Lançamento vinculado ao Efactor, portanto não há borderô.')
+      return
+    }
+    setGeneratingBordero(true)
+    setBorderoPdfOpen(true)
+    setBorderoPdfUrl(null)
+    try {
+      const { data, error } = await getBorderoData(boleto.num_lancamento)
+      if (error || !data) {
+        setBorderoPdfOpen(false)
+        alert('Não foi possível gerar o borderô: ' + (error?.message || 'dados não encontrados.'))
+        return
+      }
+      const blob = generateBorderoPDF(data)
+      const url = URL.createObjectURL(blob)
+      setBorderoPdfUrl(url)
+    } catch (err) {
+      console.error('[Borderô] ERRO:', err)
+      setBorderoPdfOpen(false)
+      alert('Erro ao gerar borderô: ' + err.message)
+    } finally {
+      setGeneratingBordero(false)
+    }
+  }
+
   if (boletos.length === 0) {
     return (
       <div className="p-8 text-center">
@@ -417,6 +451,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                           📄 Duplicata
                         </button>
                         <button
+                          onClick={() => handleGenerateBordero(boleto)}
+                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                        >
+                          🧾 Borderô
+                        </button>
+                        <button
                           onClick={() => handleOpenDetails(boleto)}
                           className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                         >
@@ -506,6 +546,39 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                     src={duplicataPdfUrl + '#navpanes=0&zoom=75'}
                     className="w-full h-[950px] border border-[#2a2a2a] rounded"
                     title="Duplicata"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Preview do Borderô */}
+        {borderoPdfOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
+                <h2 className="text-white text-sm font-medium">Borderô</h2>
+                <button
+                  onClick={() => setBorderoPdfOpen(false)}
+                  className="text-[#666666] hover:text-white transition text-2xl"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                {generatingBordero || !borderoPdfUrl ? (
+                  <div className="flex items-center justify-center h-[950px]">
+                    <p className="text-[#a3a3a3]">Gerando Borderô...</p>
+                  </div>
+                ) : (
+                  <iframe
+                    src={borderoPdfUrl + '#navpanes=0&zoom=75'}
+                    className="w-full h-[950px] border border-[#2a2a2a] rounded"
+                    title="Borderô"
                   />
                 )}
               </div>
