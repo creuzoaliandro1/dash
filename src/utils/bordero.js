@@ -219,4 +219,6 @@ export function generateBorderoPDF(bordero) {
   T(`C.N.P.J. ${fmtCnpjCpf(cedente.CIC)}`, leftCenter, sy, { align: 'center' })
   T(`C.N.P.J. ${CONTRATADA.cnpj}`, rightCenter, sy, { align: 'center' })
 
-  // Retorna o blob e a altura da linha de a
+  // Retorna o blob e a altura da linha de assinatura (para posicionar a assinatura ZapSign acima dela).
+  return { blob: doc.output('blob'), signatureLineY: lineY, pageHeight: pageH }
+}

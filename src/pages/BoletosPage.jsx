@@ -1361,4 +1361,41 @@ export default function BoletosPage() {
 
             {importStatus.type === 'success' ? (
               <div className="space-y-4">
-                <d
+                <div className="p-4 bg-[#111111] border border-[#1f1f1f] rounded">
+                  <p className="text-2xl font-bold text-white">{importStatus.importedCount || importStatus.totalImported}</p>
+                  <p className="text-sm text-[#666666] mt-1">Boleto(s) importado(s) com sucesso</p>
+                  {importStatus.errorCount > 0 && (
+                    <p className="text-sm text-[#a3a3a3] mt-2">
+                      {importStatus.errorCount} erro(s) ao processar
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-[#1a1a1a] border border-[#404040] rounded">
+                <p className="text-[#a3a3a3] text-sm whitespace-pre-wrap">{importStatus.message}</p>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowImportResult(false)}
+              className="w-full mt-6 px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Assinatura ZapSign (Com/Sem Sacado) */}
+      {showZapsignModal && (
+        <ZapsignModal
+          qtd={selectedRows.size}
+          initialMode={assinarMode}
+          onClose={() => setShowZapsignModal(false)}
+          onSubmit={runZapsign}
+        />
+      )}
+    </div>
+  )
+}
