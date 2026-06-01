@@ -14,6 +14,12 @@ import {
   normalizarData,
   normalizarValor,
 } from './services/boletoImportService.js'
+import {
+  iniciarWhatsApp,
+  enviarMensagemWhatsApp,
+  obterStatusWhatsApp,
+  desconectarWhatsApp,
+} from './services/whatsappService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -352,6 +358,53 @@ app.get('/api/capt-logs-importacao/:importacaoId', async (req, res) => {
 })
 
 // ==================
+// WHATSAPP (BAILEYS)
+// ==================
+
+app.post('/api/whatsapp/iniciar', async (req, res) => {
+  try {
+    const sock = await iniciarWhatsApp()
+    const status = obterStatusWhatsApp()
+    res.json({ sucesso: true, mensagem: 'Iniciando WhatsApp...', status })
+  } catch (error) {
+    console.error('[WhatsApp Init] Erro:', error)
+    res.status(500).json({ sucesso: false, erro: error.message })
+  }
+})
+
+app.get('/api/whatsapp/status', (req, res) => {
+  try {
+    const status = obterStatusWhatsApp()
+    res.json({ sucesso: true, ...status })
+  } catch (error) {
+    res.status(500).json({ sucesso: false, erro: error.message })
+  }
+})
+
+app.post('/api/whatsapp/enviar', express.json(), async (req, res) => {
+  try {
+    const { telefone, mensagem } = req.body
+    if (!telefone || !mensagem) {
+      return res.status(400).json({ sucesso: false, erro: 'Telefone e mensagem são obrigatórios' })
+    }
+    const resultado = await enviarMensagemWhatsApp(telefone, mensagem)
+    res.json({ sucesso: true, resultado })
+  } catch (error) {
+    console.error('[WhatsApp Send] Erro:', error)
+    res.status(500).json({ sucesso: false, erro: error.message })
+  }
+})
+
+app.post('/api/whatsapp/desconectar', async (req, res) => {
+  try {
+    await desconectarWhatsApp()
+    res.json({ sucesso: true, mensagem: 'WhatsApp desconectado' })
+  } catch (error) {
+    res.status(500).json({ sucesso: false, erro: error.message })
+  }
+})
+
+// ==================
 // ERROR HANDLING
 // ==================
 
@@ -387,6 +440,12 @@ app.listen(PORT, () => {
     - GET    /api/capt-boletos-stats            (estatísticas)
     - GET    /api/capt-importacoes              (histórico de importações)
     - GET    /api/capt-logs-importacao/:id      (logs detalhados)
+
+  WHATSAPP (NOVO):
+    - POST   /api/whatsapp/iniciar              (autenticar via QR)
+    - GET    /api/whatsapp/status               (verificar conexão)
+    - POST   /api/whatsapp/enviar               (enviar mensagem)
+    - POST   /api/whatsapp/desconectar          (desconectar)
 
   Teste com curl:
     curl -X POST http://localhost:${PORT}/api/importar-boletos \\

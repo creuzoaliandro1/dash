@@ -1208,7 +1208,7 @@ export const getOPEITEByCedente = async (codCedente) => {
 // Fluxo:
 //   capt_boletos.num_lancamento = OPEITE.NUM_LANCAMENTO
 //   -> OPEITE (linha do título) fornece COD_OPERACAO + COD_CEDENTE
-//   -> OPECAB (header da operação, STATUS em BI/LC) fornece os valores
+//   -> OPECAB (header da operação, STATUS em BI/LC/LP) fornece os valores
 //   -> CEDENTE (qualificação da empresa) por COD_CEDENTE
 //   -> OPEITE (todos os títulos da mesma operação) compõem o borderô
 //   -> SACADO fornece o nome do sacado de cada título
@@ -1234,17 +1234,17 @@ export const getBorderoData = async (numLancamento) => {
     const codOperacao = itemRows[0].COD_OPERACAO
     const codCedente = itemRows[0].COD_CEDENTE
 
-    // 2) Header da operação (OPECAB) — apenas STATUS BI/LC
+    // 2) Header da operação (OPECAB) — STATUS BI/LC/LP
     const { data: cabRows, error: cabErr } = await supabase
       .from('OPECAB')
       .select('COD_CEDENTE, COD_OPERACAO, DATA, VR_FACE, VR_DESAGIO, VR_COMPRA, QTD_TITULOS, VR_IOF, VR_CPMF, VR_ADVALOREM, VR_ISS, VR_COBRANCA, VR_LIQUIDO, PRAZO_MEDIO, STATUS, STATUS_PAGAMENTO')
       .eq('COD_OPERACAO', codOperacao)
       .eq('COD_CEDENTE', codCedente)
-      .in('STATUS', ['BI', 'LC'])
+      .in('STATUS', ['BI', 'LC', 'LP'])
       .limit(1)
     if (cabErr) throw cabErr
     if (!cabRows || cabRows.length === 0) {
-      return { data: null, error: new Error(`Operação ${codOperacao} não disponível para borderô (status diferente de BI/LC).`) }
+      return { data: null, error: new Error(`Operação ${codOperacao} não disponível para borderô (status diferente de BI/LC/LP).`) }
     }
     const cabecalho = cabRows[0]
 

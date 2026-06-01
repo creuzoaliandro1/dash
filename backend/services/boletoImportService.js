@@ -268,6 +268,7 @@ export async function processarArquivoBoletos(boletos, usuarioLogado, supabase, 
   let erros = 0;
 
   console.log(`📊 Iniciando importação de ${boletos.length} boletos...`);
+  const inicio = Date.now();
 
   // Iniciar registro da importação
   const { data: importacao } = await supabase
@@ -282,48 +283,66 @@ export async function processarArquivoBoletos(boletos, usuarioLogado, supabase, 
 
   const importacaoId = importacao?.id;
 
-  // Processar cada boleto
-  for (let i = 0; i < boletos.length; i++) {
-    const boleto = boletos[i];
-    boleto.__rowIndex = i + 2; // Excel começa em linha 2
+  // ===== OTIMIZAÇÃO: Processar em lotes paralelos (50 por vez) =====
+  const LOTE_SIZE = 50;
+  const logsParaBatch = []; // Acumular logs para inserção em batch
 
-    const resultado = await processarBoleto(boleto, usuarioLogado, supabase, perfil);
-    resultados.push(resultado);
+  for (let loteIdx = 0; loteIdx < boletos.length; loteIdx += LOTE_SIZE) {
+    const fim = Math.min(loteIdx + LOTE_SIZE, boletos.length);
+    const lote = boletos.slice(loteIdx, fim);
 
-    // Log no banco
-    if (importacaoId) {
-      await supabase
-        .from('"CAPT_LOGS_PROCESSAMENTO"')
-        .insert([{
+    console.log(`⚡ Processando lote ${Math.floor(loteIdx / LOTE_SIZE) + 1}/${Math.ceil(boletos.length / LOTE_SIZE)} (${lote.length} boletos)`);
+
+    // Processar boletos do lote em PARALELO
+    const promessas = lote.map((boleto, idx) => {
+      boleto.__rowIndex = loteIdx + idx + 2;
+      return processarBoleto(boleto, usuarioLogado, supabase, perfil);
+    });
+
+    const resultadosLote = await Promise.all(promessas);
+
+    // Processar resultados e acumular logs
+    resultadosLote.forEach((resultado, idx) => {
+      resultados.push(resultado);
+
+      // Acumular log para inserção em batch (não inserir um por um!)
+      if (importacaoId && resultado) {
+        logsParaBatch.push({
           importacao_id: importacaoId,
-          numero_linha: i + 2,
-          codigo_barras: boleto['Linha digitável'] || 'desconhecido',
+          numero_linha: loteIdx + idx + 2,
+          codigo_barras: lote[idx]['Linha digitável'] || 'desconhecido',
           tipo_operacao: resultado.operacao || (resultado.status === 'erro' ? 'ERRO' : 'NOOP'),
           mensagem: resultado.message,
           detalhes: {
             status: resultado.status,
             id: resultado.id,
           },
-        }]);
-    }
-
-    // Contadores
-    if (resultado.status === 'sucesso') {
-      if (resultado.operacao === 'INSERT') {
-        inseridos++;
-      } else if (resultado.operacao === 'UPDATE') {
-        atualizados++;
+        });
       }
-    } else if (resultado.status === 'sem-mudanca') {
-      semMudanca++;
-    } else {
-      erros++;
-    }
 
-    // Progresso a cada 100
-    if ((i + 1) % 100 === 0) {
-      console.log(`✓ ${i + 1}/${boletos.length} boletos processados`);
+      // Contadores
+      if (resultado.status === 'sucesso') {
+        if (resultado.operacao === 'INSERT') inseridos++;
+        else if (resultado.operacao === 'UPDATE') atualizados++;
+      } else if (resultado.status === 'sem-mudanca') {
+        semMudanca++;
+      } else {
+        erros++;
+      }
+    });
+
+    // Inserir logs em BATCH a cada lote (em vez de um por um!)
+    if (logsParaBatch.length > 0 && logsParaBatch.length % 100 === 0) {
+      console.log(`  💾 Salvando ${logsParaBatch.length} logs...`);
+      await supabase.from('"CAPT_LOGS_PROCESSAMENTO"').insert(logsParaBatch);
+      logsParaBatch.length = 0; // Limpar array
     }
+  }
+
+  // Inserir logs restantes
+  if (logsParaBatch.length > 0) {
+    console.log(`  💾 Salvando ${logsParaBatch.length} logs finais...`);
+    await supabase.from('"CAPT_LOGS_PROCESSAMENTO"').insert(logsParaBatch);
   }
 
   // Finalizar registro de importação
@@ -340,6 +359,9 @@ export async function processarArquivoBoletos(boletos, usuarioLogado, supabase, 
       .eq('"id"', importacaoId);
   }
 
+  const duracao = ((Date.now() - inicio) / 1000).toFixed(2);
+  console.log(`✅ Importação concluída em ${duracao}s`);
+
   return {
     total: boletos.length,
     inseridos,
@@ -349,5 +371,6 @@ export async function processarArquivoBoletos(boletos, usuarioLogado, supabase, 
     taxaSucesso: `${(((inseridos + atualizados) / boletos.length) * 100).toFixed(2)}%`,
     resultados,
     importacaoId,
+    duracao: `${duracao}s`,
   };
 }

@@ -126,7 +126,11 @@ export function generateBorderoPDF(bordero) {
     switch (key) {
       case 'tipo': return (t.tipo || 'DUP').toUpperCase()
       case 'numero': return String(t.numero || '—').toUpperCase()
-      case 'nome': return String(t.nome || '—').toUpperCase()
+      case 'nome': {
+        const nome = String(t.nome || '—').toUpperCase()
+        // Limitar a 30 caracteres, sem quebra de linha
+        return nome.length > 30 ? nome.substring(0, 30) : nome
+      }
       case 'cic': return fmtCnpjCpf(t.cic)
       case 'dias': return (t.dias === '' || t.dias === null || t.dias === undefined) ? '—' : String(t.dias)
       case 'venc': return fmtData(t.vencimento)

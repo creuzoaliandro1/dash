@@ -3,12 +3,13 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER } from '../services/zapsignService'
 import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
+import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 
 export default function BoletosPage() {
@@ -888,6 +889,33 @@ export default function BoletosPage() {
 
       setSelectedRows(new Set())
       await loadBoletos()
+
+      // Enviar WhatsApp com link do borderô para o cedente (não-bloqueante)
+      if (primeiroSignUrl && contaData?.telefone) {
+        try {
+          // Obter COD_OPERACAO do primeiro boleto selecionado que tenha num_lancamento
+          const boletoComLancamento = boletosDoc.find(b => b.num_lancamento)
+          if (boletoComLancamento) {
+            // Buscar COD_OPERACAO via getBorderoData (que faz a query ao banco)
+            const borderoData = await getBorderoData(boletoComLancamento.num_lancamento)
+            const codOperacao = borderoData?.data?.cabecalho?.COD_OPERACAO || 'Operação'
+
+            // Enviar WhatsApp de forma assíncrona (não bloqueia a UI)
+            enviarLinkBorderoWhatsApp(contaData.telefone, codOperacao, primeiroSignUrl)
+              .then(() => {
+                console.log('[Assinatura] WhatsApp com link do borderô enviado com sucesso')
+                notes.push('✓ Link do borderô enviado por WhatsApp')
+              })
+              .catch((error) => {
+                console.error('[Assinatura] Erro ao enviar WhatsApp:', error)
+                notes.push(`⚠️ Falha ao enviar WhatsApp: ${error.message}`)
+              })
+          }
+        } catch (error) {
+          console.error('[Assinatura] Erro ao processar envio de WhatsApp:', error)
+        }
+      }
+
       return { ok, fail, links, notes }
     } catch (error) {
       console.error('[ZapSign] Erro geral:', error)
