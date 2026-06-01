@@ -1999,5 +1999,4 @@ export const incrementContaCnab400 = async (contaId, nextSeq) => {
     } catch (err) {
           console.error('Erro ao atualizar cnab400 da conta:', err)
           return { error: err }
-    }
-}
+  

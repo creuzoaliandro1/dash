@@ -257,120 +257,73 @@ export async function processarBoleto(boleto, usuarioLogado, supabase, perfil = 
 }
 
 /**
- * 8. PROCESSAR ARQUIVO INTEIRO
- * Itera sobre todos os boletos
+ * 7B. PROCESSAR UM BOLETO USANDO CACHE (SEM QUERIES)
+ * Versão otimizada que evita queries individuais
  */
-export async function processarArquivoBoletos(boletos, usuarioLogado, supabase, perfil = 'normal') {
-  const resultados = [];
-  let inseridos = 0;
-  let atualizados = 0;
-  let semMudanca = 0;
-  let erros = 0;
-
-  console.log(`📊 Iniciando importação de ${boletos.length} boletos...`);
-  const inicio = Date.now();
-
-  // Iniciar registro da importação
-  const { data: importacao } = await supabase
-    .from('"CAPT_IMPORTACOES"')
-    .insert([{
-      arquivo_nome: 'arquivo_importacao.xlsx',
-      total_registros: boletos.length,
-      status: 'processando',
-    }])
-    .select('"id"')
-    .single();
-
-  const importacaoId = importacao?.id;
-
-  // ===== OTIMIZAÇÃO: Processar em lotes paralelos (50 por vez) =====
-  const LOTE_SIZE = 50;
-  const logsParaBatch = []; // Acumular logs para inserção em batch
-
-  for (let loteIdx = 0; loteIdx < boletos.length; loteIdx += LOTE_SIZE) {
-    const fim = Math.min(loteIdx + LOTE_SIZE, boletos.length);
-    const lote = boletos.slice(loteIdx, fim);
-
-    console.log(`⚡ Processando lote ${Math.floor(loteIdx / LOTE_SIZE) + 1}/${Math.ceil(boletos.length / LOTE_SIZE)} (${lote.length} boletos)`);
-
-    // Processar boletos do lote em PARALELO
-    const promessas = lote.map((boleto, idx) => {
-      boleto.__rowIndex = loteIdx + idx + 2;
-      return processarBoleto(boleto, usuarioLogado, supabase, perfil);
-    });
-
-    const resultadosLote = await Promise.all(promessas);
-
-    // Processar resultados e acumular logs
-    resultadosLote.forEach((resultado, idx) => {
-      resultados.push(resultado);
-
-      // Acumular log para inserção em batch (não inserir um por um!)
-      if (importacaoId && resultado) {
-        logsParaBatch.push({
-          importacao_id: importacaoId,
-          numero_linha: loteIdx + idx + 2,
-          codigo_barras: lote[idx]['Linha digitável'] || 'desconhecido',
-          tipo_operacao: resultado.operacao || (resultado.status === 'erro' ? 'ERRO' : 'NOOP'),
-          mensagem: resultado.message,
-          detalhes: {
-            status: resultado.status,
-            id: resultado.id,
-          },
-        });
-      }
-
-      // Contadores
-      if (resultado.status === 'sucesso') {
-        if (resultado.operacao === 'INSERT') inseridos++;
-        else if (resultado.operacao === 'UPDATE') atualizados++;
-      } else if (resultado.status === 'sem-mudanca') {
-        semMudanca++;
-      } else {
-        erros++;
-      }
-    });
-
-    // Inserir logs em BATCH a cada lote (em vez de um por um!)
-    if (logsParaBatch.length > 0 && logsParaBatch.length % 100 === 0) {
-      console.log(`  💾 Salvando ${logsParaBatch.length} logs...`);
-      await supabase.from('"CAPT_LOGS_PROCESSAMENTO"').insert(logsParaBatch);
-      logsParaBatch.length = 0; // Limpar array
+async function processarBoletoComCache(
+  boleto,
+  usuarioLogado,
+  contasCache,      // Map de contas pré-carregadas
+  boletosCache,     // Map de boletos existentes
+  perfil = 'normal',
+  boletosParaInserir,  // Array para acumular INSERTs
+  boletosParaAtualizar // Array para acumular UPDATEs
+) {
+  try {
+    const codigoBarras = boleto['Linha digitável'];
+    if (!codigoBarras) {
+      return {
+        status: 'erro',
+        message: 'Coluna "Linha digitável" não encontrada ou vazia',
+        linha: boleto.__rowIndex || '?',
+      };
     }
-  }
 
-  // Inserir logs restantes
-  if (logsParaBatch.length > 0) {
-    console.log(`  💾 Salvando ${logsParaBatch.length} logs finais...`);
-    await supabase.from('"CAPT_LOGS_PROCESSAMENTO"').insert(logsParaBatch);
-  }
+    const numeroConta = extrairNumeroConta(codigoBarras);
 
-  // Finalizar registro de importação
-  if (importacaoId) {
-    await supabase
-      .from('"CAPT_IMPORTACOES"')
-      .update({
-        registros_inseridos: inseridos,
-        registros_atualizados: atualizados,
-        registros_erro: erros,
-        status: erros === 0 ? 'sucesso' : (erros > boletos.length * 0.5 ? 'erro' : 'parcial'),
-        finalizado_em: new Date().toISOString(),
-      })
-      .eq('"id"', importacaoId);
-  }
+    // 2. Buscar conta NO CACHE (em vez de query)
+    const contaEncontrada = contasCache.get(String(numeroConta).trim());
+    if (!contaEncontrada) {
+      return {
+        status: 'erro',
+        message: `Conta ${numeroConta} não encontrada no cache`,
+        codigo_barras: codigoBarras,
+      };
+    }
 
-  const duracao = ((Date.now() - inicio) / 1000).toFixed(2);
-  console.log(`✅ Importação concluída em ${duracao}s`);
+    // 3. Preparar dados do novo boleto
+    const novosDados = {
+      codigo_barras: codigoBarras,
+      numero_conta_id: contaEncontrada.id,
 
-  return {
-    total: boletos.length,
-    inseridos,
-    atualizados,
-    semMudanca,
-    erros,
-    taxaSucesso: `${(((inseridos + atualizados) / boletos.length) * 100).toFixed(2)}%`,
-    resultados,
-    importacaoId,
-    duracao: `${duracao}s`,
-  };
-}
+      // Identificação
+      nosso_numero: boleto['Nosso número'] || null,
+      seu_numero: boleto['Seu número'] || null,
+      numero_documento: boleto['Número do documento'] || null,
+
+      // Pagador
+      pagador_nome: boleto['Nome do pagador'] || null,
+      pagador_documento: boleto['Documento federal do pagador'] || null,
+      pagador_email: boleto['Email do pagador'] || null,
+      pagador_telefone: boleto['Telefone do pagador'] || null,
+      pagador_cep: boleto['CEP do pagador'] || null,
+      pagador_logradouro: boleto['Logradouro do pagador'] || null,
+      pagador_numero: boleto['Número do endereço do pagador'] || null,
+      pagador_complemento: boleto['Complemento do endereço do pagador'] || null,
+      pagador_cidade: boleto['Cidade do pagador'] || null,
+      pagador_uf: boleto['UF do pagador'] || null,
+
+      // Valores
+      valor_titulo: normalizarValor(boleto['Valor do título']),
+      valor_pagamento: normalizarValor(boleto['Valor pago']),
+      data_emissao: normalizarData(boleto['Data de emissão']),
+      data_vencimento: normalizarData(boleto['Data de vencimento']),
+      data_limite_pagamento: normalizarData(boleto['Data limite de pagamento']),
+      data_pagamento: normalizarData(boleto['Data de pagamento']),
+
+      // Status
+      status: boleto['Status do boleto'] || 'pendente',
+      status_negociacao: boleto['Status de negociação'] || null,
+
+      // Juros e multas
+      val
