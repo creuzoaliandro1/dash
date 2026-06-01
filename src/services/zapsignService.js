@@ -1,5 +1,13 @@
 import { supabase } from '../lib/supabase'
 
+// Assinante fixo: a própria CAPT (CESSIONÁRIA). Ajuste e-mail/telefone se desejar.
+// Como os links são apenas gerados (sem envio automático), e-mail/telefone são opcionais.
+export const CAPT_SIGNER = {
+  name: 'CAPT ADMINISTRAÇÃO DE PAGAMENTOS LTDA',
+  email: '',
+  phone: '',
+}
+
 // Converte um Blob (ex.: PDF da Duplicata) em base64 puro, sem o prefixo "data:...;base64,"
 const blobToBase64 = (blob) =>
   new Promise((resolve, reject) => {
@@ -13,24 +21,51 @@ const blobToBase64 = (blob) =>
     reader.readAsDataURL(blob)
   })
 
-// Cria um documento de assinatura na ZapSign a partir do PDF da Duplicata.
+// Cria um documento de assinatura na ZapSign a partir de um PDF.
 // Chama a Edge Function 'zapsign-create-doc' (que guarda o token da API no servidor).
-// Retorna { data: { doc_token, sign_url, raw }, error }
-export const criarDocumentoAssinatura = async ({ name, pdfBlob, signerName, signerEmail, signerPhone }) => {
+// Aceita um ÚNICO signatário (signerName/Email/Phone) OU uma lista `signers`
+// no formato [{ name, cpf, email, phone }].
+// Retorna { data: { doc_token, sign_url, signers, raw }, error }
+export const criarDocumentoAssinatura = async ({ name, pdfBlob, signerName, signerEmail, signerPhone, signers, extraPdfBlobs, placements }) => {
   try {
     const base64_pdf = await blobToBase64(pdfBlob)
 
-    const { data, error } = await supabase.functions.invoke('zapsign-create-doc', {
-      body: {
-        name,
-        base64_pdf,
-        signer_name: signerName || '',
-        signer_email: signerEmail || '',
-        signer_phone: signerPhone || '',
-        // auth_mode: 'assinaturaTela', // descomente/ajuste conforme o método desejado
-        send_automatic_email: false,
-      },
-    })
+    const body = {
+      name,
+      base64_pdf,
+      send_automatic_email: false,
+    }
+
+    // Posicionamento por coordenadas (place-signatures) no documento principal
+    if (Array.isArray(placements) && placements.length > 0) {
+      body.placements = placements
+    }
+
+    // Documentos extras (anexos) que serão assinados no MESMO link
+    if (Array.isArray(extraPdfBlobs) && extraPdfBlobs.length > 0) {
+      body.extra_pdfs = []
+      for (const ex of extraPdfBlobs) {
+        if (!ex?.blob) continue
+        const entry = { name: ex.name || 'Anexo', base64: await blobToBase64(ex.blob) }
+        if (Array.isArray(ex.placements) && ex.placements.length > 0) entry.placements = ex.placements
+        body.extra_pdfs.push(entry)
+      }
+    }
+    if (Array.isArray(signers) && signers.length > 0) {
+      body.signers = signers.map(s => ({
+        name: s.name || 'Signatário',
+        email: s.email || '',
+        phone: s.phone || s.whatsapp || '',
+        ...(s.signature_placement ? { signature_placement: s.signature_placement } : {}),
+        ...(s.rubrica_placement ? { rubrica_placement: s.rubrica_placement } : {}),
+      }))
+    } else {
+      body.signer_name = signerName || ''
+      body.signer_email = signerEmail || ''
+      body.signer_phone = signerPhone || ''
+    }
+
+    const { data, error } = await supabase.functions.invoke('zapsign-create-doc', { body })
 
     if (error) {
       // supabase-js esconde o corpo da resposta em error.context (um Response)

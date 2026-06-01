@@ -301,7 +301,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
         alert('Não foi possível gerar o borderô: ' + (error?.message || 'dados não encontrados.'))
         return
       }
-      const blob = generateBorderoPDF(data)
+      const { blob } = generateBorderoPDF(data)
       const url = URL.createObjectURL(blob)
       setBorderoPdfUrl(url)
     } catch (err) {

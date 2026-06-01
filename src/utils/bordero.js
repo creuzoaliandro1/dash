@@ -195,6 +195,7 @@ export function generateBorderoPDF(bordero) {
   // ===== Assinaturas =====
   let sy = y + 16
   if (sy > pageH - 24) sy = pageH - 24
+  const lineY = sy // altura (mm, do topo) das linhas de assinatura — varia conforme nº de títulos
   const sigW = 88
   const leftCenter = mL + sigW / 2
   const rightCenter = mR - sigW / 2
@@ -202,6 +203,11 @@ export function generateBorderoPDF(bordero) {
   doc.setLineWidth(0.2)
   doc.line(mL, sy, mL + sigW, sy)
   doc.line(mR - sigW, sy, mR, sy)
+  // Âncoras invisíveis (ZapSign) — assinaturas posicionadas ACIMA das linhas
+  doc.setTextColor(255, 255, 255)
+  doc.text('<<cedente>>', leftCenter, sy - 9, { align: 'center' })
+  doc.text('<<capt>>', rightCenter, sy - 9, { align: 'center' })
+  doc.setTextColor(20, 20, 20)
   sy += 4.5
   T(String(cedente.RAZAO_SOCIAL || '—'), leftCenter, sy, { align: 'center' })
   T(CONTRATADA.nome, rightCenter, sy, { align: 'center' })
@@ -209,5 +215,6 @@ export function generateBorderoPDF(bordero) {
   T(`C.N.P.J. ${fmtCnpjCpf(cedente.CIC)}`, leftCenter, sy, { align: 'center' })
   T(`C.N.P.J. ${CONTRATADA.cnpj}`, rightCenter, sy, { align: 'center' })
 
-  return doc.output('blob')
+  // Retorna o blob e a altura da linha de assinatura (para posicionar a assinatura ZapSign acima dela).
+  return { blob: doc.output('blob'), signatureLineY: lineY, pageHeight: pageH }
 }

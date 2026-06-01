@@ -458,11 +458,14 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.text(String(boleto?.numero_documento || ''), gridColX(50), gridRowY(21), { baseline: 'middle' })
     pdf.text(formatDate(boleto?.data_vencimento), colBQ_X, gridRowY(21), { baseline: 'middle' })
 
-    // DATA EMISSÃO — abaixo do bloco CNPJ / DUPLICATA, na 1ª coluna do Card 5
-    pdf.setFontSize(7)
-    pdf.text('DATA EMISSÃO:', col1CenterX, gridRowY(20), { align: 'center', baseline: 'middle' })
-    pdf.text(formatDate(boleto?.data_emissao), col1CenterX, gridRowY(22), { align: 'center', baseline: 'middle' })
+    // DATA EMISSÃO — no card em branco (Card 4), abaixo do bloco CNPJ / DUPLICATA
+    const card4X = startX + 4 * colWidth + spacing
+    const card4Y = startY + 2 * rowHeight + spacing
+    const card4Width = 2 * colWidth - spacing * 2
+    const card4Height = rowHeight - spacing * 2
     pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('DATA EMISSÃO: ' + formatDate(boleto?.data_emissao), card4X + card4Width / 2, card4Y + card4Height / 2, { align: 'center', baseline: 'middle' })
 
     // ===== CARD 6: PARA USO DA INSTITUIÇÃO =====
     const card6Positions = [24,30,36].map(cell => getCellPosition(cell, cols))
@@ -510,6 +513,10 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setFontSize(8)
     pdf.setFont(undefined, 'normal')
     pdf.text('ASSINATURA DO EMITENTE', 56, 102, { align: 'center', baseline: 'middle', angle: 90 })
+    // Âncora invisível (ZapSign) — assinatura do EMITENTE (cedente)
+    pdf.setTextColor(255, 255, 255)
+    pdf.text('<<cedente>>', card8LineX - 6, card8Y + card8Height / 2, { align: 'center' })
+    pdf.setTextColor(0, 0, 0)
 
     // ===== CARD 9: DADOS DO SACADO =====
     const card9Positions = [38,39,40,41,42,44,45,46,47,48,50,51,52,53,54,56,57,58,59,60,62,63,64,65,66].map(cell => getCellPosition(cell, cols))
@@ -576,8 +583,13 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.setFont(undefined, 'normal')
     pdf.text('VALOR EXTENSO', colS_X, gridRowY(53), { baseline: 'middle' })
     const valorExtenso = converterNumeroParaExtenso(boleto?.valor || 0)
-    const valorExtensoCap = valorExtenso ? valorExtenso.charAt(0).toUpperCase() + valorExtenso.slice(1) : ''
-    pdf.text(valorExtensoCap, colAH_X, gridRowY(53), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colAH_X - 2 })
+    const valorExtensoUpper = (valorExtenso || '').toUpperCase()
+    pdf.text(valorExtensoUpper, colAH_X, gridRowY(53), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colAH_X - 2 })
+
+    // Texto de confirmação abaixo do card Valor Extenso
+    pdf.setFontSize(8)
+    pdf.setFont(undefined, 'normal')
+    pdf.text('Confirmo a compra, o recebimento da mercadoria e o reconhecimento integral desta duplicata.', colS_X, gridRowY(57), { baseline: 'middle' })
 
     // ===== ACEITE / ASSINATURA DO SACADO (abaixo da duplicata) =====
     pdf.setFontSize(8)
@@ -585,12 +597,115 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     pdf.text('DATA DO ACEITE EM ____/____/_____', colS_X, gridRowY(64), { baseline: 'middle' })
     pdf.text('______________________________________________', colBE_X, gridRowY(62), { baseline: 'middle' })
     pdf.text('ASSINATURA DO SACADO', colBN_X, gridRowY(64), { baseline: 'middle' })
+    // Âncora invisível (ZapSign) — assinatura do SACADO (sobre a linha do aceite)
+    pdf.setTextColor(255, 255, 255)
+    pdf.text('<<sacado>>', colBN_X, gridRowY(61), { baseline: 'middle' })
+    pdf.setTextColor(0, 0, 0)
 
     // Grade de referência 5mm x 5mm (auxílio de posicionamento).
     // Defina como false para ocultar na versão final.
     const SHOW_REFERENCE_GRID = false
     if (SHOW_REFERENCE_GRID) {
       drawReferenceGrid(pdf, startX, startY, duplicataWidth, duplicataHeight, 2, 65)
+    }
+
+    // ===== METADE INFERIOR: INSTRUMENTO PARTICULAR DE CESSÃO DE DIREITOS =====
+    {
+      const pageWid = 210
+      const leftX = startX
+      const rightX = startX + duplicataWidth
+      const lineW = duplicataWidth
+      let ty = 159 // início do texto na metade inferior (descido para terminar a 2cm do fim)
+
+      // Dados do CEDENTE (a conta/cedente da duplicata)
+      const cedNome = (conta?.nome_correntista || '').toUpperCase()
+      const cedDig = String(conta?.cic || '').replace(/\D/g, '')
+      const cedDoc = cedDig.length === 14
+        ? cedDig.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+        : cedDig.length === 11
+          ? cedDig.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+          : (conta?.cic || '')
+      const cedDocLbl = cedDig.length === 14 ? 'CNPJ nº' : 'CPF nº'
+      const cedEnd = [conta?.endereco, ((conta?.cidade || '') + '-' + (conta?.uf || ''))].filter(p => p && p !== '-').join(', ')
+
+      // Título centralizado
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(8.5)
+      pdf.text('INSTRUMENTO PARTICULAR DE CESSÃO DE DIREITOS CREDITÓRIOS E ANTECIPAÇÃO DE RECEBÍVEIS', pageWid / 2, ty, { align: 'center' })
+      ty += 7
+
+      pdf.setFontSize(8)
+      // CEDENTE (label + nome em negrito, restante normal)
+      pdf.setFont('helvetica', 'bold')
+      const cedPrefix = `CEDENTE: ${cedNome}`
+      pdf.text(cedPrefix, leftX, ty)
+      pdf.setFont('helvetica', 'normal')
+      pdf.text(`, ${cedDocLbl} ${cedDoc}, residente na ${cedEnd}.`, leftX + pdf.getTextWidth(cedPrefix), ty)
+      ty += 4
+
+      // CESSIONÁRIA (fixa: CAPT)
+      pdf.setFont('helvetica', 'bold')
+      const cesPrefix = 'CESSIONÁRIA: CAPT ADMINISTRAÇÃO DE PAGAMENTOS LTDA'
+      pdf.text(cesPrefix, leftX, ty)
+      pdf.setFont('helvetica', 'normal')
+      pdf.text(', CNPJ nº 08.035.579/0001-30.', leftX + pdf.getTextWidth(cesPrefix), ty)
+      ty += 4
+
+      const para = (text) => {
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(8)
+        const lines = pdf.splitTextToSize(text, lineW)
+        lines.forEach(ln => { pdf.text(ln, leftX, ty); ty += 3.4 })
+      }
+
+      para('As partes celebram o presente Instrumento de Cessão de Direitos Creditórios e Antecipação de Recebíveis.')
+      ty += 1
+
+      const clausulas = [
+        ['CLÁUSULA PRIMEIRA - DO CRÉDITO CEDIDO', 'O CEDENTE declara ser titular dos direitos creditórios decorrentes da duplicata mercantil anexa, originada de venda mercantil regularmente realizada ao SACADO, representada por Nota Fiscal/Fatura e respectiva duplicata.'],
+        ['CLÁUSULA SEGUNDA - DA CESSÃO', 'O CEDENTE cede e transfere à CESSIONÁRIA, em caráter irrevogável e irretratável, todos os direitos, ações e garantias relativos ao crédito referido, autorizando sua cobrança administrativa ou judicial.'],
+        ['CLÁUSULA TERCEIRA - DA ANTECIPAÇÃO DE RECEBÍVEIS', 'Em contrapartida à cessão, a CESSIONÁRIA pagará ao CEDENTE o valor líquido ajustado para aquisição do crédito. O CEDENTE reconhece que o valor recebido poderá ser inferior ao valor nominal do título em razão de deságio, remuneração da operação, tarifas, custos financeiros e encargos pactuados.'],
+        ['CLÁUSULA QUARTA - DAS DECLARAÇÕES E GARANTIAS', 'O CEDENTE declara que é legítimo titular do crédito, que a mercadoria foi entregue ou o serviço prestado, que o crédito é legítimo, líquido, certo e exigível, inexistindo impedimento legal, contratual ou judicial à presente cessão, sendo autênticas todas as informações e documentos fornecidos.'],
+        ['CLÁUSULA QUINTA - DA RESPONSABILIDADE DO CEDENTE', 'Constatada fraude, simulação, inexistência do crédito, devolução de mercadorias, cancelamento da nota fiscal, vício da operação comercial, contestação procedente do SACADO ou qualquer fato atribuível ao CEDENTE que impeça a liquidação do título, este restituirá imediatamente à CESSIONÁRIA os valores recebidos, acrescidos de correção monetária, juros legais e despesas incorridas.'],
+        ['CLÁUSULA SEXTA - DA NOTIFICAÇÃO AO SACADO', 'A CESSIONÁRIA poderá comunicar a cessão ao SACADO, nos termos do art. 290 do Código Civil, passando os pagamentos a serem efetuados diretamente à CESSIONÁRIA ou a quem indicar.'],
+        ['CLÁUSULA SÉTIMA - DA FUNDAMENTAÇÃO LEGAL', 'O presente instrumento é regido pelos arts. 286 a 298 da Lei nº 10.406/2002 e pela Lei nº 5.474/1968, além das demais normas aplicáveis.'],
+      ]
+
+      clausulas.forEach(([h, b]) => {
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(8)
+        pdf.text(h, leftX, ty)
+        ty += 3.8
+        para(b)
+        ty += 1
+      })
+
+      // Assinaturas (CEDENTE e CESSIONÁRIA) — recuadas 1cm nas laterais e ancoradas a 2cm do fim
+      const sigInset = 10                 // recuo de 1cm em cada borda lateral
+      const sCol = 72
+      const sLeftX = leftX + sigInset
+      const sRightX = rightX - sigInset
+      const lcx = sLeftX + sCol / 2
+      const rcx = sRightX - sCol / 2
+      let sy = 297 - 10 - 8               // linha das assinaturas (última linha fica a 1cm do fim)
+      if (sy < ty + 8) sy = ty + 8        // segurança: garante folga mínima entre texto e assinaturas
+      pdf.setDrawColor(0, 0, 0)
+      pdf.setLineWidth(0.3)
+      pdf.line(sLeftX, sy, sLeftX + sCol, sy)
+      pdf.line(sRightX - sCol, sy, sRightX, sy)
+      // Âncoras invisíveis (ZapSign) — CEDENTE (esq.) e CESSIONÁRIA/CAPT (dir.) acima das linhas
+      pdf.setTextColor(255, 255, 255)
+      pdf.text('<<cedente>>', lcx, sy - 9, { align: 'center' })
+      pdf.text('<<capt>>', rcx, sy - 9, { align: 'center' })
+      pdf.setTextColor(0, 0, 0)
+      sy += 4
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(8)
+      pdf.text(cedNome, lcx, sy, { align: 'center' })
+      pdf.text('CAPT ADMINISTRAÇÃO DE PAGAMENTOS LTDA', rcx, sy, { align: 'center' })
+      sy += 4
+      pdf.text(`${cedDocLbl} ${cedDoc}`, lcx, sy, { align: 'center' })
+      pdf.text('CNPJ nº 08.035.579/0001-30', rcx, sy, { align: 'center' })
     }
 
     const blob = pdf.output('blob')

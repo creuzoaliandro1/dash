@@ -1307,6 +1307,44 @@ export const getBorderoData = async (numLancamento) => {
   }
 }
 
+// Retorna TODOS os capt_boletos que pertencem à mesma operação (borderô) do título.
+// Fluxo: num_lancamento -> OPEITE (COD_OPERACAO+COD_CEDENTE) -> todos os NUM_LANCAMENTO
+// da operação -> capt_boletos com esses num_lancamento.
+export const getBoletosDoBordero = async (numLancamento) => {
+  try {
+    const numLanc = Number(numLancamento)
+    if (!numLanc || isNaN(numLanc)) return { data: [], error: new Error('Título sem num_lancamento.') }
+
+    const { data: itemRows, error: e1 } = await supabase
+      .from('OPEITE')
+      .select('COD_OPERACAO, COD_CEDENTE')
+      .eq('NUM_LANCAMENTO', numLanc)
+      .limit(1)
+    if (e1) throw e1
+    if (!itemRows || itemRows.length === 0) return { data: [], error: new Error('Operação não encontrada.') }
+    const { COD_OPERACAO, COD_CEDENTE } = itemRows[0]
+
+    const { data: titRows, error: e2 } = await supabase
+      .from('OPEITE')
+      .select('NUM_LANCAMENTO')
+      .eq('COD_OPERACAO', COD_OPERACAO)
+      .eq('COD_CEDENTE', COD_CEDENTE)
+    if (e2) throw e2
+    const numLancs = Array.from(new Set((titRows || []).map(t => t.NUM_LANCAMENTO).filter(Boolean)))
+    if (numLancs.length === 0) return { data: [], error: null }
+
+    const { data: boletos, error: e3 } = await supabase
+      .from('capt_boletos')
+      .select('*')
+      .in('num_lancamento', numLancs)
+    if (e3) throw e3
+    return { data: boletos || [], error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar boletos do borderô:', err)
+    return { data: [], error: err }
+  }
+}
+
 // Importar registros do Efactor (OPEITE) para capt_boletos
 // Mapeia OPEITE + SACADO + CONTAS -> capt_boletos, gerando nosso_numero novo.
 // Pula registros cujo num_lancamento já exista em capt_boletos para a conta.

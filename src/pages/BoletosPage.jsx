@@ -3,11 +3,13 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF } from '../utils/duplicata'
-import { criarDocumentoAssinatura } from '../services/zapsignService'
+import { criarDocumentoAssinatura, CAPT_SIGNER } from '../services/zapsignService'
+import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
+import ZapsignModal from '../components/Boletos/ZapsignModal'
 
 export default function BoletosPage() {
   const [showModal, setShowModal] = useState(false)
@@ -27,6 +29,9 @@ export default function BoletosPage() {
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   const [assinandoZapsign, setAssinandoZapsign] = useState(false)
+  const [showZapsignModal, setShowZapsignModal] = useState(false)
+  const [showAssinarSub, setShowAssinarSub] = useState(false)
+  const [assinarMode, setAssinarMode] = useState(null) // 'com' | 'sem'
   const [retornandoAntecipacao, setRetornandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
   const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
@@ -699,80 +704,194 @@ export default function BoletosPage() {
     }
   }
 
-  const handleAssinarZapsign = async () => {
+  const handleAssinarZapsign = (mode) => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto para enviar à assinatura')
       return
     }
+    setAssinarMode(mode)
+    setShowAssinarSub(false)
+    setOpenActionsMenu(false)
+    setShowZapsignModal(true)
+  }
 
-    if (!window.confirm(`Enviar ${selectedRows.size} duplicata(s) para assinatura na ZapSign?`)) {
-      return
+  // Executa o envio à ZapSign conforme o modo escolhido no ZapsignModal.
+  // Retorna { ok, fail, links:[{label,url}], error? } para o modal exibir.
+  const runZapsign = async ({ mode, sacado }) => {
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
+
+    if (selecionados.length === 0) return { ok: 0, fail: 0, links: [], error: 'Nenhum título selecionado.' }
+
+    // Posições das assinaturas (coordenadas ZapSign 0–100, origem inferior-esquerda).
+    // Convertidas dos valores em mm informados (A4 210×297): left% = mm/210*100; bottom% = (297−mm_topo)/297*100.
+    const SZ = { x: 10.37, y: 5 }
+    const POS = {
+      cedenteCard8: { bottom: 66, left: 4 },
+      cedenteCessao: { bottom: 6, left: 9 },
+      sacado: { bottom: 53.7, left: 54 },
+      captCessao: { bottom: 6, left: 50 },
     }
 
-    setOpenActionsMenu(false)
-    setAssinandoZapsign(true)
+    // Assinante CEDENTE = conta ativa
+    const cedenteSigner = {
+      name: contaData?.nome_correntista || 'Cedente',
+      email: contaData?.email || '',
+      phone: contaData?.telefone || '',
+    }
+    const sacadoSigner = sacado ? {
+      name: sacado.nome || 'Sacado',
+      email: '',
+      phone: sacado.whatsapp || '',
+    } : null
+    // CAPT é assinante (para a assinatura ser posicionada), mas o link dela NÃO é exibido.
+    const captSigner = { ...CAPT_SIGNER }
+
+    // Posições das assinaturas no Borderô (página 0). bottomPct é dinâmico (a linha varia
+    // de altura conforme o nº de títulos). idxCed/idxCapt = índice do assinante.
+    const borderoPlacements = (idxCed, idxCapt, bottomPct) => [
+      { page: 0, type: 'signature', relative_position_bottom: bottomPct, relative_position_left: 10, relative_size_x: SZ.x, relative_size_y: SZ.y, signer_index: idxCed },
+      { page: 0, type: 'signature', relative_position_bottom: bottomPct, relative_position_left: 52, relative_size_x: SZ.x, relative_size_y: SZ.y, signer_index: idxCapt },
+    ]
+    // Converte a altura (mm do topo) da linha de assinatura do Borderô em bottom% (origem inferior).
+    const borderoBottomPct = (bRes) => ((bRes.pageHeight - bRes.signatureLineY) / bRes.pageHeight) * 100
+
+    let ok = 0
+    let fail = 0
+    const links = []
+    let primeiroDocToken = null
+    let primeiroSignUrl = ''
 
     try {
-      const filteredBoletos = getFilteredBoletos()
-      const selecionados = Array.from(selectedRows)
-        .map(index => filteredBoletos[index])
-        .filter(b => b)
+      // Documento principal: Duplicatas + Boletos.
+      // Com Sacado -> assinantes: cedente + sacado + CAPT (mostra 2 links: cedente e sacado).
+      // Sem Sacado -> assinantes: cedente + CAPT (mostra 1 link: cedente); Borderô vai como ANEXO no MESMO link.
+      // Define os boletos que comporão o PDF de Duplicatas+Boletos.
+      // Sem Sacado: TODOS os títulos do borderô (operação) do título selecionado.
+      // Com Sacado: apenas os selecionados.
+      let boletosDoc = selecionados
+      if (mode === 'sem') {
+        const base = selecionados.find(b => b?.num_lancamento)
+        if (base) {
+          const { data: todos } = await getBoletosDoBordero(base.num_lancamento)
+          if (todos && todos.length > 0) boletosDoc = todos
+        }
+      }
+      const pdfDupBol = await buildDuplicatasBoletosBlob(boletosDoc, contaData)
 
-      let ok = 0
-      let fail = 0
-      const links = []
+      // Ordem dos assinantes define o signer_index usado nos placements.
+      const signersDupBol = mode === 'com'
+        ? [cedenteSigner, sacadoSigner, captSigner]   // 0=cedente, 1=sacado, 2=capt
+        : [cedenteSigner, captSigner]                 // 0=cedente, 1=capt
+      const idxCedente = 0
+      const idxSacado = mode === 'com' ? 1 : -1
+      const idxCapt = mode === 'com' ? 2 : 1
 
-      for (const boleto of selecionados) {
-        try {
-          // PDF a assinar = Duplicata gerada pelo nosso sistema
-          const pdfBlob = await generateDuplicataPDF(boleto, contaData)
+      // No PDF mesclado, cada boleto ocupa 2 páginas: Duplicata (par) + Boleto (ímpar).
+      const dupPages = boletosDoc.map((_, i) => i * 2)
+      const placements = []
+      // type 'visto' = só a marca/imagem (sem o texto de validação); 'signature' = assinatura completa.
+      const addPos = (signerIndex, pos, type = 'signature') => {
+        if (signerIndex < 0) return
+        dupPages.forEach(pg => placements.push({
+          page: pg,
+          type,
+          relative_position_bottom: pos.bottom,
+          relative_position_left: pos.left,
+          relative_size_x: SZ.x,
+          relative_size_y: SZ.y,
+          signer_index: signerIndex,
+        }))
+      }
+      // Cedente no Card 8 = apenas o VISTO (rubrica), sem o carimbo de validação
+      addPos(idxCedente, POS.cedenteCard8, 'visto')
+      addPos(idxCedente, POS.cedenteCessao)
+      if (mode === 'com') addPos(idxSacado, POS.sacado)
+      addPos(idxCapt, POS.captCessao)
 
-          const { data, error } = await criarDocumentoAssinatura({
-            name: `Duplicata ${boleto.numero_documento || boleto.nosso_numero || ''}`.trim(),
-            pdfBlob,
-            signerName: boleto.sacado_nome || 'Sacado',
-            signerEmail: boleto.sacado_email || '',
-            signerPhone: boleto.sacado_telefone || '',
-          })
-
-          if (error) {
-            fail++
-            console.error('[ZapSign] Erro ao criar documento:', error)
-            continue
-          }
-
-          ok++
-          if (data?.sign_url) {
-            links.push(`${boleto.sacado_nome || boleto.numero_documento || ''}: ${data.sign_url}`)
-          }
-
-          // Persistir token/link/status no banco
-          if (boleto.id && data?.doc_token) {
-            await updateBoleto(boleto.id, {
-              zapsign_doc_token: data.doc_token,
-              zapsign_sign_url: data.sign_url || '',
-              zapsign_status: 'pendente',
-            })
-          }
-        } catch (e) {
-          fail++
-          console.error('[ZapSign] Exceção ao processar boleto:', boleto?.id, e)
+      const notes = []
+      let extraPdfBlobs
+      if (mode === 'sem') {
+        const bRes = await buildBorderoBlob(selecionados)
+        if (bRes && bRes.blob) {
+          // No Sem Sacado os assinantes do anexo são [cedente(0), capt(1)] (mesma ordem do doc principal)
+          extraPdfBlobs = [{ name: 'Borderô', blob: bRes.blob, placements: borderoPlacements(idxCedente, idxCapt, borderoBottomPct(bRes)) }]
+        } else {
+          notes.push('Borderô NÃO anexado: nenhum título selecionado tem operação vinculada (num_lancamento / OPECAB BI-LC).')
         }
       }
 
-      let msg = `Assinatura ZapSign:\n\n✓ Documentos criados: ${ok}\n✗ Falhas: ${fail}`
-      if (links.length > 0) {
-        msg += `\n\nLinks de assinatura:\n${links.join('\n')}`
+      const r1 = await criarDocumentoAssinatura({
+        name: `Duplicatas e Boletos (${selecionados.length})`,
+        pdfBlob: pdfDupBol,
+        signers: signersDupBol,
+        extraPdfBlobs,
+        placements,
+      })
+      if (r1.error) {
+        fail++
+        return { ok, fail, links, error: 'Erro ao criar documento: ' + r1.error.message }
       }
-      alert(msg)
+      ok++
+      primeiroDocToken = r1.data?.doc_token || null
+      primeiroSignUrl = r1.data?.sign_url || ''
+      // Exibe os links de todos os assinantes, EXCETO a CAPT (assina automaticamente).
+      const captName = (CAPT_SIGNER.name || '').trim().toUpperCase()
+      const pushLinks = (signersArr, prefix) => (signersArr || []).forEach(s => {
+        const isCapt = String(s.name || '').trim().toUpperCase() === captName
+        if (s.sign_url && !isCapt) links.push({ label: prefix ? `${prefix} — ${s.name || ''}` : (s.name || 'Assinante'), url: s.sign_url })
+      })
+      pushLinks(r1.data?.signers)
+
+      // Confirma se o Borderô foi anexado (Sem Sacado)
+      if (mode === 'sem' && extraPdfBlobs) {
+        const anexados = (r1.data?.extra_docs || []).length
+        notes.push(anexados > 0
+          ? 'Borderô anexado ao mesmo link (2 PDFs para assinar).'
+          : 'Aviso: o Borderô pode não ter sido anexado (verifique os logs do ZapSign).')
+      }
+
+      // Com Sacado: o Borderô NÃO entra no envelope do sacado (anexo herdaria o sacado).
+      // Então criamos um documento SEPARADO do Borderô assinado só por Cedente + CAPT.
+      if (mode === 'com') {
+        const bRes = await buildBorderoBlob(selecionados)
+        if (bRes && bRes.blob) {
+          const rB = await criarDocumentoAssinatura({
+            name: 'Borderô',
+            pdfBlob: bRes.blob,
+            signers: [cedenteSigner, captSigner], // 0=cedente, 1=capt
+            placements: borderoPlacements(0, 1, borderoBottomPct(bRes)),
+          })
+          if (rB.error) {
+            fail++
+          } else {
+            ok++
+            pushLinks(rB.data?.signers, 'Borderô')
+          }
+        }
+      }
+
+      // Persistir token/link nos boletos do documento (todos do borderô no Sem Sacado)
+      if (primeiroDocToken) {
+        for (const b of boletosDoc) {
+          if (b.id) {
+            await updateBoleto(b.id, {
+              zapsign_doc_token: primeiroDocToken,
+              zapsign_sign_url: primeiroSignUrl,
+              zapsign_status: 'pendente',
+            })
+          }
+        }
+      }
 
       setSelectedRows(new Set())
       await loadBoletos()
+      return { ok, fail, links, notes }
     } catch (error) {
       console.error('[ZapSign] Erro geral:', error)
-      alert('Erro ao enviar para assinatura: ' + error.message)
-    } finally {
-      setAssinandoZapsign(false)
+      return { ok, fail, links, error: error.message || String(error) }
     }
   }
 
@@ -1130,12 +1249,29 @@ export default function BoletosPage() {
                 {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
               </button>
               <button
-                onClick={handleAssinarZapsign}
+                onClick={() => setShowAssinarSub(!showAssinarSub)}
                 disabled={assinandoZapsign}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
               >
-                {assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}
+                <span>{assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}</span>
+                <span className="text-[#666666]">{showAssinarSub ? '▾' : '▸'}</span>
               </button>
+              {showAssinarSub && (
+                <div className="bg-[#141414] border-b border-[#2a2a2a]">
+                  <button
+                    onClick={() => handleAssinarZapsign('com')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    👤 Com Sacado
+                  </button>
+                  <button
+                    onClick={() => handleAssinarZapsign('sem')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    🚫 Sem Sacado
+                  </button>
+                </div>
+              )}
               <button
                 onClick={handleDeleteSelectedBoletos}
                 className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1221,6 +1357,16 @@ export default function BoletosPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Modal de Assinatura ZapSign (Com/Sem Sacado) */}
+      {showZapsignModal && (
+        <ZapsignModal
+          qtd={selectedRows.size}
+          initialMode={assinarMode}
+          onClose={() => setShowZapsignModal(false)}
+          onSubmit={runZapsign}
+        />
       )}
     </div>
   )
