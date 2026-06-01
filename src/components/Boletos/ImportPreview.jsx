@@ -203,6 +203,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
   const handleImport = async () => {
     setIsImporting(true)
+    const inicioImport = Date.now()
+    console.log(`[ImportPreview] ⏱️ Iniciando importação de ${selectedRows.size} boletos`)
+
     let imported = 0
     let errors = 0
     const erros = [] // Rastrear detalhes dos erros
@@ -222,91 +225,114 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       })
     }
 
-    let linhaAtual = 2 // Começar em 2 (linha 1 é header)
+    // ===== OTIMIZAÇÃO: Processar em paralelo (50 boletos por vez) =====
+    const rowArray = Array.from(selectedRows)
+    const BATCH_SIZE = 50
+    const inicioProcessamento = Date.now()
 
-    for (const rowId of selectedRows) {
-      const [itemIdx, recordIdx] = rowId.split('-').map(Number)
-      const boletoData = dataWithInstalments[itemIdx]?._records?.[recordIdx]
+    for (let batchIdx = 0; batchIdx < rowArray.length; batchIdx += BATCH_SIZE) {
+      const batchEnd = Math.min(batchIdx + BATCH_SIZE, rowArray.length)
+      const batch = rowArray.slice(batchIdx, batchEnd)
 
-      if (!boletoData) {
-        console.error(`[ImportPreview] Dados do boleto não encontrados: itemIdx=${itemIdx}, recordIdx=${recordIdx}`)
-        errors++
-        linhaAtual++
-        continue
-      }
+      console.log(`[ImportPreview] 📦 Processando lote ${Math.floor(batchIdx / BATCH_SIZE) + 1}/${Math.ceil(rowArray.length / BATCH_SIZE)} (${batch.length} boletos)`)
 
-      try {
-        // 1. Verificar se código de barras já existe (DUPLICADO)
-        const codigoBarras = boletoData.CODIGO_BARRAS || ''
-        if (codigoBarras) {
-          const jáExiste = await verificarCodigoBarrasExistente(codigoBarras)
-          if (jáExiste) {
-            console.warn(`[ImportPreview] Código de barras duplicado: ${codigoBarras}`)
-            erros.push({
-              linha: linhaAtual,
-              numero_documento: boletoData.NUM_TITULO,
-              sacado_nome: boletoData.SACADO_NOME,
-              codigo_barras: codigoBarras,
-              valor: boletoData.VALOR,
-              motivo: 'duplicado'
-            })
-            errors++
-            linhaAtual++
-            continue
-          }
-        }
+      // Processar batch em PARALELO (não sequencial!)
+      const promessas = batch.map(async (rowId) => {
+        const [itemIdx, recordIdx] = rowId.split('-').map(Number)
+        const boletoData = dataWithInstalments[itemIdx]?._records?.[recordIdx]
+        const linhaAtual = 2 + rowArray.indexOf(rowId)
 
-        // 2. Determinar qual userId usar
-        let targetUserId = userId
-
-        if (userType === 'M' && boletoData.CONTA_CODIGO) {
-          // Master: procurar a conta correta
-          const contaId = contaMap[boletoData.CONTA_CODIGO]
-          if (!contaId) {
-            console.warn(`[ImportPreview] Conta não encontrada para: ${boletoData.CONTA_CODIGO}`)
-            erros.push({
-              linha: linhaAtual,
-              numero_documento: boletoData.NUM_TITULO,
-              sacado_nome: boletoData.SACADO_NOME,
-              codigo_barras: codigoBarras,
-              valor: boletoData.VALOR,
-              motivo: 'conta_nao_encontrada'
-            })
-            errors++
-            linhaAtual++
-            continue
-          }
-          targetUserId = contaId
-        }
-
-        // 3. Importar boleto
-        const { data: boletoResult, error } = await createBoleto(targetUserId, boletoData)
-        if (error) {
-          console.error('[ImportPreview] Erro ao salvar boleto:', error)
+        if (!boletoData) {
+          console.error(`[ImportPreview] Dados do boleto não encontrados: itemIdx=${itemIdx}, recordIdx=${recordIdx}`)
           errors++
-        } else {
-          imported++
+          return
+        }
 
-          // 4. Upload dos anexos se houver
-          if (arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && boletoResult && boletoResult.id) {
-            console.log(`[ImportPreview] Fazendo upload de ${arquivosAnexados[itemIdx].length} arquivo(s) para boleto ${boletoResult.id}`)
-            for (const file of arquivosAnexados[itemIdx]) {
+        try {
+          // 1. Verificar se código de barras já existe (DUPLICADO) - COM TIMEOUT
+          const codigoBarras = boletoData.CODIGO_BARRAS || ''
+          if (codigoBarras) {
+            try {
+              const jáExiste = await verificarCodigoBarrasExistente(codigoBarras)
+              if (jáExiste) {
+                console.warn(`[ImportPreview] Código de barras duplicado: ${codigoBarras}`)
+                erros.push({
+                  linha: linhaAtual,
+                  numero_documento: boletoData.NUM_TITULO,
+                  sacado_nome: boletoData.SACADO_NOME,
+                  codigo_barras: codigoBarras,
+                  valor: boletoData.VALOR,
+                  motivo: 'duplicado'
+                })
+                errors++
+                return
+              }
+            } catch (errVerif) {
+              console.warn(`[ImportPreview] Erro ao verificar duplicata (ignorando):`, errVerif)
+              // Continuar mesmo se falhar a verificação
+            }
+          }
+
+          // 2. Determinar qual userId usar
+          let targetUserId = userId
+
+          if (userType === 'M' && boletoData.CONTA_CODIGO) {
+            // Master: procurar a conta correta
+            const contaId = contaMap[boletoData.CONTA_CODIGO]
+            if (!contaId) {
+              console.warn(`[ImportPreview] Conta não encontrada para: ${boletoData.CONTA_CODIGO}`)
+              erros.push({
+                linha: linhaAtual,
+                numero_documento: boletoData.NUM_TITULO,
+                sacado_nome: boletoData.SACADO_NOME,
+                codigo_barras: codigoBarras,
+                valor: boletoData.VALOR,
+                motivo: 'conta_nao_encontrada'
+              })
+              errors++
+              return
+            }
+            targetUserId = contaId
+          }
+
+          // 3. Importar boleto
+          const { data: boletoResult, error } = await createBoleto(targetUserId, boletoData)
+          if (error) {
+            console.error('[ImportPreview] Erro ao salvar boleto:', error)
+            errors++
+          } else {
+            imported++
+
+            // 4. Upload dos anexos se houver
+            if (arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && boletoResult && boletoResult.id) {
+              console.log(`[ImportPreview] Fazendo upload de ${arquivosAnexados[itemIdx].length} arquivo(s) para boleto ${boletoResult.id}`)
               try {
-                await uploadAnexoBoleto(boletoResult.id, file, targetUserId)
-                console.log(`[ImportPreview] ✓ Arquivo ${file.name} anexado com sucesso`)
-              } catch (erroAnexo) {
-                console.warn(`[ImportPreview] Erro ao anexar ${file.name}:`, erroAnexo)
+                await Promise.all(
+                  arquivosAnexados[itemIdx].map(file =>
+                    uploadAnexoBoleto(boletoResult.id, file, targetUserId)
+                      .then(() => console.log(`[ImportPreview] ✓ Arquivo ${file.name} anexado`))
+                      .catch(err => console.warn(`[ImportPreview] Erro ao anexar ${file.name}:`, err))
+                  )
+                )
+              } catch (erroAnexos) {
+                console.warn(`[ImportPreview] Erro no upload de anexos:`, erroAnexos)
               }
             }
           }
+        } catch (err) {
+          console.error('[ImportPreview] Erro ao importar boleto:', err)
+          errors++
         }
-      } catch (err) {
-        console.error('[ImportPreview] Erro ao importar boleto:', err)
-        errors++
-      }
+      })
 
-      linhaAtual++
+      // Aguardar TODO o batch terminar antes de próximo lote
+      await Promise.all(promessas)
     }
+
+    const durracaoProcessamento = ((Date.now() - inicioProcessamento) / 1000).toFixed(2)
+    console.log(`[ImportPreview] ⏱️ Processamento concluído em ${durracaoProcessamento}s`)
+    const durracaoTotal = ((Date.now() - inicioImport) / 1000).toFixed(2)
+    console.log(`[ImportPreview] ✅ Importação concluída em ${durracaoTotal}s`)
 
     // Gerar relatório PDF se houver erros
     if (erros.length > 0) {
