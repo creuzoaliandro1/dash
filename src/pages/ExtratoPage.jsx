@@ -155,6 +155,18 @@ export default function ExtratoPage() {
     }
   }
 
+  // Função para mapear operações para nomes curtos
+  const mapeadorOperacoes = (operacao) => {
+    const mapeamento = {
+      'CUSTO REGISTRO BOLETO ONLINE': 'REGISTRO',
+      'RECEBIMENTO': 'BOLETO',
+      'TRANSFERÊNCIA ENTRE CONTAS DÉBITO': 'TRANSFERÊNCIA',
+      'PAGAMENTO BOLETO': 'PAGAMENTO',
+      'CUSTO ENVIO PIX': 'CUSTO PIX'
+    }
+    return mapeamento[operacao] || operacao
+  }
+
   const handleExportarPDF = () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um lançamento para exportar')
@@ -162,7 +174,7 @@ export default function ExtratoPage() {
     }
     setOpenActionsMenu(false)
     const filtered = getSorted().filter((e) => selectedRows.has(e.ID))
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
     doc.setFontSize(12)
     doc.setFont(undefined, 'bold')
     doc.text('EXTRATO - LANÇAMENTOS SELECIONADOS', 10, 12)
@@ -176,7 +188,7 @@ export default function ExtratoPage() {
       body: filtered.map((e) => [
         formatDataBR(e.DATA),
         e.TIPO || '',
-        e.OPERACAO || '',
+        mapeadorOperacoes(e.OPERACAO || ''),
         (e.NOME || '').substring(0, 35),
         e.CIC || '',
         formatValorBR(e.VALOR),
@@ -395,17 +407,3 @@ export default function ExtratoPage() {
                     <td className="px-3 py-2 text-[#a3a3a3] text-xs truncate max-w-xs">{e.OBSERVACAO || '—'}</td>
                   </tr>
                 )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Footer com total */}
-      <div className="flex items-center justify-between text-xs text-[#666666] px-1">
-        <span>{sorted.length} registro(s) listado(s) · {selectedRows.size} selecionado(s)</span>
-        <span>Ordenado por {sortColumn} {sortDirection === 'asc' ? '↑' : '↓'}</span>
-      </div>
-    </div>
-  )
-}

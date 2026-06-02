@@ -813,46 +813,4 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             <input
               type="checkbox"
               checked={selectedRows.size === getTotalRecords() && getTotalRecords() > 0}
-              onChange={toggleAll}
-              className="w-4 h-4 cursor-pointer accent-white"
-            />
-            <span className="text-sm text-[#666666]">Selecionar todos</span>
-          </label>
-
-          <div className="flex gap-3">
-            {relatorioPDF && (
-              <button
-                onClick={() => downloadPDFRelatorio(relatorioPDF, `relatorio_importacao_${new Date().getTime()}.pdf`)}
-                className="px-6 py-2 bg-[#1a5490] text-white text-sm font-medium border border-[#2a5a8a] rounded hover:bg-[#145480] transition"
-              >
-                📄 Baixar Relatório de Erros
-              </button>
-            )}
-            <button
-              onClick={onCancel}
-              disabled={isImporting}
-              className="px-6 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleImport}
-              disabled={isImporting || selectedRows.size === 0}
-              className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50"
-            >
-              {isImporting ? 'Importando...' : `Importar (${selectedRows.size})`}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {instalmentModal && (
-        <InstalmentModal
-          item={instalmentModal.item || dataWithInstalments[instalmentModal.itemIdx]}
-          onConfirm={handleInstalmentConfirm}
-          onCancel={() => setInstalmentModal(null)}
-        />
-      )}
-    </div>
-  )
-}
+              on
