@@ -160,11 +160,35 @@ export default function ExtratoPage() {
     const mapeamento = {
       'CUSTO REGISTRO BOLETO ONLINE': 'REGISTRO',
       'RECEBIMENTO': 'BOLETO',
+      'RECEBIMENTO BOLETO': 'BOLETO',
       'TRANSFERÊNCIA ENTRE CONTAS DÉBITO': 'TRANSFERÊNCIA',
       'PAGAMENTO BOLETO': 'PAGAMENTO',
       'CUSTO ENVIO PIX': 'CUSTO PIX'
     }
     return mapeamento[operacao] || operacao
+  }
+
+  // Função para formatar data em padrão dd/mm/aa
+  const formatarDataDDMMAA = (data) => {
+    if (!data) return '—'
+    const s = String(data).trim()
+    // yyyy-mm-dd -> dd/mm/aa
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (m) return `${m[3]}/${m[2]}/${m[1].slice(-2)}`
+    // dd/mm/yyyy ou dd/mm/aa -> dd/mm/aa
+    m = s.match(/^(\d{2})\/(\d{2})\/(\d{2,4})/)
+    if (m) return `${m[1]}/${m[2]}/${m[3].slice(-2)}`
+    return s
+  }
+
+  // Função para extrair Nosso Número da observação
+  const extrairNossoNumero = (observacao) => {
+    if (!observacao) return ''
+    const match = String(observacao).match(/Nosso Número:\s*(\d+)/)
+    if (match && match[1]) {
+      return match[1]
+    }
+    return (String(observacao) || '').substring(0, 30)
   }
 
   const handleExportarPDF = () => {
@@ -184,21 +208,29 @@ export default function ExtratoPage() {
 
     autoTable(doc, {
       startY: 22,
-      head: [['Data', 'Tipo', 'Operação', 'Nome', 'CIC', 'Valor (R$)', 'ID Transação', 'Origem', 'Observação']],
+      head: [['Data', 'Tipo', 'Operação', 'Nome', 'CIC', 'Valor (R$)', 'ID Transação', 'Observação']],
       body: filtered.map((e) => [
-        formatDataBR(e.DATA),
+        formatarDataDDMMAA(e.DATA),
         e.TIPO || '',
         mapeadorOperacoes(e.OPERACAO || ''),
         (e.NOME || '').substring(0, 35),
         e.CIC || '',
         formatValorBR(e.VALOR),
         e.TRANSACAO || '',
-        e.ORIGEM || '',
-        (e.OBSERVACAO || '').substring(0, 30),
+        extrairNossoNumero(e.OBSERVACAO),
       ]),
-      styles: { fontSize: 7, cellPadding: 1.5 },
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+        overflow: 'hidden',
+        cellWidth: 'wrap'
+      },
       headStyles: { fillColor: [30, 30, 30], textColor: [255, 255, 255] },
-      columnStyles: { 5: { halign: 'right' } },
+      columnStyles: {
+        3: { overflow: 'hidden', cellWidth: 30 }, // Nome: não quebra, limite 30mm
+        5: { halign: 'right' },
+        7: { overflow: 'hidden' } // Observação: não quebra
+      },
       theme: 'grid',
     })
 
@@ -407,3 +439,17 @@ export default function ExtratoPage() {
                     <td className="px-3 py-2 text-[#a3a3a3] text-xs truncate max-w-xs">{e.OBSERVACAO || '—'}</td>
                   </tr>
                 )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Footer com total */}
+      <div className="flex items-center justify-between text-xs text-[#666666] px-1">
+        <span>{sorted.length} registro(s) listado(s) · {selectedRows.size} selecionado(s)</span>
+        <span>Ordenado por {sortColumn} {sortDirection === 'asc' ? '↑' : '↓'}</span>
+      </div>
+    </div>
+  )
+}

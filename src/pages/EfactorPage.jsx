@@ -17,6 +17,7 @@ export default function EfactorPage() {
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('todos')
+  const [filtroVencidos, setFiltroVencidos] = useState(false)
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [showBuscarLancamento, setShowBuscarLancamento] = useState(false)
@@ -140,6 +141,7 @@ export default function EfactorPage() {
   }, [filtroValorOpeite, filtroVencOpeite, opeiteMaps, loadingOpeiteMaps])
 
   const getFilteredBoletos = () => {
+    console.log('[EFactor] getFilteredBoletos() chamado. filtroVencidos:', filtroVencidos, 'total boletos:', boletos.length)
     let filtered = boletos
 
     // E-Factor: não exibir boletos com status 'pago'
@@ -180,6 +182,33 @@ export default function EfactorPage() {
       // Se ambos desmarked (não deveria acontecer), não mostrar nada
       return false
     })
+
+    // Filter by Vencidos: Mostrar APENAS vencidos OU APENAS não-vencidos
+    // Obter data de hoje em formato YYYY-MM-DD (horário local)
+    const hoje = new Date()
+    const anoHoje = hoje.getFullYear()
+    const mesHoje = String(hoje.getMonth() + 1).padStart(2, '0')
+    const diaHoje = String(hoje.getDate()).padStart(2, '0')
+    const hojeStr = `${anoHoje}-${mesHoje}-${diaHoje}`
+
+    console.log(`[EFactor] Filtro Vencidos: ${filtroVencidos ? 'ATIVADO (mostrar vencidos)' : 'DESATIVADO (mostrar não-vencidos)'}. Hoje: ${hojeStr}`)
+    filtered = filtered.filter(boleto => {
+      if (!boleto.data_vencimento) {
+        // Se não tem data de vencimento, mostrar conforme filtro
+        return !filtroVencidos // Se filtro ativo (vencidos), não mostrar. Se filtro inativo (não-vencidos), mostrar
+      }
+      const vencStr = String(boleto.data_vencimento).slice(0, 10)
+      const isVencido = vencStr < hojeStr
+
+      if (filtroVencidos) {
+        // Filtro ativado: mostrar APENAS vencidos
+        return isVencido
+      } else {
+        // Filtro desativado: mostrar APENAS não-vencidos
+        return !isVencido
+      }
+    })
+    console.log(`[EFactor] Boletos após filtro: ${filtered.length}`)
 
     // Filtro por correspondência no OPEITE (mesmo CIC): valor e/ou vencimento
     if ((filtroValorOpeite || filtroVencOpeite) && opeiteMaps) {
@@ -326,10 +355,39 @@ export default function EfactorPage() {
   }
 
   const getFilteredDivergencias = (divergencias) => {
-    if (filtroStatusDivergencias === 'todos') {
-      return divergencias
+    let filtered = divergencias
+
+    // Filter by Status
+    if (filtroStatusDivergencias !== 'todos') {
+      filtered = filtered.filter(div => div.status_banco === filtroStatusDivergencias)
     }
-    return divergencias.filter(div => div.status_banco === filtroStatusDivergencias)
+
+    // Filter by Vencidos: Mostrar APENAS vencidos OU APENAS não-vencidos
+    const hoje = new Date()
+    const anoHoje = hoje.getFullYear()
+    const mesHoje = String(hoje.getMonth() + 1).padStart(2, '0')
+    const diaHoje = String(hoje.getDate()).padStart(2, '0')
+    const hojeStr = `${anoHoje}-${mesHoje}-${diaHoje}`
+
+    console.log(`[EFactor] Divergências - Filtro Vencidos: ${filtroVencidos ? 'ATIVADO (mostrar vencidos)' : 'DESATIVADO (mostrar não-vencidos)'}. Hoje: ${hojeStr}`)
+    filtered = filtered.filter(div => {
+      if (!div.boleto_data_vencimento) {
+        return !filtroVencidos
+      }
+      const vencStr = String(div.boleto_data_vencimento).slice(0, 10)
+      const isVencido = vencStr < hojeStr
+
+      if (filtroVencidos) {
+        // Filtro ativado: mostrar APENAS vencidos
+        return isVencido
+      } else {
+        // Filtro desativado: mostrar APENAS não-vencidos
+        return !isVencido
+      }
+    })
+    console.log(`[EFactor] Divergências após filtro: ${filtered.length}`)
+
+    return filtered
   }
 
   const getSelectedDivergencias = () => {
@@ -834,6 +892,25 @@ export default function EfactorPage() {
           <option value="atrasado">Atrasado</option>
           <option value="cancelado">Cancelado</option>
         </select>
+
+        {/* Checkbox Vencidos */}
+        <div className="flex items-center gap-2 px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md cursor-pointer hover:bg-[#1a1a1a] transition" onClick={() => { console.log('[EFactor] Clicou no checkbox. Estado atual:', filtroVencidos); setFiltroVencidos(!filtroVencidos); }}>
+          <input
+            type="checkbox"
+            checked={filtroVencidos}
+            onChange={(e) => {
+              console.log('[EFactor] onChange disparado. Checked:', e.target.checked)
+              setFiltroVencidos(e.target.checked)
+            }}
+            onClick={(e) => {
+              console.log('[EFactor] onClick disparado no input')
+              e.stopPropagation()
+            }}
+            className="w-4 h-4 cursor-pointer accent-white"
+            style={{ pointerEvents: 'auto' }}
+          />
+          <span className="text-white text-sm font-medium whitespace-nowrap select-none">Vencidos</span>
+        </div>
 
         {/* Botão Ações com Dropdown */}
         <div className="relative">
