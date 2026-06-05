@@ -202,12 +202,9 @@ export default function ExtratoPage() {
     doc.setFontSize(12)
     doc.setFont(undefined, 'bold')
     doc.text('EXTRATO - LANÇAMENTOS SELECIONADOS', 10, 12)
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'normal')
-    doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')} — ${filtered.length} registro(s)`, 10, 18)
 
     autoTable(doc, {
-      startY: 22,
+      startY: 16,
       head: [['Data', 'Tipo', 'Operação', 'Nome', 'CIC', 'Valor (R$)', 'ID Transação', 'Observação']],
       body: filtered.map((e) => [
         formatarDataDDMMAA(e.DATA),
@@ -221,7 +218,8 @@ export default function ExtratoPage() {
       ]),
       styles: {
         fontSize: 7,
-        cellPadding: 1.5,
+        cellPadding: { top: 0.5, bottom: 0.5, left: 1, right: 1 },
+        minCellHeight: 0,
         overflow: 'hidden',
         cellWidth: 'wrap'
       },

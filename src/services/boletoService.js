@@ -787,11 +787,26 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
     console.log('[Reconciliação] Carregando 3 tabelas em paralelo (1000 registros por página)...\n')
 
     const loadStartTime = Date.now()
-    const [boletos, allOpeite, allSacado] = await Promise.all([
+    let [boletos, allOpeite, allSacado] = await Promise.all([
       paginateTable('capt_boletos', 'id, numero_documento, num_lancamento, valor, data_vencimento, sacado_cic, status'),
-      paginateTable('OPEITE', 'NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO'),
+      paginateTable('OPEITE', 'NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO'),
       paginateTable('SACADO', 'COD_SACADO, CIC')
     ])
+
+    // Regra: desconsiderar registros OPEITE com STATUS = 'DC'
+    const totalAntesDC = allOpeite.length
+    allOpeite = allOpeite.filter(o => String(o.STATUS || '').trim().toUpperCase() !== 'DC')
+    if (totalAntesDC !== allOpeite.length) {
+      console.log(`[Reconciliação] ${totalAntesDC - allOpeite.length} registro(s) OPEITE com STATUS=DC desconsiderado(s)`)
+    }
+
+    // Regra: se OPEITE.STATUS = 'PR', usar DT_VENCI_NOVO no lugar de DT_VENCI
+    // (afeta matching exato, todos os índices e as 3 listas de divergências)
+    allOpeite.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
 
     const loadTime = ((Date.now() - loadStartTime) / 1000).toFixed(2)
     console.log(`[Reconciliação] ✓ Dados carregados em ${loadTime}s\n`)
@@ -906,6 +921,10 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
     const divergenciasValor = []   // Divergências de Valor (cic+data OK)
     const divergenciasVencimento = [] // Divergências de Vencimento (cic+valor OK)
 
+    // Controle de duplicidades: OPEITE já consumidos nesta execução e boletos pendentes para 2ª passada
+    const numLancamentosConsumidos = new Set()
+    const pendentesDuplicidade = []
+
     const matchStartTime = Date.now()
 
     // FASE 1: Matching (identificar quais boletos atualizar e 3 tipos de divergências)
@@ -929,12 +948,31 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
             id: boleto.id,
             num_lancamento: exactMatches[0].NUM_LANCAMENTO
           })
+          numLancamentosConsumidos.add(exactMatches[0].NUM_LANCAMENTO)
           continue
         }
 
-        // Se MÚLTIPLAS correspondências exatas (ignorar - ambíguo)
+        // Se MÚLTIPLAS correspondências exatas (duplicidade):
+        // desempatar comparando capt_boletos.numero_documento com OPEITE.NUM_TITULO
         if (exactMatches.length > 1) {
-          totalMatched++
+          // Normaliza: só dígitos, sem zeros à esquerda (ex: "000000000670201" ≈ "6702-01")
+          const normDoc = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '')
+          const docBoleto = normDoc(boleto.numero_documento)
+          const candidatos = docBoleto
+            ? exactMatches.filter(m => normDoc(m.NUM_TITULO) === docBoleto)
+            : []
+
+          if (candidatos.length === 1) {
+            updatesToApply.push({
+              id: boleto.id,
+              num_lancamento: candidatos[0].NUM_LANCAMENTO
+            })
+            numLancamentosConsumidos.add(candidatos[0].NUM_LANCAMENTO)
+          } else {
+            // Sem correspondência de documento (ou ainda ambíguo):
+            // guardar para 2ª passada, após os desempates por título consumirem os OPEITE
+            pendentesDuplicidade.push({ boleto, exactMatches })
+          }
           continue
         }
 
@@ -1026,6 +1064,26 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
           boletoId: boleto.id,
           message: err.message
         })
+      }
+    }
+
+    // FASE 1.5: Segunda passada nas duplicidades não resolvidas.
+    // Após os desempates por NUM_TITULO consumirem seus OPEITE, reaplica a regra
+    // dos 3 iguais (valor+vencimento+cic) apenas entre os OPEITE ainda não consumidos.
+    if (pendentesDuplicidade.length > 0) {
+      console.log(`[Reconciliação] Fase 1.5: Reprocessando ${pendentesDuplicidade.length} duplicidade(s) com OPEITE restantes...`)
+      for (const { boleto, exactMatches } of pendentesDuplicidade) {
+        const restantes = exactMatches.filter(m => !numLancamentosConsumidos.has(m.NUM_LANCAMENTO))
+        if (restantes.length === 1) {
+          updatesToApply.push({
+            id: boleto.id,
+            num_lancamento: restantes[0].NUM_LANCAMENTO
+          })
+          numLancamentosConsumidos.add(restantes[0].NUM_LANCAMENTO)
+        } else {
+          // Ainda ambíguo (0 ou 2+ OPEITE restantes) - ignorar
+          totalMatched++
+        }
       }
     }
 

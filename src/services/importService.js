@@ -1923,8 +1923,19 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
 
       console.log(`[ContaCapt] Encontrado ${jsonData.length} linhas`)
 
+      // Não importar registros com status "Pago" ou "Cancelado pelo cedente" (coluna G - Status do boleto)
+      const statusExcluidos = ['pago', 'cancelado pelo cedente']
+      const linhasValidas = jsonData.filter(row => {
+        const statusBoleto = String(row['Status do boleto'] || '').toLowerCase().trim()
+        return !statusExcluidos.includes(statusBoleto)
+      })
+      const ignorados = jsonData.length - linhasValidas.length
+      if (ignorados > 0) {
+        console.log(`[ContaCapt] ${ignorados} linha(s) ignorada(s) por status Pago/Cancelado pelo cedente`)
+      }
+
       // Processar cada linha
-      const processados = jsonData.map(row => {
+      const processados = linhasValidas.map(row => {
         const codigoBarras = String(row['Linha digitável'] || '').trim()
         const contaCodigo = extractContaFromBarcode(codigoBarras)
 
