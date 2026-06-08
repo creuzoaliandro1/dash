@@ -34,7 +34,8 @@ const emptyFormData = {
   SACADO_BAIRRO: '', SACADO_NUMERO: '', SACADO_CIDADE: '', SACADO_UF: '',
   AVALISTA: '', AVALISTA_CIC: '', JUROS_VALOR: '', DESCONTO_VALOR: '',
   DESCONTO_DATA: '', VALOR_PAGO: '', DATA_PAGO: '', DESCRICAO: '',
-  STATUS: 'pendente', SITUACAO: '',
+  // Boleto digitado nasce como "Gravado" (só vira "Registrado" via relatório BTG)
+  STATUS: 'pendente', SITUACAO: 'Gravado',
 }
 
 export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {

@@ -29,6 +29,11 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
+  // Modal de importação Efactor (com opção de importar para outro cedente)
+  const [showEfactorImportModal, setShowEfactorImportModal] = useState(false)
+  const [efactorImportRecords, setEfactorImportRecords] = useState([])
+  const [efactorImportStep, setEfactorImportStep] = useState('choice') // 'choice' | 'selectProfile'
+  const [efactorImportTargetId, setEfactorImportTargetId] = useState('')
   const [assinandoZapsign, setAssinandoZapsign] = useState(false)
   const [showZapsignModal, setShowZapsignModal] = useState(false)
   const [showAssinarSub, setShowAssinarSub] = useState(false)
@@ -608,7 +613,8 @@ export default function BoletosPage() {
     }
   }
 
-  const handleImportOpeite = async () => {
+  // Passo 1: validar seleção e abrir o modal de confirmação
+  const handleImportOpeite = () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um registro do Efactor para importar')
       return
@@ -624,24 +630,45 @@ export default function BoletosPage() {
       return
     }
 
-    if (!window.confirm(`Importar ${registrosSelecionados.length} registro(s) do Efactor para a tabela de boletos?`)) {
+    setEfactorImportRecords(registrosSelecionados)
+    setEfactorImportStep('choice')
+    setEfactorImportTargetId('')
+    setOpenActionsMenu(false)
+    setShowEfactorImportModal(true)
+  }
+
+  // Passo 2: executar a importação para a conta de destino (logado ou outro cedente)
+  const executeImportOpeite = async (targetContaId) => {
+    const registrosSelecionados = efactorImportRecords
+    if (!registrosSelecionados || registrosSelecionados.length === 0) {
+      setShowEfactorImportModal(false)
+      return
+    }
+    if (!targetContaId) {
+      alert('Conta de destino não identificada.')
       return
     }
 
-    setOpenActionsMenu(false)
+    const activeId = getActiveContaId()
+    const isMesmoPerfil = String(targetContaId) === String(activeId)
+
+    setShowEfactorImportModal(false)
     setImportingOpeite(true)
 
     try {
-      const activeId = getActiveContaId()
-      console.log('[Ações] Importando', registrosSelecionados.length, 'registros OPEITE para conta', activeId)
+      console.log('[Ações] Importando', registrosSelecionados.length, 'registros OPEITE para conta', targetContaId, isMesmoPerfil ? '(perfil atual)' : '(outro cedente)')
 
-      const { data: resultado, error } = await importOpeiteToBoletos(activeId, registrosSelecionados)
+      const { data: resultado, error } = await importOpeiteToBoletos(targetContaId, registrosSelecionados)
 
       if (error) {
         alert('Erro ao importar registros: ' + error.message)
         console.error('[Ações] Erro ao importar OPEITE:', error)
       } else {
-        let mensagem = `Importação concluída:\n\n`
+        const contaDestino = allContas.find(c => String(c.id) === String(targetContaId))
+        const nomeDestino = isMesmoPerfil
+          ? 'perfil atual'
+          : (contaDestino?.nome_correntista || contaDestino?.cedente || 'outro cedente')
+        let mensagem = `Importação concluída (${nomeDestino}):\n\n`
         mensagem += `✓ Importados: ${resultado.imported}\n`
         mensagem += `⏭ Pulados (já existiam): ${resultado.skipped}\n`
         if (resultado.errors > 0) {
@@ -649,13 +676,19 @@ export default function BoletosPage() {
         }
         alert(mensagem)
         setSelectedRows(new Set())
-        await loadBoletos()
+        // Recarregar a lista apenas se importou para o perfil atualmente exibido
+        if (isMesmoPerfil) {
+          await loadBoletos()
+        }
       }
     } catch (error) {
       console.error('[Ações] Erro ao importar OPEITE:', error)
       alert('Erro ao importar registros: ' + error.message)
     } finally {
       setImportingOpeite(false)
+      setEfactorImportRecords([])
+      setEfactorImportTargetId('')
+      setEfactorImportStep('choice')
     }
   }
 
@@ -1351,6 +1384,84 @@ export default function BoletosPage() {
           userType={userType}
           allContas={allContas}
         />
+      )}
+
+      {/* Modal de Importação Efactor — confirmação + escolha de cedente de destino */}
+      {showEfactorImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-lg font-semibold text-white mb-4">Importar registros do Efactor</h2>
+
+            {efactorImportStep === 'choice' ? (
+              <>
+                <p className="text-sm text-[#a3a3a3] mb-6">
+                  Deseja importar os {efactorImportRecords.length} registro(s) selecionado(s) em <span className="text-white font-medium">outro cedente</span>?
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowEfactorImportModal(false)}
+                    className="px-4 py-2 bg-[#1a1a1a] text-white text-sm border border-[#2a2a2a] rounded hover:bg-[#222222] transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => executeImportOpeite(getActiveContaId())}
+                    className="px-4 py-2 bg-[#1a1a1a] text-white text-sm border border-[#2a2a2a] rounded hover:bg-[#222222] transition"
+                  >
+                    Não (perfil atual)
+                  </button>
+                  <button
+                    onClick={() => setEfactorImportStep('selectProfile')}
+                    className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"
+                  >
+                    Sim
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[#a3a3a3] mb-3">
+                  Selecione o perfil (cedente) que receberá os {efactorImportRecords.length} registro(s):
+                </p>
+                <select
+                  value={efactorImportTargetId}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setEfactorImportTargetId(val)
+                    if (val) {
+                      executeImportOpeite(val)
+                    }
+                  }}
+                  className="w-full bg-[#111111] border border-[#2a2a2a] rounded px-3 py-2 text-sm text-white mb-2 focus:outline-none focus:border-[#3a3a3a]"
+                >
+                  <option value="">Selecione um perfil...</option>
+                  {allContas.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome_correntista || c.cedente || c.conta || c.id}
+                    </option>
+                  ))}
+                </select>
+                {allContas.length === 0 && (
+                  <p className="text-xs text-[#666666] mb-2">Nenhum perfil disponível para seleção.</p>
+                )}
+                <div className="flex justify-between gap-3 mt-4">
+                  <button
+                    onClick={() => setEfactorImportStep('choice')}
+                    className="px-4 py-2 bg-[#1a1a1a] text-white text-sm border border-[#2a2a2a] rounded hover:bg-[#222222] transition"
+                  >
+                    ← Voltar
+                  </button>
+                  <button
+                    onClick={() => setShowEfactorImportModal(false)}
+                    className="px-4 py-2 bg-[#1a1a1a] text-white text-sm border border-[#2a2a2a] rounded hover:bg-[#222222] transition"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Import Result Modal */}

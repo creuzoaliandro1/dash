@@ -161,7 +161,9 @@ export const createBoleto = async (contaId, boletoData) => {
       valor: parseFloat(boletoData.VALOR || 0),
       nosso_numero: nossoNumeroFinal,
       status: boletoData.STATUS || 'pendente',
-      situacao: boletoData.SITUACAO || 'Registrado',
+      // Novo boleto (importação OS, digitação ou Efactor) nasce como "Gravado".
+      // Só vira "Registrado" via importação do relatório BTG (que passa SITUACAO explicitamente).
+      situacao: boletoData.SITUACAO || 'Gravado',
       sacado_cic: boletoData.SACADO_CIC || '',
       sacado_endereco: boletoData.SACADO_ENDERECO || '',
       sacado_bairro: boletoData.SACADO_BAIRRO || '',
@@ -275,7 +277,7 @@ export const createBoletosBulk = async (contaId, boletosData) => {
         valor: parseFloat(boletoData.VALOR || 0),
         nosso_numero: String(nnumeroBase),
         status: boletoData.STATUS || 'pendente',
-        situacao: boletoData.SITUACAO || 'Registrado',
+        situacao: boletoData.SITUACAO || 'Gravado',
         sacado_cic: boletoData.SACADO_CIC || '',
         sacado_endereco: boletoData.SACADO_ENDERECO || '',
         sacado_bairro: boletoData.SACADO_BAIRRO || '',
@@ -1496,7 +1498,8 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
         AVALISTA_NOME: rec.avalista_nome || '',
         AVALISTA_CIC: rec.avalista_cic || '',
         STATUS: 'pendente',
-        SITUACAO: 'Registrado',
+        // Importação do Efactor cria boleto como "Gravado" (ainda não registrado no banco)
+        SITUACAO: 'Gravado',
         STATUS_EFACTOR: rec.status_efactor || 'Registrado',
         NUM_LANCAMENTO: rec.num_lancamento || '',
         DESCRICAO: '',
@@ -1522,6 +1525,173 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
     console.error('[Import OPEITE] Erro geral:', err)
     return { data: null, error: err }
   }
+}
+
+// Converte uma "Linha digitável" (47 dígitos) no "Código de barras" (44 dígitos).
+// Se já vier com 44 dígitos, retorna como está. Usado para casar o relatório BTG
+// (que só traz a linha digitável) com capt_boletos.codigo_barras (que pode estar
+// armazenado em qualquer um dos dois formatos).
+export const linhaDigitavelParaBarcode = (valor) => {
+  const d = String(valor || '').replace(/\D/g, '')
+  if (d.length === 44) return d
+  if (d.length !== 47) return ''
+  // Mapeamento inverso de formatLinhaDigitavel():
+  // barcode = banco/moeda(0-4) + DVgeral(32) + fator+valor(33-47) + campoLivre(4-9, 10-20, 21-31)
+  return d.slice(0, 4) + d[32] + d.slice(33, 47) + d.slice(4, 9) + d.slice(10, 20) + d.slice(21, 31)
+}
+
+// Marca como "Registrado" qualquer boleto existente cujo codigo_barras corresponda
+// a uma das variantes informadas (linha digitável de 47 e/ou código de barras de 44).
+// Retorna { atualizado: boolean, ids: [...] }. Se nada foi atualizado, o chamador
+// deve criar o boleto como "Registrado".
+export const marcarRegistradoPorCodigoBarras = async (variantes) => {
+  try {
+    const vs = Array.from(new Set(
+      (variantes || []).map(v => String(v || '').replace(/\D/g, '')).filter(Boolean)
+    ))
+    if (vs.length === 0) return { atualizado: false, ids: [] }
+
+    // Atualiza em lotes pequenos para evitar URLs gigantes no filtro .in()
+    const ids = []
+    const chunk = 100
+    for (let i = 0; i < vs.length; i += chunk) {
+      const batch = vs.slice(i, i + chunk)
+      const { data, error } = await supabase
+        .from('capt_boletos')
+        .update({ situacao: 'Registrado' })
+        .in('codigo_barras', batch)
+        .select('id')
+      if (error) {
+        console.error('[marcarRegistradoPorCodigoBarras] erro:', error.message)
+        return { atualizado: ids.length > 0, ids, error }
+      }
+      if (data) data.forEach(d => ids.push(d.id))
+    }
+    return { atualizado: ids.length > 0, ids }
+  } catch (err) {
+    console.error('[marcarRegistradoPorCodigoBarras] exceção:', err)
+    return { atualizado: false, ids: [], error: err }
+  }
+}
+
+// Retorna um Set com TODOS os codigo_barras já cadastrados em capt_boletos
+// (apenas dígitos). Faz uma leitura única paginada da coluna — bem mais rápido e
+// seguro que enviar centenas de valores em .in() (que gera URLs gigantes e trava).
+// O chamador checa a existência localmente com existentes.has(variante).
+// `contaId` opcional restringe a busca a uma conta (mais leve quando informado).
+export const buscarCodigosBarrasExistentes = async (codigos, contaId = null) => {
+  const existentes = new Set()
+  try {
+    const pageSize = 1000
+    let from = 0
+    for (;;) {
+      let query = supabase
+        .from('capt_boletos')
+        .select('codigo_barras')
+        .not('codigo_barras', 'is', null)
+        .neq('codigo_barras', '')
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1)
+      if (contaId) query = query.eq('conta_id', contaId)
+
+      const { data, error } = await query
+      if (error) {
+        console.warn('[buscarCodigosBarrasExistentes] aviso:', error.message)
+        break
+      }
+      if (!data || data.length === 0) break
+      data.forEach(d => {
+        const v = String(d.codigo_barras || '').replace(/\D/g, '')
+        if (v) existentes.add(v)
+      })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+  } catch (err) {
+    console.error('[buscarCodigosBarrasExistentes] exceção:', err)
+  }
+  return existentes
+}
+
+// Converte "dd/mm/yyyy" em "yyyy-mm-dd" (formato Postgres). Retorna null se inválido.
+const ddmmyyyyParaPG = (s) => {
+  const m = String(s || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null
+}
+
+// Reconciliação do relatório BTG: para cada registro do arquivo cujo codigo_barras
+// corresponda a um boleto já existente, verifica se houve mudança e atualiza:
+//   - situacao  → 'Registrado'
+//   - status    → coluna G ("Status do boleto", já mapeado)
+//   - valor_pagamento → coluna AU ("Valor pago")  — só quando há pagamento (> 0)
+//   - data_pagamento  → coluna AV ("Data de pagamento") — só quando há pagamento
+// Só grava quando algum campo realmente difere do que está em capt_boletos.
+// `registros`: [{ variants:[barcodeDigitos...], isBTG, status, valorPago, dataPagamento }]
+// Retorna { existentes:Set<barcodeDigitos>, atualizados:number }.
+export const reconciliarBTGExistentes = async (registros) => {
+  const result = { existentes: new Set(), atualizados: 0 }
+  try {
+    // 1) Mapa de boletos existentes (codigo_barras normalizado → linha), leitura paginada
+    const mapa = new Map()
+    const pageSize = 1000
+    let from = 0
+    for (;;) {
+      const { data, error } = await supabase
+        .from('capt_boletos')
+        .select('id, codigo_barras, status, valor_pagamento, data_pagamento, situacao')
+        .not('codigo_barras', 'is', null)
+        .neq('codigo_barras', '')
+        .order('id', { ascending: true })
+        .range(from, from + pageSize - 1)
+      if (error) {
+        console.warn('[reconciliarBTGExistentes] aviso:', error.message)
+        break
+      }
+      if (!data || data.length === 0) break
+      data.forEach(r => {
+        const k = String(r.codigo_barras || '').replace(/\D/g, '')
+        if (k) { mapa.set(k, r); result.existentes.add(k) }
+      })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+
+    // 2) Monta updates apenas para os que casaram E mudaram (somente BTG atualiza dados)
+    const updates = []
+    for (const reg of (registros || [])) {
+      let row = null
+      for (const v of (reg.variants || [])) {
+        if (mapa.has(v)) { row = mapa.get(v); break }
+      }
+      if (!row || !reg.isBTG) continue
+
+      const payload = {}
+      if (String(row.situacao || '') !== 'Registrado') payload.situacao = 'Registrado'
+      if (reg.status && reg.status !== row.status) payload.status = reg.status
+
+      const vp = Number(reg.valorPago) || 0
+      if (vp > 0) {
+        if (Math.abs(vp - (parseFloat(row.valor_pagamento) || 0)) > 0.001) payload.valor_pagamento = vp
+        const dp = ddmmyyyyParaPG(reg.dataPagamento)
+        if (dp && dp !== (row.data_pagamento || null)) payload.data_pagamento = dp
+      }
+
+      if (Object.keys(payload).length > 0) updates.push({ id: row.id, payload })
+    }
+
+    // 3) Aplica os updates em paralelo, em lotes
+    const BATCH = 25
+    for (let i = 0; i < updates.length; i += BATCH) {
+      const slice = updates.slice(i, i + BATCH)
+      await Promise.all(slice.map(u =>
+        supabase.from('capt_boletos').update(u.payload).eq('id', u.id)
+      ))
+      result.atualizados += slice.length
+    }
+  } catch (err) {
+    console.error('[reconciliarBTGExistentes] exceção:', err)
+  }
+  return result
 }
 
 // Buscar dados completos da conta (incluindo logo, email, tipo)

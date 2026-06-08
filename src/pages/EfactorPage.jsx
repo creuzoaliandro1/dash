@@ -41,6 +41,7 @@ export default function EfactorPage() {
   const [conciliating, setConciliating] = useState(false)
   const [openExportMenu, setOpenExportMenu] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null)
   const [filtroStatusDivergencias, setFiltroStatusDivergencias] = useState('todos')
   const [statusOptions, setStatusOptions] = useState([])
   // TODOS: marcado = mostra todos os registros (sem filtro por perfil selecionado)
@@ -644,6 +645,73 @@ export default function EfactorPage() {
     }
   }
 
+  // Exporta os boletos selecionados (tabela principal) num relatório PDF e abre o PREVIEW.
+  // Formato retrato, sem quebra de linha (ellipsize) e linhas compactas.
+  const handleExportarBoletosPDF = () => {
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(Boolean)
+
+    if (selecionados.length === 0) {
+      alert('Selecione pelo menos um registro para exportar')
+      setOpenExportMenu(false)
+      return
+    }
+
+    setExporting(true)
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const margin = 8
+
+      doc.setFontSize(12)
+      doc.setFont(undefined, 'bold')
+      doc.text('RELATÓRIO E-FACTOR', margin, 12)
+      doc.setFontSize(9)
+      doc.setFont(undefined, 'normal')
+      doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')} | Total: ${selecionados.length} registro(s)`, margin, 17)
+
+      autoTable(doc, {
+        startY: 21,
+        head: [['Nº Lanç.', 'Documento', 'Sacado', 'CIC', 'Emissão', 'Vencimento', 'Valor', 'Nosso Nº', 'Status']],
+        body: selecionados.map(b => [
+          String(b.num_lancamento || ''),
+          String(b.numero_documento || ''),
+          String(b.sacado_nome || ''),
+          String(b.sacado_cic || ''),
+          formatDate(b.data_emissao),
+          formatDate(b.data_vencimento),
+          formatCurrency(b.valor),
+          String(b.nosso_numero || ''),
+          String(b.status || ''),
+        ]),
+        // overflow 'ellipsize' = não quebra linha (trunca com reticências)
+        // cellPadding pequeno = linhas compactas
+        styles: { fontSize: 7, cellPadding: 0.8, overflow: 'ellipsize', valign: 'middle', lineWidth: 0.1 },
+        headStyles: { fillColor: [26, 26, 26], textColor: 255, fontSize: 7, halign: 'left', cellPadding: 0.8 },
+        columnStyles: { 6: { halign: 'right' } },
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+      })
+
+      const blob = doc.output('blob')
+      const url = URL.createObjectURL(blob)
+      if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl)
+      setPdfPreviewUrl(url)
+      setOpenExportMenu(false)
+    } catch (error) {
+      console.error('[Export] Erro ao gerar PDF dos boletos:', error)
+      alert('Erro ao gerar PDF: ' + error.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const closePdfPreview = () => {
+    if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl)
+    setPdfPreviewUrl(null)
+  }
+
   const handleShowDivergencias = async () => {
     // Se já está mostrando divergências, apenas toggle
     if (showDivergencias) {
@@ -812,8 +880,8 @@ export default function EfactorPage() {
                   📊 Exportar CSV
                 </button>
                 <button
-                  onClick={handleExportarPDF}
-                  disabled={exporting || selectedDivergenciasIds.size === 0}
+                  onClick={() => (showDivergencias ? handleExportarPDF() : handleExportarBoletosPDF())}
+                  disabled={exporting || (showDivergencias ? selectedDivergenciasIds.size === 0 : selectedRows.size === 0)}
                   className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   📑 Exportar PDF
@@ -1354,6 +1422,33 @@ export default function EfactorPage() {
           onUpdated={loadBoletos}
           onClose={() => { setShowBuscarLancamento(false); loadBoletos() }}
         />
+      )}
+
+      {/* Pré-visualização do relatório PDF */}
+      {pdfPreviewUrl && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg w-full max-w-5xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-[#1f1f1f]">
+              <h2 className="text-white text-sm font-semibold">Pré-visualização do relatório</h2>
+              <div className="flex gap-2">
+                <a
+                  href={pdfPreviewUrl}
+                  download={`efactor_${new Date().toISOString().split('T')[0]}.pdf`}
+                  className="px-3 py-1.5 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition"
+                >
+                  ⬇ Baixar
+                </a>
+                <button
+                  onClick={closePdfPreview}
+                  className="px-3 py-1.5 bg-[#1a1a1a] text-white text-xs font-medium border border-[#2a2a2a] rounded hover:bg-[#222222] transition"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+            <iframe src={pdfPreviewUrl} title="Pré-visualização PDF" className="flex-1 w-full rounded-b-lg bg-white" />
+          </div>
+        </div>
       )}
     </div>
   )

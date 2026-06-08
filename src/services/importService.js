@@ -1923,23 +1923,20 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
 
       console.log(`[ContaCapt] Encontrado ${jsonData.length} linhas`)
 
-      // Não importar registros com status "Pago" ou "Cancelado pelo cedente" (coluna G - Status do boleto)
-      const statusExcluidos = ['pago', 'cancelado pelo cedente']
-      const linhasValidas = jsonData.filter(row => {
-        const statusBoleto = String(row['Status do boleto'] || '').toLowerCase().trim()
-        return !statusExcluidos.includes(statusBoleto)
-      })
-      const ignorados = jsonData.length - linhasValidas.length
-      if (ignorados > 0) {
-        console.log(`[ContaCapt] ${ignorados} linha(s) ignorada(s) por status Pago/Cancelado pelo cedente`)
-      }
+      // Status que NÃO devem gerar criação de boleto novo (coluna G).
+      // ATENÇÃO: não filtramos mais essas linhas aqui — elas continuam no conjunto para
+      // permitir a RECONCILIAÇÃO (atualizar boletos já existentes que foram pagos/cancelados).
+      // Apenas marcamos com _SKIP_CREATE para que o preview não as exiba/crie como novas.
+      const statusSemCriacao = ['pago', 'cancelado pelo cedente']
 
       // Processar cada linha
-      const processados = linhasValidas.map(row => {
+      const processados = jsonData.map(row => {
         const codigoBarras = String(row['Linha digitável'] || '').trim()
         const contaCodigo = extractContaFromBarcode(codigoBarras)
+        const statusBoleto = String(row['Status do boleto'] || '').toLowerCase().trim()
 
         return {
+          _SKIP_CREATE: statusSemCriacao.includes(statusBoleto),
           NUM_TITULO: String(row['Seu número'] || row['Número do documento'] || '').trim(),
           SACADO_NOME: String(row['Nome do pagador'] || '').trim(),
           SACADO_CIC: String(row['Documento federal do pagador'] || '').replace(/\D/g, ''),
@@ -1947,7 +1944,14 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
           VENCIMENTO: formatarData(row['Data de vencimento']),
           VALOR: converterValor(row['Valor do título']),
           NOSSO_NUMERO: String(row['Nosso número'] || '').trim(),
-          STATUS: mapStatus(String(row['Status do boleto'] || '')),
+          STATUS: mapStatus(String(row['Status do boleto'] || '')),       // coluna G
+          // Reconciliação (atualização de boletos já existentes):
+          // VALOR_PAGO = coluna AU "Valor pago"; DATA_PAGAMENTO = coluna AV "Data de pagamento".
+          // "- - -" (não pago) vira 0 / vazio para não sobrescrever indevidamente.
+          VALOR_PAGO: converterValor(row['Valor pago']),                  // coluna AU
+          DATA_PAGAMENTO: (String(row['Data de pagamento'] || '').trim() && String(row['Data de pagamento']).trim() !== '- - -'
+            ? formatarData(row['Data de pagamento'])
+            : ''),                                                        // coluna AV
           SACADO_ENDERECO: String(row['Logradouro do pagador'] || '').trim(),
           SACADO_BAIRRO: String(row['Bairro do pagador'] || '').trim(),
           SACADO_CIDADE: String(row['Cidade do pagador'] || '').trim(),
@@ -1957,9 +1961,16 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
           SACADO_EMAIL: String(row['Email do pagador'] || '').trim(),
           CODIGO_BARRAS: codigoBarras,
           CONTA_CODIGO: contaCodigo,
-          // Avalista: usar dados da conta selecionada (profileName, profileCIC)
-          AVALISTA_NOME: profileName || String(row['Beneficiário final (sacador avalista)'] || '').trim(),
-          AVALISTA_CIC: profileCIC || String(row['Documento federal do avalista'] || row['CPF/CNPJ do avalista'] || row['CIC do avalista'] || '').replace(/\D/g, ''),
+          // Relatório BTG (modelo de gestão de boletos): registros presentes neste
+          // arquivo são marcados como "Registrado". Demais origens ficam "Gravado".
+          SITUACAO: 'Registrado',
+          _ORIGEM_BTG: true,
+          // Avalista do relatório BTG: vem da coluna AD "Beneficiário final (sacador avalista)".
+          // CIC do avalista NÃO é preenchido (não há coluna correspondente no relatório).
+          AVALISTA_NOME: (String(row['Beneficiário final (sacador avalista)'] || '').trim() === '- - -'
+            ? ''
+            : String(row['Beneficiário final (sacador avalista)'] || '').trim()),
+          AVALISTA_CIC: '',
           DESCRICAO: String(row['Descrição'] || '').trim(),
         }
       }).filter(b => b.SACADO_NOME && b.VALOR > 0)
@@ -2013,6 +2024,7 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
   reader.readAsArrayBuffer(file)
 }
 
+// Mapeia o "Status do boleto" do relatório para o status interno do capt_boletos
 function mapStatus(statusExcel) {
   if (!statusExcel) return 'pendente'
   const status = String(statusExcel).toLowerCase().trim()

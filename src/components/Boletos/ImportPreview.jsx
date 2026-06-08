@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { createBoleto, getAllContas, uploadAnexoBoleto } from '../../services/boletoService'
-import { verificarCodigoBarrasExistente, gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
+import { createBoleto, getAllContas, uploadAnexoBoleto, linhaDigitavelParaBarcode, reconciliarBTGExistentes } from '../../services/boletoService'
+import { gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 
 // Função para formatar valor em padrão brasileiro (55.457,87)
@@ -34,8 +34,11 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
   const [dataWithInstalments, setDataWithInstalments] = useState(
     previewData.map(item => {
-      // Preenche AVALISTA com o perfil logado por padrão
-      const base = { ...item, AVALISTA_NOME: avalistaNome, AVALISTA_CIC: avalistaCic }
+      // Relatório BTG: mantém o avalista vindo da coluna AD e NÃO preenche o CIC.
+      // Demais origens (OS/digitação): preenche AVALISTA com o perfil logado por padrão.
+      const base = item._ORIGEM_BTG
+        ? { ...item, AVALISTA_NOME: item.AVALISTA_NOME || '', AVALISTA_CIC: '' }
+        : { ...item, AVALISTA_NOME: avalistaNome, AVALISTA_CIC: avalistaCic }
       // Se o item já tem parcelas pré-preenchidas (de arquivo OS com múltiplos vencimentos)
       if (base._parcelas && base._parcelas.length > 0) {
         return {
@@ -73,6 +76,10 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const [errosImportacao, setErrosImportacao] = useState([])
   const [relatorioPDF, setRelatorioPDF] = useState(null)
   const [arquivosAnexados, setArquivosAnexados] = useState({}) // { itemIdx: [files] }
+  // Pré-filtro por código de barras: só exibe registros que serão de fato importados
+  const [checkingDedup, setCheckingDedup] = useState(true)
+  const [dedupOcultos, setDedupOcultos] = useState(0)
+  const [dedupAtualizados, setDedupAtualizados] = useState(0)
   const inputRef = useRef(null)
   const fileInputRefs = useRef({})
 
@@ -82,6 +89,67 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       inputRef.current.select()
     }
   }, [inlineEditingCell])
+
+  // Ao abrir o preview: consulta o codigo_barras de cada registro.
+  // - Registros que já existem em capt_boletos são ocultados da lista (a lista exibe
+  //   apenas o que será de fato criado).
+  // - Para os já existentes vindos do relatório BTG, reconcilia o boleto: marca
+  //   situacao='Registrado' e, se houve mudança, atualiza status (col G), valor (col AU
+  //   "Valor pago") e data_pagamento (col AV) — estes dois últimos só quando há pagamento.
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      try {
+        const registros = dataWithInstalments.map(item => {
+          const raw = String(item.CODIGO_BARRAS || item._records?.[0]?.CODIGO_BARRAS || '').replace(/\D/g, '')
+          const variants = raw ? Array.from(new Set([raw, linhaDigitavelParaBarcode(raw)].filter(Boolean))) : []
+          return {
+            variants,
+            isBTG: item._ORIGEM_BTG === true || String(item.SITUACAO || '').toLowerCase() === 'registrado',
+            status: item.STATUS,
+            valorPago: item.VALOR_PAGO,
+            dataPagamento: item.DATA_PAGAMENTO,
+          }
+        })
+
+        const comBarcode = registros.filter(r => r.variants.length > 0)
+        if (comBarcode.length === 0) {
+          if (!cancelled) setCheckingDedup(false)
+          return
+        }
+
+        const { existentes, atualizados } = await reconciliarBTGExistentes(comBarcode)
+
+        const manter = []
+        let ocultos = 0
+        dataWithInstalments.forEach((item, idx) => {
+          const variants = registros[idx].variants
+          const existe = variants.length > 0 && variants.some(v => existentes.has(v))
+          // Oculta os que não serão criados: já existentes (reconciliados) ou
+          // pagos/cancelados (_SKIP_CREATE) — a lista mostra só o que será criado.
+          if (existe || item._SKIP_CREATE) ocultos++
+          else manter.push(item)
+        })
+
+        if (cancelled) return
+        if (ocultos > 0) {
+          setDataWithInstalments(manter)
+          const ids = new Set()
+          manter.forEach((item, idx) => item._records.forEach((_, ridx) => ids.add(`${idx}-${ridx}`)))
+          setSelectedRows(ids)
+          setDedupOcultos(ocultos)
+        }
+        setDedupAtualizados(atualizados || 0)
+      } catch (err) {
+        console.error('[ImportPreview] Erro no pré-filtro por código de barras:', err)
+      } finally {
+        if (!cancelled) setCheckingDedup(false)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleInlineEdit = (itemIdx, recordIdx, field, value) => {
     setInlineEditingCell(`${itemIdx}-${recordIdx}-${field}`)
@@ -249,29 +317,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         }
 
         try {
-          // 1. Verificar se código de barras já existe (DUPLICADO) - COM TIMEOUT
-          const codigoBarras = boletoData.CODIGO_BARRAS || ''
-          if (codigoBarras) {
-            try {
-              const jáExiste = await verificarCodigoBarrasExistente(codigoBarras)
-              if (jáExiste) {
-                console.warn(`[ImportPreview] Código de barras duplicado: ${codigoBarras}`)
-                erros.push({
-                  linha: linhaAtual,
-                  numero_documento: boletoData.NUM_TITULO,
-                  sacado_nome: boletoData.SACADO_NOME,
-                  codigo_barras: codigoBarras,
-                  valor: boletoData.VALOR,
-                  motivo: 'duplicado'
-                })
-                errors++
-                return
-              }
-            } catch (errVerif) {
-              console.warn(`[ImportPreview] Erro ao verificar duplicata (ignorando):`, errVerif)
-              // Continuar mesmo se falhar a verificação
-            }
-          }
+          // 1. Duplicidade por código de barras já foi tratada no pré-filtro (ao abrir
+          //    o preview): os já existentes foram ocultados (e, no caso do BTG, marcados
+          //    como Registrado). Aqui só restam registros novos, que serão criados.
 
           // 2. Determinar qual userId usar
           let targetUserId = userId
@@ -285,7 +333,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 linha: linhaAtual,
                 numero_documento: boletoData.NUM_TITULO,
                 sacado_nome: boletoData.SACADO_NOME,
-                codigo_barras: codigoBarras,
+                codigo_barras: boletoData.CODIGO_BARRAS || '',
                 valor: boletoData.VALOR,
                 motivo: 'conta_nao_encontrada'
               })
@@ -357,11 +405,26 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         <div className="border-b border-[#1f1f1f] px-5 py-3">
           <h2 className="text-base font-semibold text-white">Visualizar dados para importação</h2>
           <p className="text-xs text-[#666666]">
-            Revise os registros e selecione quais deseja importar ({selectedRows.size} de {getTotalRecords()} selecionado(s))
+            {checkingDedup
+              ? 'Consultando código de barras...'
+              : `Revise os registros e selecione quais deseja importar (${selectedRows.size} de ${getTotalRecords()} selecionado(s))`}
           </p>
+          {!checkingDedup && dedupOcultos > 0 && (
+            <p className="text-xs text-[#1a7f1a] mt-0.5">
+              {dedupOcultos} registro(s) ocultado(s) (já existentes ou pagos/cancelados)
+              {dedupAtualizados > 0 ? `, ${dedupAtualizados} atualizado(s)` : ''} — exibindo apenas o que será criado.
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
+          {!checkingDedup && dataWithInstalments.length === 0 && (
+            <div className="h-full flex items-center justify-center text-center">
+              <p className="text-sm text-[#666666]">
+                Nenhum registro novo para importar — todos os boletos do arquivo já existem no sistema.
+              </p>
+            </div>
+          )}
           {dataWithInstalments.map((item, itemIdx) => {
             const firstRecord = item._records[0]
             const firstRowId = `${itemIdx}-0`
@@ -837,10 +900,10 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             </button>
             <button
               onClick={handleImport}
-              disabled={isImporting || selectedRows.size === 0}
+              disabled={isImporting || checkingDedup || selectedRows.size === 0}
               className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50"
             >
-              {isImporting ? 'Importando...' : `Importar (${selectedRows.size})`}
+              {isImporting ? 'Importando...' : checkingDedup ? 'Consultando...' : `Importar (${selectedRows.size})`}
             </button>
           </div>
         </div>
