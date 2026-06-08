@@ -43,6 +43,8 @@ export default function EfactorPage() {
   const [exporting, setExporting] = useState(false)
   const [filtroStatusDivergencias, setFiltroStatusDivergencias] = useState('todos')
   const [statusOptions, setStatusOptions] = useState([])
+  // TODOS: marcado = mostra todos os registros (sem filtro por perfil selecionado)
+  const [filtroTodos, setFiltroTodos] = useState(true)
 
   // Obter user da sessão
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -52,7 +54,7 @@ export default function EfactorPage() {
       loadBoletos()
       loadStatusOptions()
     }
-  }, [user.id])
+  }, [user.id, filtroTodos])
 
   const loadStatusOptions = async () => {
     try {
@@ -90,7 +92,7 @@ export default function EfactorPage() {
   const loadBoletos = async () => {
     setLoading(true)
     try {
-      const resultado = await getBoletos(user.id)
+      const resultado = await getBoletos(filtroTodos ? null : user.id)
       setBoletos(resultado.data || [])
       await loadStatusOptions()
     } catch (err) {
@@ -965,6 +967,19 @@ export default function EfactorPage() {
               className="w-4 h-4 accent-white cursor-pointer"
             />
             <span className="text-sm text-white">Sem</span>
+          </label>
+        </div>
+
+        {/* TODOS: sem filtro por perfil selecionado */}
+        <div className="flex items-center gap-3 pl-3 border-l border-[#2a2a2a]">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filtroTodos}
+              onChange={(e) => setFiltroTodos(e.target.checked)}
+              className="w-4 h-4 accent-white cursor-pointer"
+            />
+            <span className="text-sm text-white">TODOS</span>
           </label>
         </div>
 
