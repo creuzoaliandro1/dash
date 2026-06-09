@@ -106,30 +106,21 @@ export const getBoletos = async (contaId) => {
 // Retorna: CONTAS.nnumero + 1 (ex: nnumero=50007 → retorna "50008")
 export const getNextNossoNumero = async (contaId) => {
   try {
-    const { data: conta, error } = await supabase
-      .from('CONTAS')
-      .select('nnumero, nnumero_dv')
-      .eq('id', contaId)
+    // Incremento ATÔMICO via RPC (UPDATE ... RETURNING com lock de linha).
+    // Substitui o antigo SELECT+UPDATE, que sob importação em paralelo
+    // (Promise.all) lia o mesmo nnumero em chamadas simultâneas e gerava
+    // nosso_numero DUPLICADO. A RPC garante uma faixa exclusiva por chamada.
+    const { data, error } = await supabase
+      .rpc('next_nosso_numero', { p_conta_id: contaId, p_count: 1 })
       .single()
 
     if (error) throw error
+    if (!data || data.last_num == null) {
+      throw new Error('RPC next_nosso_numero não retornou valor')
+    }
 
-    // Incrementa CONTAS.nnumero e retorna o novo valor (sem DV)
-    const nextBase = Number(conta.nnumero || 0) + 1
-
-    // Pre-calcula o DV do proximo numero para cache em nnumero_dv
-    // IMPORTANTE: passar apenas a base (9 dígitos), NÃO a versão padronizada!
-    const nextDv = calcNossoNumeroDV(String(nextBase))
-
-    await supabase
-      .from('CONTAS')
-      .update({ nnumero: nextBase, nnumero_dv: nextDv })
-      .eq('id', contaId)
-
-    // Armazena APENAS O NÚMERO, SEM DV
-    // Exemplo: nextBase = 50008 → retorna "50008" (string)
-    // CNAB400 vai recalcular o DV na posição 82
-    return { nossoNumero: String(nextBase), error: null }
+    // Armazena APENAS O NÚMERO, SEM DV (DV é recalculado na geração do CNAB400)
+    return { nossoNumero: String(data.last_num), error: null }
   } catch (err) {
     console.error('Erro ao gerar nosso numero:', err)
     return { nossoNumero: null, error: err }
@@ -253,7 +244,7 @@ export const createBoletosBulk = async (contaId, boletosData) => {
       return { data: { imported: 0, errors: 0, total: 0 }, error: null }
     }
 
-    // 1) Lê a conta uma única vez (contador + dados para barcode/juros)
+    // 1) Lê a conta uma única vez (dados para barcode/juros)
     const { data: conta, error: contaErr } = await supabase
       .from('CONTAS')
       .select('id, nnumero, nnumero_dv, nome_correntista, cic, cedente, juros, conta')
@@ -263,7 +254,18 @@ export const createBoletosBulk = async (contaId, boletosData) => {
       return { data: null, error: contaErr || new Error('Conta não encontrada') }
     }
 
-    let nnumeroBase = Number(conta.nnumero || 0)
+    // 1.1) Reserva ATÔMICA da faixa de nosso_numero para todo o lote (sem corrida).
+    // A RPC incrementa CONTAS.nnumero em N de uma só vez e devolve a faixa
+    // [first_num .. last_num] exclusiva desta chamada.
+    const { data: faixa, error: faixaErr } = await supabase
+      .rpc('next_nosso_numero', { p_conta_id: contaId, p_count: boletosData.length })
+      .single()
+    if (faixaErr || !faixa || faixa.first_num == null) {
+      return { data: null, error: faixaErr || new Error('Falha ao reservar faixa de nosso_numero') }
+    }
+
+    // nnumeroBase é incrementado para first_num já na primeira iteração do map
+    let nnumeroBase = Number(faixa.first_num) - 1
 
     // 2) Monta todos os registros em memória
     const registros = boletosData.map((boletoData) => {
@@ -332,13 +334,8 @@ export const createBoletosBulk = async (contaId, boletosData) => {
       }
     }
 
-    // 4) Atualiza o contador da conta uma única vez (até onde foi usado)
-    try {
-      const novoDv = calcNossoNumeroDV(String(nnumeroBase))
-      await supabase.from('CONTAS').update({ nnumero: nnumeroBase, nnumero_dv: novoDv }).eq('id', contaId)
-    } catch (e) {
-      console.warn('[BoletoService][Bulk] Aviso ao atualizar contador da conta:', e.message)
-    }
+    // 4) (removido) O contador CONTAS.nnumero já foi avançado atomicamente
+    // pela RPC next_nosso_numero no passo 1.1 — não há mais update aqui.
 
     console.log(`[BoletoService][Bulk] ${imported} inserido(s), ${errors} erro(s)`)
     return { data: { imported, errors, total: registros.length }, error: null }
