@@ -37,11 +37,10 @@ export default function BoletosPage() {
   const [assinandoZapsign, setAssinandoZapsign] = useState(false)
   const [showZapsignModal, setShowZapsignModal] = useState(false)
   const [showAssinarSub, setShowAssinarSub] = useState(false)
+  const [showCnab400Sub, setShowCnab400Sub] = useState(false)
   const [assinarMode, setAssinarMode] = useState(null) // 'com' | 'sem'
   const [retornandoAntecipacao, setRetornandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
-  const [cnab400MenuOpen, setCnab400MenuOpen] = useState(false)
-  const cnab400MenuRef = useRef(null)
   const [dataEmissaoInicio, setDataEmissaoInicio] = useState('')
   const [dataEmissaoFim, setDataEmissaoFim] = useState('')
   const [dataVencimentoInicio, setDataVencimentoInicio] = useState('')
@@ -63,17 +62,6 @@ export default function BoletosPage() {
   useEffect(() => {
     console.log('[BoletosPage] Debug - userType:', userType, 'user:', user)
   }, [userType])
-
-  // Fechar menu CNAB400 ao clicar fora
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (cnab400MenuRef.current && !cnab400MenuRef.current.contains(event.target)) {
-        setCnab400MenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
 
   // Carregar contas se for Master
   useEffect(() => {
@@ -454,7 +442,7 @@ export default function BoletosPage() {
       alert('Selecione pelo menos um boleto')
       return
     }
-    setCnab400MenuOpen(false)
+    setShowCnab400Sub(false)
 
     setGeneratingCNAB400(true)
     setOpenActionsMenu(false)
@@ -1221,48 +1209,6 @@ export default function BoletosPage() {
           </label>
         </div>
 
-        {/* Exportar CSV */}
-        <button className="px-4 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition whitespace-nowrap">
-          Exportar CSV
-        </button>
-
-        {/* Remessa CNAB400 */}
-        <div className="relative" ref={cnab400MenuRef}>
-          <button
-            onClick={() => setCnab400MenuOpen(!cnab400MenuOpen)}
-            disabled={selectedRows.size === 0 || generatingCNAB400}
-            className={`px-4 py-2 text-sm font-medium border rounded transition whitespace-nowrap ${
-              selectedRows.size === 0 || generatingCNAB400
-                ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
-                : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
-            }`}
-          >
-            {generatingCNAB400 ? '⏳ Gerando...' : 'CNAB400'}
-          </button>
-          {cnab400MenuOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-48">
-              <button
-                onClick={() => handleGenerateRemessaCNAB400('01')}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
-              >
-                Registro
-              </button>
-              <button
-                onClick={() => handleGenerateRemessaCNAB400('06')}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
-              >
-                Alterar
-              </button>
-              <button
-                onClick={() => handleGenerateRemessaCNAB400('02')}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-              >
-                Baixa
-              </button>
-            </div>
-          )}
-        </div>
-
         {/* Botão Ações com Dropdown */}
         <div className="relative">
           <button
@@ -1330,6 +1276,36 @@ export default function BoletosPage() {
                     className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                   >
                     🚫 Sem Sacado
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => setShowCnab400Sub(!showCnab400Sub)}
+                disabled={generatingCNAB400}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+              >
+                <span>{generatingCNAB400 ? '⏳ Gerando...' : '📄 CNAB400'}</span>
+                <span className="text-[#666666]">{showCnab400Sub ? '▾' : '▸'}</span>
+              </button>
+              {showCnab400Sub && (
+                <div className="bg-[#141414] border-b border-[#2a2a2a]">
+                  <button
+                    onClick={() => handleGenerateRemessaCNAB400('01')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    Registro
+                  </button>
+                  <button
+                    onClick={() => handleGenerateRemessaCNAB400('06')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    Alterar
+                  </button>
+                  <button
+                    onClick={() => handleGenerateRemessaCNAB400('02')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    Baixa
                   </button>
                 </div>
               )}

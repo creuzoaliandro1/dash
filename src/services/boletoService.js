@@ -54,6 +54,12 @@ const convertDateToPG = (dateStr) => {
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
   }
 
+  // Converter DD/MM/YY (ano de 2 dígitos) para YYYY-MM-DD assumindo 20YY
+  if (/^\d{2}\/\d{2}\/\d{2}$/.test(dateStr)) {
+    const [day, month, year] = dateStr.split('/')
+    return `20${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
   return new Date().toISOString().split('T')[0]
 }
 

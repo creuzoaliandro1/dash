@@ -24,6 +24,27 @@ function formatarDataBrasileira(data) {
   return s
 }
 
+// Máscara de digitação de data: insere as "/" automaticamente.
+// Ex.: "090626" -> "09/06/26" | "09062026" -> "09/06/2026"
+function mascararDataDigitada(value) {
+  const d = String(value || '').replace(/\D/g, '').slice(0, 8)
+  if (d.length <= 2) return d
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`
+}
+
+// Normaliza para dd/mm/aaaa (ano de 4 dígitos) ao confirmar a edição,
+// para que a importação não caia no fallback de data (convertDateToPG exige aaaa).
+function normalizarDataAno4(value) {
+  const d = String(value || '').replace(/\D/g, '')
+  if (d.length < 6) return value // incompleto: mantém o que foi digitado
+  const dd = d.slice(0, 2)
+  const mm = d.slice(2, 4)
+  let yy = d.slice(4)
+  if (yy.length === 2) yy = '20' + yy
+  return `${dd}/${mm}/${yy.slice(0, 4)}`
+}
+
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   // Avalista padrão = dados do perfil logado (conta ativa, ou usuário do localStorage)
   const _loggedUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -157,10 +178,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   }
 
   const handleInlineBlur = (itemIdx, recordIdx, field) => {
+    // Campos de data: normaliza ano para 4 dígitos antes de salvar
+    const valorFinal = (field === 'VENCIMENTO' || field === 'EMISSAO')
+      ? normalizarDataAno4(inlineEditValue)
+      : inlineEditValue
     const newData = [...dataWithInstalments]
     newData[itemIdx]._records[recordIdx] = {
       ...newData[itemIdx]._records[recordIdx],
-      [field]: inlineEditValue
+      [field]: valorFinal
     }
     setDataWithInstalments(newData)
     setInlineEditingCell(null)
@@ -672,7 +697,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               ref={inputRef}
                               type="text"
                               value={inlineEditValue}
-                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onChange={(e) => setInlineEditValue(mascararDataDigitada(e.target.value))}
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'EMISSAO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'EMISSAO')}
                               onClick={(e) => e.stopPropagation()}
@@ -720,7 +745,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               ref={inputRef}
                               type="text"
                               value={inlineEditValue}
-                              onChange={(e) => setInlineEditValue(e.target.value)}
+                              onChange={(e) => setInlineEditValue(mascararDataDigitada(e.target.value))}
                               onBlur={() => handleInlineBlur(itemIdx, recordIdx, 'VENCIMENTO')}
                               onKeyDown={(e) => handleInlineKeyDown(e, itemIdx, recordIdx, 'VENCIMENTO')}
                               onClick={(e) => e.stopPropagation()}
@@ -837,7 +862,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                               className="hidden"
                             />
                             <span className="inline-flex items-center gap-1 text-xs text-white font-medium hover:opacity-80 whitespace-nowrap">
-                              <span className="text-base leading-none">➕</span> Anexar
+                              Anexar
                             </span>
                           </label>
                         )}

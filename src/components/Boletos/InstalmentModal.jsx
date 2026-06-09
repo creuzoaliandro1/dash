@@ -22,11 +22,22 @@ const toDDMMYYYY = (val) => {
   return s
 }
 
+// Máscara de digitação de data: insere as "/" automaticamente.
+// Ex.: "090626" -> "09/06/26" | "09062026" -> "09/06/2026"
+const mascararDataDigitada = (value) => {
+  const d = String(value || '').replace(/\D/g, '').slice(0, 8)
+  if (d.length <= 2) return d
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`
+}
+
 // Converte dd/mm/aaaa (ou yyyy-mm-dd) para Date
 const parseDateFlex = (str) => {
   const s = String(str ?? '').trim()
   let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
   if (m) return new Date(+m[3], +m[2] - 1, +m[1])
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{2})$/)
+  if (m) return new Date(2000 + +m[3], +m[2] - 1, +m[1])
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (m) return new Date(+m[1], +m[2] - 1, +m[3])
   const d = new Date(s)
@@ -134,7 +145,8 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
     if (field === 'value') {
       newInstalments[idx].value = parseFloat(value) || 0
     } else if (field === 'dueDate') {
-      newInstalments[idx].dueDate = value
+      // Normaliza para dd/mm/aaaa (ano de 4 dígitos) antes de salvar
+      newInstalments[idx].dueDate = toDDMMYYYY(value)
     } else if (field === 'number') {
       newInstalments[idx].number = value
     }
@@ -166,7 +178,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
               <input
                 type="text"
                 value={baseDate}
-                onChange={(e) => setBaseDate(e.target.value)}
+                onChange={(e) => setBaseDate(mascararDataDigitada(e.target.value))}
                 placeholder="dd/mm/aaaa"
                 className="w-32 px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition"
               />
@@ -338,7 +350,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
                           ref={inputRef}
                           type="text"
                           value={editValues.value || ''}
-                          onChange={(e) => setEditValues({ ...editValues, value: e.target.value })}
+                          onChange={(e) => setEditValues({ ...editValues, value: mascararDataDigitada(e.target.value) })}
                           onBlur={handleSaveEdit}
                           onKeyDown={(e) => e.key === 'Enter' && handleSaveEdit()}
                           className="w-full px-2 py-1 bg-[#1a1a1a] border border-white rounded text-white text-sm"

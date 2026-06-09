@@ -484,8 +484,12 @@ function parseNFSe(xmlDoc) {
     // Converter valor para número (suporta formato brasileiro)
     const valorLimpo = converterValor(valor)
 
-    return [{
-      NUM_TITULO: numero,
+    const emissaoBR = dataEmissao
+      ? new Date(dataEmissao).toLocaleDateString('pt-BR')
+      : new Date().toLocaleDateString('pt-BR')
+
+    // Campos comuns do sacado/cabeçalho (reutilizados nos dois caminhos)
+    const sacadoFields = {
       SACADO_NOME: tomador.trim() || 'CLIENTE SEM NOME',
       SACADO_CIC: tomaCNPJ || '',
       SACADO_ENDERECO: tomaEndereco || '',
@@ -495,12 +499,58 @@ function parseNFSe(xmlDoc) {
       SACADO_CEP: tomaCEP || '',
       SACADO_EMAIL: tomaEmail || '',
       SACADO_TELEFONE: tomaFone || '',
-      EMISSAO: dataEmissao ? new Date(dataEmissao).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR'),
+      DESCRICAO: descricao || '',
+      STATUS: 'pendente',
+    }
+
+    // --- Parcelas embutidas na Discriminação ---
+    // Algumas NFSe trazem na descrição a forma de pagamento no formato:
+    //   "BOLETO ( 12/07/2026,12/08/2026,27/08/2026,12/09/2026 )"
+    // Cada data é o vencimento de uma parcela. O valor total é dividido
+    // igualmente entre as parcelas (sobra de centavos vai nas primeiras).
+    const mBoleto = (descricao || '').match(/BOLETO\s*\(([^)]*)\)/i)
+    if (mBoleto) {
+      const datas = mBoleto[1]
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => /^\d{2}\/\d{2}\/\d{4}$/.test(s))
+
+      if (datas.length > 0) {
+        const n = datas.length
+        const totalCents = Math.round((valorLimpo || 0) * 100)
+        const baseCents = Math.floor(totalCents / n)
+        const resto = totalCents - baseCents * n // 0..n-1 centavos
+        const valores = datas.map((_, i) => (baseCents + (i < resto ? 1 : 0)) / 100)
+
+        const parcelas = datas.map((dueDate, i) => ({
+          number: `${numero}-${i + 1}`,
+          dueDate, // já vem em DD/MM/YYYY
+          value: valores[i],
+          emission: emissaoBR,
+        }))
+
+        console.log(`[NFSe Parser] BOLETO com ${n} parcela(s) detectado:`, datas.join(', '))
+
+        const primeira = parcelas[0]
+        return [{
+          ...sacadoFields,
+          NUM_TITULO: primeira.number,
+          NOSSO_NUMERO: primeira.number,
+          EMISSAO: primeira.emission,
+          VENCIMENTO: primeira.dueDate,
+          VALOR: primeira.value,
+          _parcelas: parcelas,
+        }]
+      }
+    }
+
+    return [{
+      ...sacadoFields,
+      NUM_TITULO: numero,
+      NOSSO_NUMERO: numero,
+      EMISSAO: emissaoBR,
       VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
       VALOR: valorLimpo,
-      DESCRICAO: descricao || '',
-      NOSSO_NUMERO: numero,
-      STATUS: 'pendente',
     }]
   } catch (error) {
     console.error('[NFSe Parser] Erro:', error)
