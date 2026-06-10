@@ -9,6 +9,7 @@ import { formatDate, formatCurrency, formatCurrencyWithPrefix } from '../utils/f
 import { supabase } from '../lib/supabase'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 
 export default function EfactorPage() {
   const [showModal, setShowModal] = useState(false)
@@ -707,6 +708,61 @@ export default function EfactorPage() {
     }
   }
 
+  // Exporta os boletos selecionados (tabela principal) em Excel (.xlsx).
+  // Inclui TODOS os campos da tabela capt_boletos (busca os registros completos via SELECT *).
+  const handleExportarBoletosExcel = async () => {
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(Boolean)
+
+    if (selecionados.length === 0) {
+      alert('Selecione pelo menos um registro para exportar')
+      setOpenExportMenu(false)
+      return
+    }
+
+    setExporting(true)
+    try {
+      const ids = selecionados.map(b => b.id).filter(Boolean)
+
+      // Buscar TODOS os campos (SELECT *) dos registros selecionados, em lotes.
+      let fullRows = []
+      const chunkSize = 500
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize)
+        const { data, error } = await supabase
+          .from('capt_boletos')
+          .select('*')
+          .in('id', chunk)
+        if (error) throw error
+        if (data) fullRows = fullRows.concat(data)
+      }
+
+      // Preservar a ordem da seleção exibida na tabela
+      const rowsById = new Map(fullRows.map(r => [r.id, r]))
+      const orderedRows = ids.map(id => rowsById.get(id)).filter(Boolean)
+
+      if (orderedRows.length === 0) {
+        alert('Não foi possível carregar os registros selecionados.')
+        return
+      }
+
+      const ws = XLSX.utils.json_to_sheet(orderedRows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Boletos')
+      XLSX.writeFile(wb, `efactor_boletos_${new Date().toISOString().split('T')[0]}.xlsx`)
+
+      alert(`${orderedRows.length} registro(s) exportado(s) em Excel com sucesso!`)
+      setOpenExportMenu(false)
+    } catch (error) {
+      console.error('[Export] Erro ao exportar Excel:', error)
+      alert('Erro ao exportar Excel: ' + error.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const closePdfPreview = () => {
     if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl)
     setPdfPreviewUrl(null)
@@ -878,6 +934,13 @@ export default function EfactorPage() {
                   className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   📊 Exportar CSV
+                </button>
+                <button
+                  onClick={handleExportarBoletosExcel}
+                  disabled={exporting || showDivergencias || selectedRows.size === 0}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  📗 Exportar Excel
                 </button>
                 <button
                   onClick={() => (showDivergencias ? handleExportarPDF() : handleExportarBoletosPDF())}
