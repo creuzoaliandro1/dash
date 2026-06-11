@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import BuscarLancamentoModal from '../components/Boletos/BuscarLancamentoModal'
-import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, reconciliateOpeiteWithBoletos, getOpeiteMatchMaps } from '../services/boletoService'
+import { createBoleto, getBoletos, deleteBoleto, createRemessa, updateContaLastRemessaDate, reconciliateOpeiteWithBoletos, getOpeiteMatchMaps, getOpeiteEfactorDisponiveis, getAllContas, getContaInfo } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { formatDate, formatCurrency, formatCurrencyWithPrefix } from '../utils/formatters'
@@ -47,9 +47,18 @@ export default function EfactorPage() {
   const [statusOptions, setStatusOptions] = useState([])
   // TODOS: marcado = mostra todos os registros (sem filtro por perfil selecionado)
   const [filtroTodos, setFiltroTodos] = useState(true)
+  // View Efactor (OPEITE disponíveis)
+  const [showEfactorOpeite, setShowEfactorOpeite] = useState(false)
+  const [opeiteRecords, setOpeiteRecords] = useState([])
+  const [loadingOpeite, setLoadingOpeite] = useState(false)
+  const [opeitePerfilId, setOpeitePerfilId] = useState('') // '' = todos (Master)
+  const [allContas, setAllContas] = useState([])
+  const [selectedOpeiteRows, setSelectedOpeiteRows] = useState(new Set())
 
   // Obter user da sessão
   const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const userType = user.tipo || 'U'
+  const isMaster = userType === 'M'
 
   useEffect(() => {
     if (user.id) {
@@ -110,6 +119,11 @@ export default function EfactorPage() {
   }
 
   const handleEdit = (boleto) => {
+    // Proteger registros OPEITE (view Efactor) — são gerenciados externamente
+    if (boleto._ORIGEM === 'OPEITE') {
+      alert('Não é possível editar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
+      return
+    }
     setEditingBoleto(boleto)
     setShowModal(true)
   }
@@ -804,7 +818,8 @@ export default function EfactorPage() {
         // Reload boletos
         loadBoletos()
 
-        // Mostrar tabela de divergências
+        // Mostrar tabela de divergências (fecha a view Efactor, se aberta)
+        setShowEfactorOpeite(false)
         setShowDivergencias(true)
         setDivergenciaTipo('cic')
 
@@ -892,6 +907,78 @@ export default function EfactorPage() {
     }
   }
 
+  // ===== View Efactor (OPEITE disponíveis) =====
+
+  // Carregar contas (perfis) para o combobox quando a view Efactor for aberta (apenas Master)
+  useEffect(() => {
+    if (showEfactorOpeite && isMaster && allContas.length === 0) {
+      getAllContas().then(({ data }) => setAllContas(data || []))
+    }
+  }, [showEfactorOpeite, isMaster])
+
+  const loadOpeiteDisponiveis = async (perfilId) => {
+    setLoadingOpeite(true)
+    setSelectedOpeiteRows(new Set())
+    try {
+      let codCedente = null
+
+      if (isMaster) {
+        // Master sem perfil selecionado => todos os registros
+        if (perfilId) {
+          const conta = allContas.find(c => String(c.id) === String(perfilId))
+          codCedente = conta?.cod_cedente || null
+          if (perfilId && !codCedente) {
+            // fallback: buscar a conta para obter o cod_cedente
+            const { data } = await getContaInfo(perfilId)
+            codCedente = data?.cod_cedente || null
+          }
+          if (!codCedente) {
+            alert('Perfil selecionado não possui cod_cedente configurado.')
+            setOpeiteRecords([])
+            return
+          }
+        }
+      } else {
+        // Usuário comum: sempre filtra pelo cod_cedente do próprio perfil
+        const { data } = await getContaInfo(user.id)
+        codCedente = data?.cod_cedente || null
+        if (!codCedente) {
+          alert('Sua conta não possui cod_cedente configurado.')
+          setOpeiteRecords([])
+          return
+        }
+      }
+
+      const { data, error } = await getOpeiteEfactorDisponiveis(codCedente)
+      if (error) throw error
+      setOpeiteRecords(data || [])
+    } catch (err) {
+      console.error('[Efactor] Erro ao carregar OPEITE disponíveis:', err)
+      alert('Erro ao carregar registros OPEITE: ' + (err.message || err))
+      setOpeiteRecords([])
+    } finally {
+      setLoadingOpeite(false)
+    }
+  }
+
+  const handleToggleEfactorOpeite = () => {
+    if (showEfactorOpeite) {
+      setShowEfactorOpeite(false)
+      setOpeiteRecords([])
+      setSelectedOpeiteRows(new Set())
+      return
+    }
+    setShowDivergencias(false)
+    setShowEfactorOpeite(true)
+    setOpeitePerfilId('')
+    loadOpeiteDisponiveis('')
+  }
+
+  const handleChangeOpeitePerfil = (perfilId) => {
+    setOpeitePerfilId(perfilId)
+    loadOpeiteDisponiveis(perfilId)
+  }
+
   return (
     <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
       {/* Header */}
@@ -962,6 +1049,19 @@ export default function EfactorPage() {
             }`}
           >
             {reconciling ? '⏳ Reconciliando...' : `🔍 Divergência ${(divergenciasCIC.length + divergenciasValor.length + divergenciasVencimento.length) > 0 ? `(${divergenciasCIC.length + divergenciasValor.length + divergenciasVencimento.length})` : ''}`}
+          </button>
+          <button
+            onClick={handleToggleEfactorOpeite}
+            disabled={loadingOpeite}
+            className={`px-4 py-2 text-sm font-medium border rounded transition ${
+              loadingOpeite
+                ? 'bg-transparent text-[#666666] border-[#2a2a2a] cursor-not-allowed'
+                : showEfactorOpeite
+                  ? 'bg-white text-black border-white'
+                  : 'bg-transparent text-white border-[#2a2a2a] hover:bg-[#111111]'
+            }`}
+          >
+            {loadingOpeite ? '⏳ Carregando...' : `⚡ Efactor ${showEfactorOpeite && opeiteRecords.length > 0 ? `(${opeiteRecords.length})` : ''}`}
           </button>
           <button
             onClick={handleCreateNew}
@@ -1141,13 +1241,56 @@ export default function EfactorPage() {
       </div>
 
       {/* Tabela de Boletos */}
-      {!showDivergencias && (
+      {!showDivergencias && !showEfactorOpeite && (
         <BoletoTable
           boletos={getFilteredBoletos()}
           onEdit={handleEdit}
           selectedRows={selectedRows}
           onSelectedRowsChange={setSelectedRows}
         />
+      )}
+
+      {/* View Efactor: registros OPEITE disponíveis (não inseridos em capt_boletos e não vencidos) */}
+      {showEfactorOpeite && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-4 bg-[#111111] border border-[#2a2a2a] rounded">
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-[#666666] whitespace-nowrap">
+                Registros OPEITE disponíveis (sem lançamento em boletos e com vencimento a partir de hoje)
+              </span>
+              {isMaster && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-[#666666] uppercase font-semibold whitespace-nowrap">Perfil</label>
+                  <select
+                    value={opeitePerfilId}
+                    onChange={(e) => handleChangeOpeitePerfil(e.target.value)}
+                    disabled={loadingOpeite}
+                    className="px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition w-72"
+                  >
+                    <option value="">Todos os perfis</option>
+                    {allContas.map((conta) => (
+                      <option key={conta.id} value={conta.id}>
+                        {conta.nome_correntista} ({conta.cedente || conta.conta})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <span className="text-sm text-white whitespace-nowrap">
+              {loadingOpeite ? '⏳ Carregando...' : `${opeiteRecords.length} registro(s)`}
+            </span>
+          </div>
+
+          {!loadingOpeite && (
+            <BoletoTable
+              boletos={opeiteRecords}
+              onEdit={handleEdit}
+              selectedRows={selectedOpeiteRows}
+              onSelectedRowsChange={setSelectedOpeiteRows}
+            />
+          )}
+        </div>
       )}
 
       {/* Tabela de Divergências */}

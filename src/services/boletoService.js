@@ -1272,6 +1272,121 @@ export const getOPEITEByCedente = async (codCedente) => {
   }
 }
 
+// Buscar registros OPEITE disponíveis para a view "Efactor" da EfactorPage.
+// - codCedente null => todos os registros (usuário Master sem perfil selecionado)
+// - Exclui NUM_LANCAMENTO já inseridos em capt_boletos (num_lancamento)
+// - Exclui títulos com DT_VENCI anterior à data de hoje
+export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
+  try {
+    // Data de hoje (local) em YYYY-MM-DD
+    const hoje = new Date()
+    const hojeStr = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`
+
+    console.log('[BoletoService] Efactor OPEITE disponíveis. COD_CEDENTE:', codCedente || 'TODOS', '| DT_VENCI >=', hojeStr)
+
+    let allOpeite = []
+    let page = 0
+    const pageSize = 1000
+
+    while (true) {
+      const start = page * pageSize
+      const end = start + pageSize - 1
+
+      let query = supabase
+        .from('OPEITE')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
+        .eq('TIPO_TITULO', 'DUP')
+        .in('STATUS', ['DO', 'IN', 'PR'])
+        .gte('DT_VENCI', hojeStr)
+        .range(start, end)
+
+      if (codCedente) {
+        query = query.eq('COD_CEDENTE', codCedente)
+      }
+
+      const { data, error } = await query
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      allOpeite = [...allOpeite, ...data]
+      if (data.length < pageSize) break
+      page++
+    }
+
+    console.log(`[BoletoService] Efactor OPEITE: ${allOpeite.length} registros antes da exclusão de já inseridos`)
+
+    // Excluir NUM_LANCAMENTO já existentes em capt_boletos
+    const numLancamentos = [...new Set(allOpeite.map(o => o.NUM_LANCAMENTO).filter(Boolean))]
+    const jaInseridos = new Set()
+    const chunkSize = 500
+
+    for (let i = 0; i < numLancamentos.length; i += chunkSize) {
+      const chunk = numLancamentos.slice(i, i + chunkSize)
+      const { data: existentes, error: exError } = await supabase
+        .from('capt_boletos')
+        .select('num_lancamento')
+        .in('num_lancamento', chunk)
+
+      if (exError) {
+        console.error('[BoletoService] Erro ao verificar num_lancamento em capt_boletos:', exError)
+        throw exError
+      }
+      ;(existentes || []).forEach(r => {
+        if (r.num_lancamento != null) jaInseridos.add(String(r.num_lancamento).trim())
+      })
+    }
+
+    const disponiveis = allOpeite.filter(o => !jaInseridos.has(String(o.NUM_LANCAMENTO).trim()))
+    console.log(`[BoletoService] Efactor OPEITE: ${disponiveis.length} disponíveis (${jaInseridos.size} já inseridos em capt_boletos)`)
+
+    // Buscar dados de SACADO para NOME_CORRENTISTA/CIC
+    const codSacadoArray = [...new Set(disponiveis.map(o => o.COD_SACADO).filter(Boolean))]
+    const sacadoMap = {}
+
+    for (let i = 0; i < codSacadoArray.length; i += pageSize) {
+      const batch = codSacadoArray.slice(i, i + pageSize)
+      const { data: sacados, error: sacadoError } = await supabase
+        .from('SACADO')
+        .select('COD_SACADO, NOME_CORRENTISTA, CIC')
+        .in('COD_SACADO', batch)
+
+      if (!sacadoError && sacados) {
+        sacados.forEach(s => {
+          sacadoMap[s.COD_SACADO] = { NOME_CORRENTISTA: s.NOME_CORRENTISTA, CIC: s.CIC }
+        })
+      }
+    }
+
+    // Mapeamento para o padrão dos campos atuais (mesmo formato de getOPEITEByCedente)
+    const boletosMapeados = disponiveis.map(opeite => {
+      const sacado = sacadoMap[opeite.COD_SACADO] || {}
+      return {
+        num_titulo: opeite.NUM_TITULO || '',
+        data_emissao: opeite.DT_LANCA || '',
+        data_vencimento: opeite.DT_VENCI || '',
+        valor: parseFloat(opeite.VR_FACE) || 0,
+        numero_documento: opeite.NUM_LANCAMENTO || '',
+        sacado_nome: sacado.NOME_CORRENTISTA || '',
+        sacado_cic: sacado.CIC || '',
+        avalista_nome: opeite.NOME_AVALISTA || '',
+        avalista_cic: opeite.CIC_AVALISTA || '',
+        status: 'pendente',
+        status_efactor: 'Registrado',
+        num_lancamento: opeite.NUM_LANCAMENTO || '',
+        created_at: new Date().toISOString(),
+        _ORIGEM: 'OPEITE',
+        _COD_CEDENTE: opeite.COD_CEDENTE,
+        _COD_SACADO: opeite.COD_SACADO,
+      }
+    })
+
+    return { data: boletosMapeados, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao carregar OPEITE disponíveis (Efactor):', err)
+    return { data: [], error: err }
+  }
+}
+
 // ============================================================================
 // BORDERÔ: monta os dados do borderô (operação) de um título.
 // Fluxo:
@@ -1720,7 +1835,7 @@ export const getAllContas = async () => {
     try {
           const { data, error } = await supabase
             .from('CONTAS')
-            .select('id, nome_correntista, conta, cedente, cic')
+            .select('id, nome_correntista, conta, cedente, cic, cod_cedente')
             .order('nome_correntista', { ascending: true })
 
       if (error) throw error
