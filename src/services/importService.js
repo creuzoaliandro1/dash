@@ -512,7 +512,9 @@ function parseNFSe(xmlDoc) {
     if (mBoleto) {
       const datas = mBoleto[1]
         .split(',')
-        .map(s => s.trim())
+        // Normaliza sujeira de digitação: remove espaços internos e
+        // colapsa barras repetidas (ex.: "18//07/2026" -> "18/07/2026")
+        .map(s => s.trim().replace(/\s+/g, '').replace(/\/{2,}/g, '/'))
         .filter(s => /^\d{2}\/\d{2}\/\d{4}$/.test(s))
 
       if (datas.length > 0) {
