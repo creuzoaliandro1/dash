@@ -2086,3 +2086,215 @@ function mapStatus(statusExcel) {
   if (status.includes('cancel')) return 'cancelado'
   return 'pendente'
 }
+
+// ============================================================================
+// CONTA CAPT — importação do "Relatório de Gestão de Boletos" (84 colunas)
+// para a tabela capt_registrado. Mapeia cada cabeçalho do Excel para a coluna
+// padrão BMP no Supabase e converte datas/valores.
+// ============================================================================
+
+// [cabeçalho do Excel, coluna no Supabase, tipo]
+const CAPT_REGISTRADO_MAP = [
+  ['Documento federal do titular da conta', 'doc_federal_titular', 'text'],
+  ['Nome do titular da conta', 'nome_titular', 'text'],
+  ['Código cedente do titular da conta', 'cod_cedente_titular', 'text'],
+  ['Banco do titular', 'banco_titular', 'text'],
+  ['Agência do titular', 'agencia_titular', 'text'],
+  ['Número da conta do titular', 'conta_titular', 'text'],
+  ['Status do boleto', 'situacao_boleto', 'text'],
+  ['Nosso número', 'identd_nosso_num', 'text'],
+  ['Seu número', 'num_doc_tit', 'text'],
+  ['Número do documento', 'numero_documento', 'text'],
+  ['Nome do pagador', 'nom_rz_soc_pagdr', 'text'],
+  ['Documento federal do pagador', 'cnpj_cpf_pagdr', 'text'],
+  ['CEP do pagador', 'cep_pagdr', 'text'],
+  ['Logradouro do pagador', 'lograd_pagdr', 'text'],
+  ['Número do endereço do pagador', 'numero_endereco_pagdr', 'text'],
+  ['Complemento do endereço do pagador', 'complemento_endereco_pagdr', 'text'],
+  ['Cidade do pagador', 'cid_pagdr', 'text'],
+  ['UF do pagador', 'uf_pagdr', 'text'],
+  ['Email do pagador', 'email_pagdr', 'text'],
+  ['Telefone do pagador', 'telefone_pagdr', 'text'],
+  ['Data de emissão', 'dt_ems_tit', 'date'],
+  ['Data de registro', 'dt_inclusao', 'date'],
+  ['Valor do título', 'vlr_tit', 'numeric'],
+  ['Data de vencimento', 'dt_venc_tit', 'date'],
+  ['Data limite de pagamento', 'dt_lim_pgto_tit', 'date'],
+  ['Tipo de boleto', 'tipo_boleto', 'text'],
+  ['Linha digitável', 'num_linha_digtvl', 'text'],
+  ['PIX copia e cola', 'emv', 'text'],
+  ['Carteira', 'cod_cart_tit', 'text'],
+  ['Beneficiário final (sacador avalista)', 'nome_sacador_avalista', 'text'],
+  ['Parametrização multa', 'parametrizacao_multa', 'text'],
+  ['Valor de multa', 'valor_multa', 'numeric'],
+  ['Data multa', 'data_multa', 'date'],
+  ['Parametrização juros', 'cod_juros_tit', 'text'],
+  ['Valor de juros', 'vlr_perc_juros_tit', 'numeric'],
+  ['Data juros', 'dt_juros_tit', 'date'],
+  ['Parametrização desconto (primeira faixa)', 'cod_desct_tit_1', 'text'],
+  ['Valor de desconto (primeira faixa)', 'vlr_perc_desct_tit_1', 'numeric'],
+  ['Data de desconto (primeira faixa)', 'dt_desct_tit_1', 'date'],
+  ['Parametrização desconto (segunda faixa)', 'cod_desct_tit_2', 'text'],
+  ['Valor de desconto (segunda faixa)', 'vlr_perc_desct_tit_2', 'numeric'],
+  ['Data de desconto (segunda faixa)', 'dt_desct_tit_2', 'date'],
+  ['Parametrização desconto (terceira faixa)', 'cod_desct_tit_3', 'text'],
+  ['Valor de desconto (terceira faixa)', 'vlr_perc_desct_tit_3', 'numeric'],
+  ['Data de desconto (terceira faixa)', 'dt_desct_tit_3', 'date'],
+  ['Abatimento', 'vlr_abatt_tit', 'numeric'],
+  ['Valor pago', 'vlr_baixa_operac_tit', 'numeric'],
+  ['Data de pagamento', 'dt_pagamento', 'date'],
+  ['Data do crédito', 'dt_credito_boleto', 'date'],
+  ['Canal do pagamento', 'canal_pagamento', 'text'],
+  ['Espécie', 'cod_esp_tit', 'text'],
+  ['Modalidade', 'modalidade', 'text'],
+  ['Descrição', 'descricao', 'text'],
+  ['Cobrança compartilhada', 'cobranca_compartilhada', 'text'],
+  ['Nome do beneficiário 1 de cobrança compartilhada', 'benef1_nome', 'text'],
+  ['Documento federal do beneficiário 1 de cobrança compartilhada', 'benef1_doc_federal', 'text'],
+  ['Código cedente de beneficiário 1', 'benef1_cod_cedente', 'text'],
+  ['Conta do beneficiário 1 de cobrança compartilhada', 'benef1_conta', 'text'],
+  ['Percentual para beneficiário 1', 'benef1_percentual', 'numeric'],
+  ['Nome do beneficiário 2 de cobrança compartilhada', 'benef2_nome', 'text'],
+  ['Documento federal do beneficiário 2 de cobrança compartilhada', 'benef2_doc_federal', 'text'],
+  ['Código cedente de beneficiário 2', 'benef2_cod_cedente', 'text'],
+  ['Conta do beneficiário 2 de cobrança compartilhada', 'benef2_conta', 'text'],
+  ['Percentual para beneficiário 2', 'benef2_percentual', 'numeric'],
+  ['Nome do beneficiário 3 de cobrança compartilhada', 'benef3_nome', 'text'],
+  ['Documento federal do beneficiário 3 de cobrança compartilhada', 'benef3_doc_federal', 'text'],
+  ['Código cedente de beneficiário 3', 'benef3_cod_cedente', 'text'],
+  ['Conta do beneficiário 3 de cobrança compartilhada', 'benef3_conta', 'text'],
+  ['Percentual para beneficiário 3', 'benef3_percentual', 'numeric'],
+  ['Nome do beneficiário 4 de cobrança compartilhada', 'benef4_nome', 'text'],
+  ['Documento federal do beneficiário 4 de cobrança compartilhada', 'benef4_doc_federal', 'text'],
+  ['Código cedente de beneficiário 4', 'benef4_cod_cedente', 'text'],
+  ['Conta do beneficiário 4 de cobrança compartilhada', 'benef4_conta', 'text'],
+  ['Percentual para beneficiário 4', 'benef4_percentual', 'numeric'],
+  ['Nome do beneficiário 5 de cobrança compartilhada', 'benef5_nome', 'text'],
+  ['Documento federal do beneficiário 5 de cobrança compartilhada', 'benef5_doc_federal', 'text'],
+  ['Código cedente de beneficiário 5', 'benef5_cod_cedente', 'text'],
+  ['Conta do beneficiário 5 de cobrança compartilhada', 'benef5_conta', 'text'],
+  ['Percentual para beneficiário 5', 'benef5_percentual', 'numeric'],
+  ['Status de negociação', 'status_negociacao', 'text'],
+  ['Data da última instrução', 'data_ultima_instrucao', 'date'],
+  ['Canal de instrução', 'canal_instrucao', 'text'],
+  ['Última instrução', 'ultima_instrucao', 'text'],
+  ['Usuário da última instrução', 'usuario_ultima_instrucao', 'text'],
+]
+
+// Converte célula em data ISO (YYYY-MM-DD) para coluna `date`, ou null.
+function captToISODate(v) {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'number') {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000))
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+  }
+  const s = String(v).trim()
+  if (!s || s === '- - -' || s === '-') return null
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/) // dd/mm/yyyy [hh:mm]
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/) // já ISO
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`
+  return null
+}
+
+// Converte célula em número (suporta BR "1.234,56" e "%"), ou null.
+function captToNumber(v) {
+  if (v === null || v === undefined) return null
+  if (typeof v === 'number') return v
+  let s = String(v).trim()
+  if (!s || s === '- - -' || s === '-') return null
+  s = s.replace(/[R$%\s]/g, '')
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.')
+  const n = parseFloat(s)
+  return isNaN(n) ? null : n
+}
+
+// Converte célula em texto limpo, ou null (placeholder "- - -" vira null).
+function captToText(v) {
+  if (v === null || v === undefined) return null
+  const s = String(v).trim()
+  if (!s || s === '- - -') return null
+  return s
+}
+
+function parseContaRegistradoRows(jsonData) {
+  return jsonData
+    .map((row) => {
+      const obj = {}
+      for (const [header, key, type] of CAPT_REGISTRADO_MAP) {
+        const raw = row[header]
+        obj[key] = type === 'date' ? captToISODate(raw)
+          : type === 'numeric' ? captToNumber(raw)
+          : captToText(raw)
+      }
+      return obj
+    })
+    // descarta linhas totalmente vazias / rodapés
+    .filter((o) => o.identd_nosso_num || o.num_linha_digtvl || o.nom_rz_soc_pagdr || o.numero_documento)
+}
+
+/**
+ * Importa o Excel do Relatório de Gestão de Boletos para capt_registrado.
+ * ATENÇÃO: limpa TODOS os registros existentes antes de inserir os novos.
+ * @param {File} file - arquivo .xlsx
+ * @returns {Promise<{total:number, inserted:number, deleted:boolean}>}
+ */
+export async function importContaRegistradoFile(file) {
+  // 1) Parsear o Excel
+  const rows = await new Promise((resolve, reject) => {
+    const run = () => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result)
+          const workbook = window.XLSX.read(data, { type: 'array' })
+          const sheetName = workbook.SheetNames[0]
+          const worksheet = workbook.Sheets[sheetName]
+          const jsonData = window.XLSX.utils.sheet_to_json(worksheet, { defval: '' })
+          resolve(parseContaRegistradoRows(jsonData))
+        } catch (err) {
+          reject(new Error('Erro ao processar Excel: ' + err.message))
+        }
+      }
+      reader.onerror = () => reject(new Error('Erro ao ler arquivo'))
+      reader.readAsArrayBuffer(file)
+    }
+    if (!window.XLSX) {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/xlsx/dist/xlsx.full.min.js'
+      script.onload = run
+      script.onerror = () => reject(new Error('Erro ao carregar biblioteca Excel'))
+      document.head.appendChild(script)
+    } else {
+      run()
+    }
+  })
+
+  if (!rows || rows.length === 0) {
+    throw new Error('Nenhum registro válido encontrado no arquivo.')
+  }
+
+  // 2) Limpar a tabela (deleta todos os registros existentes)
+  const { error: delErr } = await supabase
+    .from('capt_registrado')
+    .delete()
+    .neq('id', '00000000-0000-0000-0000-000000000000') // filtro que casa com todas as linhas
+  if (delErr) {
+    throw new Error('Erro ao limpar capt_registrado: ' + delErr.message)
+  }
+
+  // 3) Inserir os novos registros em lotes
+  const BATCH = 500
+  let inserted = 0
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH)
+    const { error: insErr } = await supabase.from('capt_registrado').insert(chunk)
+    if (insErr) {
+      throw new Error(`Erro ao inserir capt_registrado (lote ${Math.floor(i / BATCH) + 1}): ${insErr.message}`)
+    }
+    inserted += chunk.length
+  }
+
+  console.log(`[ContaRegistrado] Importação concluída: ${inserted} registro(s) inseridos`)
+  return { total: rows.length, inserted, deleted: true }
+}

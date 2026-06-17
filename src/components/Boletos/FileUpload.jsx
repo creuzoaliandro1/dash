@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
-import { processFilesForPreview, processContaCaptFileForBoletos } from '../../services/importService'
+import { processFilesForPreview, processContaCaptFileForBoletos, importContaRegistradoFile } from '../../services/importService'
 
-export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas, contaData, onEfactorToggle, efactorActive }) {
+export default function FileUpload({ userId, onShowPreview, onImportError, userType, selectedContaId, allContas, contaData, onEfactorToggle, efactorActive, onContaCaptClick, contaCaptActive, onContaCaptImported, importadosActive, onImportadosClick }) {
   const [isDragging, setIsDragging] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
@@ -57,6 +57,32 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
     if (validFiles.length < files.length) {
       const skipped = files.length - validFiles.length
       console.warn(`${skipped} arquivo(s) ignorado(s) por formato inválido`)
+    }
+
+    // Modo Conta Capt: importa o Relatório de Gestão de Boletos para capt_registrado.
+    // LIMPA todos os registros existentes e insere os do arquivo.
+    if (contaCaptActive) {
+      const excel = validFiles.find(f => {
+        const ext = '.' + f.name.split('.').pop().toLowerCase()
+        return ext === '.xlsx' || ext === '.xls'
+      })
+      if (!excel) {
+        onImportError('Selecione um arquivo Excel (.xlsx) do Relatório de Gestão de Boletos.')
+        return
+      }
+      setIsLoading(true)
+      setUploadProgress({ current: 0, total: 1 })
+      try {
+        const result = await importContaRegistradoFile(excel)
+        setUploadProgress(null)
+        if (onContaCaptImported) onContaCaptImported(result)
+      } catch (error) {
+        setUploadProgress(null)
+        onImportError('Erro na importação Conta Capt: ' + error.message)
+      } finally {
+        setIsLoading(false)
+      }
+      return
     }
 
     setIsLoading(true)
@@ -173,14 +199,50 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
             </svg>
             <div className="min-w-0 text-center">
-              <span className="text-white font-semibold text-sm">Importar</span>
+              <span className="text-white font-semibold text-sm">
+                {contaCaptActive ? 'Importar Conta Capt' : 'Importar'}
+              </span>
               <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
-                Clique ou arraste Excel, CSV, TXT ou XML
+                {contaCaptActive
+                  ? 'Excel do Relatório de Gestão de Boletos — substitui todos os registros'
+                  : 'Clique ou arraste Excel, CSV, TXT ou XML'}
               </span>
             </div>
           </div>
         )}
       </div>
+
+      {/* Botão Importados — mostra capt_boletos (visão padrão), à esquerda do Conta Capt, apenas para Master */}
+      {userType === 'M' && (
+        <button
+          onClick={() => { if (onImportadosClick) onImportadosClick() }}
+          disabled={isLoading}
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+            importadosActive
+              ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
+              : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
+          }`}
+          title="Mostrar boletos importados (capt_boletos)"
+        >
+          {importadosActive ? '✓ Importados' : 'Importados'}
+        </button>
+      )}
+
+      {/* Botão Conta Capt — entre o card de importação e o Efactor, apenas para Master */}
+      {userType === 'M' && (
+        <button
+          onClick={() => { if (onContaCaptClick) onContaCaptClick() }}
+          disabled={isLoading}
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+            contaCaptActive
+              ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
+              : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
+          }`}
+          title={contaCaptActive ? 'Desativar Conta Capt' : 'Ver registros (capt_registrado)'}
+        >
+          {contaCaptActive ? '✓ Conta Capt' : 'Conta Capt'}
+        </button>
+      )}
 
       {/* Botão Efactor — fora do card, apenas para Master */}
       {userType === 'M' && (

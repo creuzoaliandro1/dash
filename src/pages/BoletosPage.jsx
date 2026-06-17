@@ -11,6 +11,7 @@ import { criarDocumentoAssinatura, CAPT_SIGNER } from '../services/zapsignServic
 import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
+import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
 
 export default function BoletosPage() {
   const [showModal, setShowModal] = useState(false)
@@ -51,6 +52,8 @@ export default function BoletosPage() {
   // Filtro de STATUS por checkbox (inicia somente "Pendentes" marcado)
   const [statusChecks, setStatusChecks] = useState({ pago: false, cancelado: false, pendente: true })
   const [efactorActive, setEfactorActive] = useState(false)
+  const [contaCaptActive, setContaCaptActive] = useState(false)
+  const [captReloadKey, setCaptReloadKey] = useState(0)
 
   // Obter tipo de usuário e conta selecionada
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -182,8 +185,35 @@ export default function BoletosPage() {
 
   const handleToggleEfactor = () => {
     console.log('[BoletosPage] Toggle Efactor:', !efactorActive)
+    setContaCaptActive(false) // modos mutuamente exclusivos
     setEfactorActive(!efactorActive)
     // loadBoletos será chamado automaticamente pelo useEffect quando efactorActive mudar
+  }
+
+  const handleToggleContaCapt = () => {
+    console.log('[BoletosPage] Toggle Conta Capt:', !contaCaptActive)
+    setEfactorActive(false) // modos mutuamente exclusivos
+    setContaCaptActive((prev) => !prev)
+  }
+
+  // "Importados" = visão padrão (capt_boletos): desliga os demais modos.
+  const importadosActive = !efactorActive && !contaCaptActive
+  const handleShowImportados = () => {
+    console.log('[BoletosPage] Mostrar Importados (capt_boletos)')
+    setEfactorActive(false)
+    setContaCaptActive(false)
+  }
+
+  // Após importar o Relatório para capt_registrado: recarrega a tabela e mostra resultado.
+  const handleContaCaptImported = (result) => {
+    setCaptReloadKey((k) => k + 1)
+    setImportStatus({
+      type: 'success',
+      title: 'Importação Conta Capt concluída!',
+      totalImported: result.inserted,
+      importedCount: result.inserted,
+    })
+    setShowImportResult(true)
   }
 
   const handleCreateNew = () => {
@@ -1051,9 +1081,15 @@ export default function BoletosPage() {
         contaData={contaData}
         onEfactorToggle={handleToggleEfactor}
         efactorActive={efactorActive}
+        onContaCaptClick={handleToggleContaCapt}
+        contaCaptActive={contaCaptActive}
+        onContaCaptImported={handleContaCaptImported}
+        importadosActive={importadosActive}
+        onImportadosClick={handleShowImportados}
       />
 
-      {/* Search and Filter - All in one line */}
+      {/* Search and Filter - All in one line (oculto no modo Conta Capt) */}
+      {!contaCaptActive && (
       <div className="flex gap-3 items-start">
         {/* Busca por texto */}
         <div className="flex-1 relative">
@@ -1327,18 +1363,23 @@ export default function BoletosPage() {
           + Novo
         </button>
       </div>
+      )}
 
-      {/* Tabela de Boletos — overflow-auto gerencia x+y; header da tabela usa sticky top-0 */}
-      <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
-        <BoletoTable
-          boletos={getFilteredBoletos()}
-          onEdit={handleEdit}
-          onDelete={handleDeleteSingleBoleto}
-          selectedRows={selectedRows}
-          onSelectedRowsChange={setSelectedRows}
-          contaData={contaData}
-        />
-      </div>
+      {/* Tabela: capt_registrado (modo Conta Capt) ou capt_boletos */}
+      {contaCaptActive ? (
+        <ContaRegistradoTable reloadKey={captReloadKey} />
+      ) : (
+        <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+          <BoletoTable
+            boletos={getFilteredBoletos()}
+            onEdit={handleEdit}
+            onDelete={handleDeleteSingleBoleto}
+            selectedRows={selectedRows}
+            onSelectedRowsChange={setSelectedRows}
+            contaData={contaData}
+          />
+        </div>
+      )}
 
       {/* Modal de Formulário */}
       {showModal && (
