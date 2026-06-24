@@ -12,7 +12,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { getBoletos } from '../services/boletoService'
+import { getBoletos, getContaInfo, getOPEITEInadimplentesTotal } from '../services/boletoService'
 
 ChartJS.register(
   CategoryScale,
@@ -110,7 +110,20 @@ export default function DashboardPage() {
         })
 
         // Soma dos valores dos boletos inadimplentes (vencidos)
-        const totalInadimplentes = boletosInadimplentes.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+        const totalInadimplenteBoletos = boletosInadimplentes.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+        // Somar OPEITE com STATUS='IN' (inadimplentes no Efactor)
+        let totalInadimplanteOpeite = 0
+        try {
+          const contaInfo = await getContaInfo(activeId)
+          const codCedente = contaInfo?.data?.cedente
+          if (codCedente) {
+            totalInadimplanteOpeite = await getOPEITEInadimplentesTotal(codCedente)
+          }
+        } catch (e) {
+          console.warn('[Dashboard] Erro ao buscar OPEITE inadimplentes:', e)
+        }
+        const totalInadimplentes = totalInadimplenteBoletos + totalInadimplanteOpeite
 
         // Clientes Ativos: Contar CICs únicos dos boletos em aberto
         // Extrair sacado_cic de todos os boletos em aberto e contar únicos

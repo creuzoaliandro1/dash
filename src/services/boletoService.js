@@ -1355,6 +1355,34 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
   }
 }
 
+// Soma VR_FACE dos registros OPEITE com STATUS='IN' para um dado COD_CEDENTE.
+// Usado no card Inadimplentes do Dashboard.
+export const getOPEITEInadimplentesTotal = async (codCedente) => {
+  if (!codCedente) return 0
+  try {
+    let total = 0
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('VR_FACE')
+        .eq('COD_CEDENTE', codCedente)
+        .eq('STATUS', 'IN')
+        .range(from, from + pageSize - 1)
+      if (error) { console.warn('[getOPEITEInadimplentesTotal]', error.message); break }
+      if (!data || data.length === 0) break
+      data.forEach(o => { total += parseFloat(o.VR_FACE) || 0 })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return total
+  } catch (err) {
+    console.warn('[getOPEITEInadimplentesTotal] Exceção:', err)
+    return 0
+  }
+}
+
 // Buscar registros OPEITE filtrando por COD_CEDENTE (para origem Efactor)
 export const getOPEITEByCedente = async (codCedente) => {
   try {
