@@ -284,7 +284,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
             </div>
           ) : (
             // Exibir Parcelas Calculadas
-            <div className="space-y-3">
+            <div className="space-y-0">
               <div className="flex items-center justify-between mb-4">
                 <h4 className="text-white font-semibold">Parcelas Calculadas</h4>
                 <button
@@ -299,6 +299,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
                 <div
                   key={idx}
                   className="p-4 bg-[#111111] border border-[#1f1f1f] rounded-lg"
+                  style={{ marginBottom: '1px' }}
                 >
                   <div className="grid grid-cols-4 gap-4 text-sm">
                     <div
