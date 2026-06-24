@@ -76,7 +76,7 @@ export const getBoletos = async (contaId) => {
 
       let query = supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
         .order('created_at', { ascending: false })
         .range(start, end)
 
@@ -774,6 +774,110 @@ export const updateBoletosByLancamentos = async (contaId, lancamentos, updates) 
     .in('num_lancamento', nums)
   if (error) console.error('[updateBoletosByLancamentos]', error.message)
   return { error }
+}
+
+/**
+ * Remove de capt_boletos todos os registros cuja conta_id = contaId e cujo nosso_numero
+ * já existe em capt_registrado (identd_nosso_num). Retorna { excluidos, error }.
+ */
+// ============================================================
+// capt_assina — funções de serviço
+// ============================================================
+
+/**
+ * Determina o valor de `lancamento` e `digitavel` para gravar em capt_assina,
+ * com base na origem do boleto (OPEITE, CAPT ou REGISTRADO).
+ */
+export const resolverLancamentoAssina = (boleto) => {
+  const origem = boleto._ORIGEM || (boleto.num_lancamento ? 'OPEITE' : 'CAPT')
+  let lancamento = ''
+  let digitavel = ''
+
+  if (origem === 'OPEITE') {
+    lancamento = String(boleto.num_lancamento || '')
+    digitavel = boleto.codigo_barras || ''
+  } else if (origem === 'REGISTRADO') {
+    lancamento = boleto.num_linha_digtvl || String(boleto.nosso_numero || '')
+    digitavel = boleto.num_linha_digtvl || ''
+  } else {
+    // CAPT (capt_boletos)
+    lancamento = boleto.codigo_barras || String(boleto.nosso_numero || '')
+    digitavel = boleto.codigo_barras || ''
+  }
+  return { lancamento, digitavel }
+}
+
+/**
+ * Insere registros em capt_assina — um por boleto.
+ * `docResp` = objeto retornado pela API ZapSign (doc_token, open_id, status, name, etc.)
+ * `boletos` = array de boletos selecionados (do unified view)
+ * `contaId` = UUID da conta
+ */
+export const insertCaptAssina = async (contaId, docResp, boletos) => {
+  if (!docResp?.token || !boletos?.length) return { error: null }
+  const rows = boletos.map((b) => {
+    const { lancamento, digitavel } = resolverLancamentoAssina(b)
+    return {
+      conta_id: contaId,
+      doc_token: docResp.token,
+      open_id: docResp.open_id || null,
+      status: 'pendente',
+      nome_documento: docResp.name || '',
+      original_file: docResp.original_file || null,
+      signed_file: docResp.signed_file || null,
+      zapsign_created_at: docResp.created_at || null,
+      zapsign_updated_at: docResp.last_update_at || null,
+      signers: docResp.signers || [],
+      lancamento: lancamento || null,
+      digitavel: digitavel || null,
+    }
+  })
+  const { error } = await supabase.from('capt_assina').insert(rows)
+  if (error) console.error('[insertCaptAssina]', error.message)
+  return { error }
+}
+
+/**
+ * Atualiza status (e signed_file) em capt_assina para todos os registros com doc_token.
+ */
+export const updateCaptAssinaStatus = async (docToken, status, signedFile) => {
+  const updates = { status }
+  if (signedFile) updates.signed_file = signedFile
+  const { error } = await supabase
+    .from('capt_assina')
+    .update(updates)
+    .eq('doc_token', docToken)
+  if (error) console.error('[updateCaptAssinaStatus]', error.message)
+  return { error }
+}
+
+export const deletarBoletosJaRegistrados = async (contaId) => {
+  try {
+    // 1. Busca todos os identd_nosso_num de capt_registrado
+    const { data: regRows, error: regErr } = await supabase
+      .from('capt_registrado')
+      .select('identd_nosso_num')
+      .not('identd_nosso_num', 'is', null)
+    if (regErr) return { excluidos: 0, error: regErr }
+
+    const nossoNumerosRegistrados = [...new Set(
+      (regRows || []).map(r => String(r.identd_nosso_num || '').trim()).filter(Boolean)
+    )]
+    if (nossoNumerosRegistrados.length === 0) return { excluidos: 0, error: null }
+
+    // 2. Deleta de capt_boletos onde nosso_numero bate com algum identd_nosso_num
+    const { data: deleted, error: delErr } = await supabase
+      .from('capt_boletos')
+      .delete()
+      .eq('conta_id', contaId)
+      .in('nosso_numero', nossoNumerosRegistrados)
+      .select('id')
+    if (delErr) return { excluidos: 0, error: delErr }
+
+    return { excluidos: (deleted || []).length, error: null }
+  } catch (err) {
+    return { excluidos: 0, error: err }
+  }
 }
 
 // Deletar boleto
@@ -1552,7 +1656,7 @@ const getAllRegistrado = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('capt_registrado')
-      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, cod_cedente_titular')
+      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular')
       .range(start, start + pageSize - 1)
     if (error) {
       console.error('[getAllRegistrado] erro:', error.message)
@@ -1623,6 +1727,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       situacao: 'registrado', // dispara coluna CONTA = "Sim"
       zapsign_status: null,
       nosso_numero: r.identd_nosso_num || '',
+      num_linha_digtvl: r.num_linha_digtvl || '',
       _situacaoReg: r.situacao_boleto || '',
       _cedenteTitular: String(r.cod_cedente_titular ?? '').trim(),
       _key: _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr),

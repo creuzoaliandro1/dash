@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
@@ -157,20 +157,35 @@ export default function BoletosPage() {
     setLoading(false)
   }, [efactorActive, contaData])
 
-  // Sincroniza status de assinatura ZapSign (boletos com zapsign_status='pendente')
+  // Sincroniza tudo: ZapSign (Assina), limpa boletos já registrados (Registro) e recarrega (Antecipa)
   const handleSyncZapSign = async (silent = false) => {
     if (syncingZap) return
     setSyncingZap(true)
     try {
       const activeId = getActiveContaId()
-      const { atualizados, error } = await syncZapSignPendentes(activeId)
-      if (error) {
-        console.warn('[ZapSign sync] erro:', error)
+      const msgs = []
+
+      // 1. Assinaturas ZapSign
+      const { atualizados, error: zapErr } = await syncZapSignPendentes(activeId)
+      if (zapErr) {
+        console.warn('[Sync] ZapSign erro:', zapErr)
       } else if (atualizados > 0) {
-        await loadBoletos()
-        if (!silent) alert(`✅ ${atualizados} assinatura(s) confirmada(s) pela ZapSign.`)
-      } else if (!silent) {
-        alert('Nenhuma nova assinatura encontrada na ZapSign.')
+        msgs.push(`${atualizados} assinatura(s) confirmada(s)`)
+      }
+
+      // 2. Remove de capt_boletos os registros que já aparecem em capt_registrado
+      const { excluidos, error: regErr } = await deletarBoletosJaRegistrados(activeId)
+      if (regErr) {
+        console.warn('[Sync] Registro erro:', regErr)
+      } else if (excluidos > 0) {
+        msgs.push(`${excluidos} boleto(s) migrado(s) para Registrado`)
+      }
+
+      // 3. Recarrega tudo (atualiza Antecipa, Registro, Assina)
+      await loadBoletos()
+
+      if (!silent) {
+        alert(msgs.length > 0 ? `✅ ${msgs.join(' | ')}` : 'Nenhuma atualização encontrada.')
       }
     } finally {
       setSyncingZap(false)
@@ -1060,6 +1075,7 @@ export default function BoletosPage() {
           if (i === 0 && r.data?.doc_token) {
             primeiroDocToken = r.data.doc_token
             await persistirZapsign(selecionados, r.data.doc_token, r.data.sign_url)
+            await insertCaptAssina(activeContaId, r.data, selecionados)
           }
         }
       }
@@ -1200,9 +1216,10 @@ export default function BoletosPage() {
           : 'Aviso: o Borderô pode não ter sido anexado (verifique os logs do ZapSign).')
       }
 
-      // Persistir token/link nos boletos do documento
+      // Persistir token/link nos boletos do documento e gravar em capt_assina
       if (primeiroDocToken) {
         await persistirZapsign(boletosDoc, primeiroDocToken, primeiroSignUrl)
+        await insertCaptAssina(activeContaId, r1.data, selecionados)
       }
 
       setSelectedRows(new Set())
@@ -1642,7 +1659,7 @@ export default function BoletosPage() {
               disabled={syncingZap}
               style={{ height: '36px', width: '36px' }}
               className="flex items-center justify-center bg-[#1a1a1a] text-white border border-[#2a2a2a] rounded hover:bg-[#222222] transition disabled:opacity-50"
-              title={syncingZap ? 'Consultando ZapSign...' : 'Sincronizar assinaturas ZapSign'}
+              title={syncingZap ? 'Sincronizando...' : 'Sincronizar (Assina · Registro · Antecipa)'}
             >
               <svg
                 className={`w-4 h-4 ${syncingZap ? 'animate-spin' : ''}`}
