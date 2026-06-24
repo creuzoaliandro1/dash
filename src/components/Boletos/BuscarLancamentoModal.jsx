@@ -93,7 +93,7 @@ export default function BuscarLancamentoModal({ boleto, onClose, onUpdated }) {
   const th = 'px-3 py-2 text-left text-xs font-semibold text-white cursor-pointer hover:opacity-80 select-none'
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-4xl w-full max-h-[90vh] flex flex-col">
         <div className="border-b border-[#1f1f1f] px-5 py-3 flex items-center justify-between">
           <div>

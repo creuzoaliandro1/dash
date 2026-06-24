@@ -7,6 +7,7 @@ import EfactorPage from './pages/EfactorPage'
 import ContaCaptPage from './pages/ContaCaptPage'
 import ExtratoPage from './pages/ExtratoPage'
 import ContabilPage from './pages/ContabilPage'
+import RetornoPage from './pages/RetornoPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -55,6 +56,7 @@ export default function App() {
       {currentPage === 'contabil' && isMaster && <ContabilPage />}
       {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
+      {currentPage === 'retorno' && isMaster && <RetornoPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>
