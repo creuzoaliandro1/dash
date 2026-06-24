@@ -164,7 +164,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-[60] p-4 pt-20">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center z-[60] p-4 pt-20">
       <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-lg w-full max-h-[75vh] flex flex-col">
         {/* Header */}
         <div className="border-b border-[#1f1f1f] p-6">
@@ -172,27 +172,45 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
             Parcelar: {item.NUM_TITULO}
           </h3>
           <div className="mt-3 flex items-end gap-4">
-            {/* Data (1º vencimento) — à esquerda do Valor total */}
-            <div>
-              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1">Data (1º venc.)</label>
+            {/* Data (1º vencimento) */}
+            <div className="flex-1">
+              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1 text-center">Data (1º venc.)</label>
               <input
                 type="text"
                 value={baseDate}
                 onChange={(e) => setBaseDate(mascararDataDigitada(e.target.value))}
                 placeholder="dd/mm/aaaa"
-                className="w-32 px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition"
+                className="w-full px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition text-center"
               />
             </div>
             {/* Valor total */}
-            <div>
-              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1">Valor total</label>
+            <div className="flex-1">
+              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1 text-center">Valor total</label>
+              <input
+                type="text"
+                value={typeof totalValue === 'number'
+                  ? totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : String(totalValue)}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  setTotalValue(raw)
+                }}
+                onBlur={(e) => {
+                  setTotalValue(parseValorFlex(e.target.value))
+                }}
+                className="w-full px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition text-center"
+              />
+            </div>
+            {/* Quantidade de Parcelas */}
+            <div className="flex-1">
+              <label className="block text-xs text-[#666666] uppercase font-semibold mb-1 text-center">Qtd. de Parcelas</label>
               <input
                 type="number"
-                step="0.01"
-                min="0"
-                value={totalValue}
-                onChange={(e) => setTotalValue(e.target.value)}
-                className="w-36 px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition"
+                min="1"
+                max="120"
+                value={numInstalments}
+                onChange={(e) => setNumInstalments(e.target.value)}
+                className="w-full px-3 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none transition text-center"
               />
             </div>
           </div>
@@ -203,29 +221,15 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
           {/* Configuração de Parcelamento */}
           {instalments.length === 0 ? (
             <div className="space-y-6">
-              {/* Número de Parcelas */}
-              <div>
-                <label className="block text-sm font-semibold text-white mb-2">
-                  Quantidade de Parcelas
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="120"
-                  value={numInstalments}
-                  onChange={(e) => setNumInstalments(e.target.value)}
-                  className="w-full px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white focus:border-white outline-none transition"
-                />
-              </div>
-
               {/* Frequência */}
               <div>
                 <label className="block text-sm font-semibold text-white mb-3">
                   Frequência de Vencimento
                 </label>
-                <div className="space-y-3">
-                  {/* Tipo: Dias fixos */}
-                  <label className="flex items-center gap-3 cursor-pointer">
+                {/* Linha única: [● A cada ___ dia(s)]  [● Todo mês (mesmo dia) ___] */}
+                <div className="flex items-center gap-6">
+                  {/* Opção: Dias fixos */}
+                  <label className="flex items-center gap-2 cursor-pointer shrink-0">
                     <input
                       type="radio"
                       name="frequencyType"
@@ -234,20 +238,23 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
                       onChange={() => handleFrequencyTypeChange('days')}
                       className="w-4 h-4 cursor-pointer accent-white"
                     />
-                    <span className="text-white text-sm">A cada</span>
+                    <span className="text-white text-sm whitespace-nowrap">A cada</span>
                     <input
                       type="number"
                       min="1"
-                      value={frequencyValue}
+                      value={frequencyType === 'days' ? frequencyValue : ''}
                       onChange={(e) => setFrequencyValue(e.target.value)}
                       disabled={frequencyType !== 'days'}
-                      className="w-20 px-3 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none disabled:opacity-50"
+                      className="w-16 px-2 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none disabled:opacity-40 text-center"
                     />
-                    <span className="text-white text-sm">dia(s)</span>
+                    <span className="text-white text-sm whitespace-nowrap">dia(s)</span>
                   </label>
 
-                  {/* Tipo: Mesmo dia do mês */}
-                  <label className="flex items-center gap-3 cursor-pointer">
+                  {/* Separador */}
+                  <span className="text-[#333333] select-none">|</span>
+
+                  {/* Opção: Mesmo dia do mês */}
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
                     <input
                       type="radio"
                       name="frequencyType"
@@ -256,31 +263,20 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
                       onChange={() => handleFrequencyTypeChange('monthly')}
                       className="w-4 h-4 cursor-pointer accent-white"
                     />
-                    <span className="text-white text-sm">Todo mês (mesmo dia)</span>
-                    {frequencyType === 'monthly' && (
-                      <div className="ml-auto flex items-center gap-2">
-                        <label className="text-sm text-[#666666]">Dia:</label>
-                        <input
-                          type="number"
-                          min="1"
-                          max="31"
-                          value={monthlyDay}
-                          onChange={(e) => setMonthlyDay(e.target.value)}
-                          className="w-16 px-3 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none"
-                        />
-                      </div>
-                    )}
+                    <span className="text-white text-sm whitespace-nowrap">Todo mês (mesmo dia)</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={monthlyDay}
+                      onChange={(e) => setMonthlyDay(e.target.value)}
+                      disabled={frequencyType !== 'monthly'}
+                      className="w-14 px-2 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none disabled:opacity-40 text-center ml-1"
+                    />
                   </label>
                 </div>
               </div>
 
-              {/* Botão Calcular */}
-              <button
-                onClick={calculateInstalments}
-                className="w-full px-4 py-2 bg-[#1a1a1a] text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#2a2a2a] transition"
-              >
-                Calcular Parcelas
-              </button>
             </div>
           ) : (
             // Exibir Parcelas Calculadas
@@ -369,7 +365,7 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
 
               <div className="pt-4 border-t border-[#1f1f1f]">
                 <p className="text-sm text-[#a3a3a3]">
-                  Total: R$ {instalments.reduce((sum, inst) => sum + inst.value, 0).toFixed(2)} em {instalments.length} parcela{instalments.length > 1 ? 's' : ''}
+                  Total: R$ {instalments.reduce((sum, inst) => sum + inst.value, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} em {instalments.length} parcela{instalments.length > 1 ? 's' : ''}
                 </p>
               </div>
             </div>
@@ -384,7 +380,14 @@ export default function InstalmentModal({ item, onConfirm, onCancel }) {
           >
             Cancelar
           </button>
-          {instalments.length > 0 && (
+          {instalments.length === 0 ? (
+            <button
+              onClick={calculateInstalments}
+              className="px-6 py-2 bg-[#1a1a1a] text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#2a2a2a] transition"
+            >
+              Calcular Parcelas
+            </button>
+          ) : (
             <button
               onClick={handleConfirm}
               className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"

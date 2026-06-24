@@ -1973,7 +1973,13 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
       const worksheet = workbook.Sheets[sheetName]
       const jsonData = window.XLSX.utils.sheet_to_json(worksheet)
 
-      console.log(`[ContaCapt] Encontrado ${jsonData.length} linhas`)
+      // Cabeçalho real (linha 1) para leitura POSICIONAL de colunas.
+      // Neste relatório o "número do título" fica na coluna H (8ª coluna, índice 7),
+      // independentemente do rótulo. Lemos pela posição para não depender do nome.
+      const headerRow = (window.XLSX.utils.sheet_to_json(worksheet, { header: 1, range: 0 })[0]) || []
+      const colHHeader = headerRow[7] // índice 7 = coluna H
+
+      console.log(`[ContaCapt] Encontrado ${jsonData.length} linhas | Coluna H = "${colHHeader}"`)
 
       // Status que NÃO devem gerar criação de boleto novo (coluna G).
       // ATENÇÃO: não filtramos mais essas linhas aqui — elas continuam no conjunto para
@@ -1989,7 +1995,9 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
 
         return {
           _SKIP_CREATE: statusSemCriacao.includes(statusBoleto),
-          NUM_TITULO: String(row['Seu número'] || row['Número do documento'] || '').trim(),
+          // Número do título: prioriza a coluna H (posicional), com fallback para
+          // "Seu número" / "Número do documento".
+          NUM_TITULO: String((colHHeader ? row[colHHeader] : '') || row['Seu número'] || row['Número do documento'] || '').trim(),
           SACADO_NOME: String(row['Nome do pagador'] || '').trim(),
           SACADO_CIC: String(row['Documento federal do pagador'] || '').replace(/\D/g, ''),
           EMISSAO: formatarData(row['Data de emissão']),
@@ -2017,12 +2025,13 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
           // arquivo são marcados como "Registrado". Demais origens ficam "Gravado".
           SITUACAO: 'Registrado',
           _ORIGEM_BTG: true,
-          // Avalista do relatório BTG: vem da coluna AD "Beneficiário final (sacador avalista)".
-          // CIC do avalista NÃO é preenchido (não há coluna correspondente no relatório).
-          AVALISTA_NOME: (String(row['Beneficiário final (sacador avalista)'] || '').trim() === '- - -'
-            ? ''
-            : String(row['Beneficiário final (sacador avalista)'] || '').trim()),
-          AVALISTA_CIC: '',
+          // Avalista: usa nome e CIC do PERFIL/conta selecionado. Fallback para o
+          // "Beneficiário final (sacador avalista)" do relatório quando não houver perfil.
+          AVALISTA_NOME: (profileName
+            || (String(row['Beneficiário final (sacador avalista)'] || '').trim() === '- - -'
+              ? ''
+              : String(row['Beneficiário final (sacador avalista)'] || '').trim())),
+          AVALISTA_CIC: (profileCIC ? String(profileCIC).replace(/\D/g, '') : ''),
           DESCRICAO: String(row['Descrição'] || '').trim(),
         }
       }).filter(b => b.SACADO_NOME && b.VALOR > 0)
