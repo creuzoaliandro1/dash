@@ -41,7 +41,7 @@ const formatCurrency = (value) => {
   })
 }
 
-export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData, showGerado = true }) {
+export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData }) {
   console.log('[BoletoTable] Renderizando com', boletos?.length || 0, 'boletos')
 
   // Se não recebeu selectedRows (compatibilidade com versão anterior), usar estado local
@@ -71,47 +71,20 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   const [borderoPdfUrl, setBorderoPdfUrl] = useState(null)
   const [generatingBordero, setGeneratingBordero] = useState(false)
 
-  // Estado para ordenação (padrão: LANC decrescente; sem LANC fica no topo)
-  const [sortColumn, setSortColumn] = useState('num_lancamento')
-  const [sortDirection, setSortDirection] = useState('desc')
+  // Estado para ordenação (padrão: vencimento crescente, do menor para o maior)
+  const [sortColumn, setSortColumn] = useState('data_vencimento')
+  const [sortDirection, setSortDirection] = useState('asc')
 
 
-  // Ícone redondo: green=sim, red=não, orange=aguardando
-  const StatusDot = ({ color, title }) => {
-    const colors = {
-      green: 'bg-green-800',
-      red: 'bg-red-800',
-      orange: 'bg-yellow-300',
+  const getStatusBadge = (status) => {
+    const statusMap = {
+      pago: { bg: 'bg-white', text: 'text-black', label: 'Pago' },
+      pendente: { bg: 'bg-[#1a1a1a]', text: 'text-white border border-[#2a2a2a]', label: 'Pendente' },
+      atrasado: { bg: 'bg-[#262626]', text: 'text-white border border-[#404040]', label: 'Atrasado' },
+      cancelado: { bg: 'bg-transparent', text: 'text-[#666666] border border-[#1f1f1f] line-through', label: 'Cancelado' },
     }
-    return (
-      <span
-        title={title}
-        className={`inline-block w-2.5 h-2.5 rounded-full ${colors[color] || 'bg-[#444444]'}`}
-      />
-    )
-  }
-
-  const getAntecipaStatus = (boleto) => {
-    const label = boleto._antecipaLabel ?? (
-      boleto.status_efactor === 'Enviado' || boleto.status_efactor === 'Antecipado' ? 'Aguardando' : 'Não'
-    )
-    if (label === 'Sim') return { color: 'green', title: 'Antecipado (confirmado em OPEITE)' }
-    if (label === 'Aguardando') return { color: 'orange', title: 'Antecipação solicitada — aguardando OPEITE' }
-    return { color: 'red', title: 'Não antecipado' }
-  }
-
-  const getContaStatus = (boleto) => {
-    const label = String(boleto._contaLabel ?? boleto.situacao ?? '').toLowerCase()
-    if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado em capt_registrado' }
-    if (label === 'remessa') return { color: 'orange', title: 'CNAB400 enviado — aguardando registro BTG' }
-    return { color: 'red', title: 'Não registrado' }
-  }
-
-  const getAssinaStatus = (boleto) => {
-    const st = String(boleto.zapsign_status || '').toLowerCase()
-    if (!boleto.zapsign_doc_id && !boleto.zapsign_status) return { color: 'red', title: 'Não assinado' }
-    if (st === 'signed' || st === 'completed' || st === 'finalizado' || st === 'assinado') return { color: 'green', title: 'Assinado' }
-    return { color: 'orange', title: 'Aguardando assinatura' }
+    const config = statusMap[status] || statusMap.pendente
+    return `${config.bg} ${config.text}`
   }
 
   const toggleRow = (index) => {
@@ -166,16 +139,6 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     const sorted = [...boletos].sort((a, b) => {
       let aValue = a[sortColumn]
       let bValue = b[sortColumn]
-
-      // num_lancamento: nulo sempre sobe ao topo (independente da direção)
-      if (sortColumn === 'num_lancamento') {
-        const aN = a.num_lancamento == null ? null : Number(a.num_lancamento)
-        const bN = b.num_lancamento == null ? null : Number(b.num_lancamento)
-        if (aN === null && bN === null) return 0
-        if (aN === null) return -1   // a sem LANC → topo
-        if (bN === null) return 1    // b sem LANC → topo
-        return sortDirection === 'asc' ? aN - bN : bN - aN
-      }
 
       // Lidar com valores nulos/undefined
       if (aValue === null || aValue === undefined) aValue = ''
@@ -363,7 +326,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     <div className="min-w-max w-full">
       {/* Header — sticky dentro do container overflow-auto do pai */}
       <div className="sticky top-0 z-10">
-        <div className="flex items-center gap-1 bg-[#111111] border-b border-[#1f1f1f] px-3 py-0.5">
+        <div className="flex items-center gap-1 bg-[#111111] border-b border-[#1f1f1f] px-3 py-3">
           <input
             type="checkbox"
             checked={rows.size === boletos.length && boletos.length > 0}
@@ -372,18 +335,17 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
           />
           <div className="flex-1 flex gap-1 text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
             <SortableHeader column="num_lancamento" label="LANC" flex="0 0 40px" align="text-right" />
-            {showGerado && (
-              <SortableHeader column="created_at" label="Gerado" flex="0 0 50px" align="text-center" />
-            )}
+            <SortableHeader column="created_at" label="Gerado" flex="0 0 50px" align="text-center" />
             <SortableHeader column="data_emissao" label="Emissão" flex="0 0 50px" align="text-center" />
             <SortableHeader column="numero_documento" label="Documento" flex="0 0 105px" align="text-right" />
             <SortableHeader column="valor" label="Valor" flex="0 0 65px" align="text-right" />
             <SortableHeader column="data_vencimento" label="Vence" flex="0 0 50px" align="text-center" />
-            <SortableHeader column="sacado_nome" label="Nome" flex="1" align="text-left" />
+            <SortableHeader column="sacado_nome" label="Nome Sacado" flex="0 0 170px" align="text-left" />
             <SortableHeader column="sacado_cic" label="CIC" flex="0 0 110px" align="text-center" />
-            <div style={{ flex: '0 0 60px' }} className="text-center">Antecipa</div>
-            <div style={{ flex: '0 0 60px' }} className="text-center">Registro</div>
-            <div style={{ flex: '0 0 60px' }} className="text-center">Assina</div>
+            <div style={{ flex: '1' }} className="text-center">Status</div>
+            <div style={{ flex: '1' }} className="text-center">ANTECIPA</div>
+            <div style={{ flex: '1' }} className="text-center">CONTA</div>
+            <div style={{ flex: '1' }} className="text-center">ASSINA</div>
             <div style={{ flex: '0 0 40px' }} className="text-center">Ações</div>
           </div>
         </div>
@@ -398,8 +360,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             return (
             <div
               key={index}
-              style={{ paddingTop: '0.5px', paddingBottom: '0.5px' }}
-              className={`flex items-center gap-1 px-3 hover:bg-[#111111] transition ${
+              className={`flex items-center gap-1 px-3 py-3 hover:bg-[#111111] transition ${
                 rows.has(index) ? 'bg-[#111111]' : ''
               }`}
             >
@@ -413,11 +374,9 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 <div style={{ flex: '0 0 40px' }} className="text-[#a3a3a3] text-right">
                   {boleto.num_lancamento || '—'}
                 </div>
-                {showGerado && (
-                  <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">
-                    {boleto.created_at ? formatDate(boleto.created_at) : '—'}
-                  </div>
-                )}
+                <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">
+                  {boleto.created_at ? formatDate(boleto.created_at) : '—'}
+                </div>
                 <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">
                   {boleto.data_emissao ? formatDate(boleto.data_emissao) : '—'}
                 </div>
@@ -430,20 +389,31 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 <div style={{ flex: '0 0 50px' }} className="text-white text-center">
                   {boleto.data_vencimento ? formatDate(boleto.data_vencimento) : '—'}
                 </div>
-                <div style={{ flex: '1' }} className="text-white truncate text-left">
+                <div style={{ flex: '0 0 170px' }} className="text-white truncate text-left">
                   {boleto.sacado_nome || '—'}
                 </div>
                 <div style={{ flex: '0 0 110px' }} className="text-[#a3a3a3] font-mono text-center">
                   {boleto.sacado_cic || '—'}
                 </div>
-                <div style={{ flex: '0 0 60px' }} className="flex justify-center">
-                  <StatusDot {...getAntecipaStatus(boleto)} />
+                <div style={{ flex: '1' }} className="text-center text-[#a3a3a3]">
+                  {(() => {
+                    const s = (boleto.status || 'pendente').toLowerCase()
+                    if (s === 'pendente') return 'Vencer'
+                    return boleto.status.charAt(0).toUpperCase() + boleto.status.slice(1)
+                  })()}
                 </div>
-                <div style={{ flex: '0 0 60px' }} className="flex justify-center">
-                  <StatusDot {...getContaStatus(boleto)} />
+                <div style={{ flex: '1' }} className="text-center text-[#a3a3a3]">
+                  {boleto.status_efactor === 'Antecipado'
+                    ? 'Sim'
+                    : (boleto.status_efactor === 'Enviado' ? 'Enviado' : 'Não')}
                 </div>
-                <div style={{ flex: '0 0 60px' }} className="flex justify-center">
-                  <StatusDot {...getAssinaStatus(boleto)} />
+                <div style={{ flex: '1' }} className="text-center text-[#a3a3a3]">
+                  {String(boleto.situacao || '').toLowerCase() === 'registrado'
+                    ? 'Sim'
+                    : (boleto.situacao || '—')}
+                </div>
+                <div style={{ flex: '1' }} className="text-center text-[#a3a3a3]">
+                  {boleto.zapsign_status ? 'Sim' : 'Não'}
                 </div>
                 <div style={{ flex: '0 0 40px' }} className="flex justify-center relative" ref={menuRef}>
                   <button
@@ -525,7 +495,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
         {/* Modal de Preview da 2ª Via */}
         {pdfPreviewOpen && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
               {/* Header */}
               <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
@@ -552,7 +522,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
         {/* Modal de Preview da Duplicata */}
         {duplicataPdfOpen && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
               {/* Header */}
               <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
@@ -585,7 +555,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
         {/* Modal de Preview do Borderô */}
         {borderoPdfOpen && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
               {/* Header */}
               <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">

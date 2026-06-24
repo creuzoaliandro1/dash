@@ -175,8 +175,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        style={{ height: '36px', width: '110px', flexShrink: 0, minWidth: '110px' }}
-        className={`flex items-center justify-center bg-[#0a0a0a] border-2 border-dashed rounded-lg px-4 transition cursor-pointer ${
+        className={`flex-1 bg-[#0a0a0a] border-2 border-dashed rounded-lg px-6 py-3 transition cursor-pointer ${
           isDragging
             ? 'border-white bg-[#111111]'
             : 'border-[#2a2a2a] hover:border-[#333333]'
@@ -203,6 +202,11 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
               <span className="text-white font-semibold text-sm">
                 {contaCaptActive ? 'Importar Conta Capt' : 'Importar'}
               </span>
+              <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
+                {contaCaptActive
+                  ? 'Excel do Relatório de Gestão de Boletos — substitui todos os registros'
+                  : 'Clique ou arraste Excel, CSV, TXT ou XML'}
+              </span>
             </div>
           </div>
         )}
@@ -213,8 +217,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         <button
           onClick={() => { if (onImportadosClick) onImportadosClick() }}
           disabled={isLoading}
-          style={{ height: '36px', width: '110px' }}
-          className={`flex items-center justify-center shrink-0 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             importadosActive
               ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
               : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
@@ -230,8 +233,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         <button
           onClick={() => { if (onContaCaptClick) onContaCaptClick() }}
           disabled={isLoading}
-          style={{ height: '36px', width: '110px' }}
-          className={`flex items-center justify-center shrink-0 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             contaCaptActive
               ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
               : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
@@ -247,8 +249,7 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
         <button
           onClick={handleOpenEfactorModal}
           disabled={isLoading}
-          style={{ height: '36px', width: '110px' }}
-          className={`flex items-center justify-center shrink-0 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`shrink-0 px-4 py-2.5 text-xs font-medium border rounded transition cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
             efactorActive
               ? 'bg-[#1a7f1a] text-white border-[#2a9a2a] hover:bg-[#1d8a1d]'
               : 'bg-[#1a1a1a] text-white border-[#2a2a2a] hover:bg-[#222222]'
