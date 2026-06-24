@@ -763,6 +763,19 @@ export const updateBoleto = async (boletoId, updates) => {
   }
 }
 
+// Atualiza múltiplos boletos por num_lancamento (útil após auto-import para ZapSign)
+export const updateBoletosByLancamentos = async (contaId, lancamentos, updates) => {
+  const nums = lancamentos.map(Number).filter(n => !isNaN(n) && n > 0)
+  if (!nums.length) return { error: null }
+  const { error } = await supabase
+    .from('capt_boletos')
+    .update(updates)
+    .eq('conta_id', contaId)
+    .in('num_lancamento', nums)
+  if (error) console.error('[updateBoletosByLancamentos]', error.message)
+  return { error }
+}
+
 // Deletar boleto
 export const deleteBoleto = async (boletoId) => {
   try {
@@ -1379,6 +1392,33 @@ export const getOPEITEInadimplentesTotal = async (codCedente) => {
     return total
   } catch (err) {
     console.warn('[getOPEITEInadimplentesTotal] Exceção:', err)
+    return 0
+  }
+}
+
+// Soma VR_FACE de OPEITE onde STATUS IN ('IN','PR','DO') — boletos em aberto no Efactor
+export const getOPEITEAbertoTotal = async (codCedente) => {
+  if (!codCedente) return 0
+  try {
+    let total = 0
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('VR_FACE')
+        .eq('COD_CEDENTE', codCedente)
+        .in('STATUS', ['IN', 'PR', 'DO'])
+        .range(from, from + pageSize - 1)
+      if (error) { console.warn('[getOPEITEAbertoTotal]', error.message); break }
+      if (!data || data.length === 0) break
+      data.forEach(o => { total += parseFloat(o.VR_FACE) || 0 })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return total
+  } catch (err) {
+    console.warn('[getOPEITEAbertoTotal] Exceção:', err)
     return 0
   }
 }
@@ -2075,6 +2115,118 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
     }
   } catch (err) {
     console.error('[Import OPEITE] Erro geral:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Auto-importa para capt_boletos os registros do modo Importados que ainda não têm entrada
+// em capt_boletos (_hasCapt === false). Funciona tanto com registros de origem OPEITE quanto
+// REGISTRADO (capt_registrado). Retorna os objetos capt_boletos criados para uso imediato
+// na geração de remessa CNAB400.
+export const autoImportarParaCapt = async (contaId, records) => {
+  try {
+    if (!contaId || !records || records.length === 0) {
+      return { data: { imported: 0, skipped: 0, errors: 0, boletos: [] }, error: null }
+    }
+
+    console.log(`[autoImportarParaCapt] ${records.length} registro(s) sem capt_boletos para conta ${contaId}`)
+
+    // Dedup por num_lancamento (OPEITE): verifica o que já existe em capt_boletos
+    const numLancamentosOpeite = records
+      .map(r => Number(r.num_lancamento))
+      .filter(n => !isNaN(n) && n > 0)
+
+    const existentes = new Set()
+    if (numLancamentosOpeite.length > 0) {
+      const { data: jaExistem } = await supabase
+        .from('capt_boletos')
+        .select('num_lancamento')
+        .eq('conta_id', contaId)
+        .in('num_lancamento', numLancamentosOpeite)
+      if (jaExistem) jaExistem.forEach(b => existentes.add(Number(b.num_lancamento)))
+    }
+
+    // Buscar endereço completo dos sacados OPEITE (o modo unificado só carrega nome+CIC).
+    // importOpeiteToBoletos já faz isso, então seguimos o mesmo padrão aqui.
+    const codSacadoSet = new Set(records.map(r => r._COD_SACADO).filter(Boolean))
+    const sacadoMap = {}
+    if (codSacadoSet.size > 0) {
+      const codArray = Array.from(codSacadoSet)
+      for (let i = 0; i < codArray.length; i += 1000) {
+        const batch = codArray.slice(i, i + 1000)
+        const { data: sacados, error: sacErr } = await supabase
+          .from('SACADO')
+          .select('COD_SACADO, NOME_CORRENTISTA, CIC, ENDERECO, BAIRRO, CIDADE, UF, CEP')
+          .in('COD_SACADO', batch)
+        if (!sacErr && sacados) {
+          sacados.forEach(s => { sacadoMap[s.COD_SACADO] = s })
+        } else if (sacErr) {
+          console.warn('[autoImportarParaCapt] Aviso ao buscar SACADO:', sacErr.message)
+        }
+      }
+    }
+
+    let imported = 0
+    let skipped = 0
+    let errors = 0
+    const boletos = []
+
+    for (const rec of records) {
+      // Checar dedup por num_lancamento
+      const numLanc = Number(rec.num_lancamento)
+      if (!isNaN(numLanc) && numLanc > 0 && existentes.has(numLanc)) {
+        // Já existe em capt_boletos — buscar e usar o existente
+        const { data: existente } = await supabase
+          .from('capt_boletos')
+          .select('*')
+          .eq('conta_id', contaId)
+          .eq('num_lancamento', numLanc)
+          .single()
+        if (existente) boletos.push(existente)
+        skipped++
+        continue
+      }
+
+      // Para registros OPEITE: preferir dados completos do SACADO (com endereço).
+      // Para registros REGISTRADO: os campos já estão mapeados no objeto mesclado.
+      const sac = sacadoMap[rec._COD_SACADO] || {}
+
+      const payload = {
+        NUM_TITULO:       rec.num_titulo || rec.numero_documento || '',
+        EMISSAO:          rec.data_emissao  || null,
+        VENCIMENTO:       rec.data_vencimento || null,
+        VALOR:            rec.valor || 0,
+        SACADO_NOME:      sac.NOME_CORRENTISTA || rec.sacado_nome || '',
+        SACADO_CIC:       sac.CIC              || rec.sacado_cic  || '',
+        SACADO_ENDERECO:  sac.ENDERECO         || rec.sacado_endereco || '',
+        SACADO_BAIRRO:    sac.BAIRRO           || rec.sacado_bairro  || '',
+        SACADO_CIDADE:    sac.CIDADE           || rec.sacado_cidade  || '',
+        SACADO_UF:        sac.UF               || rec.sacado_uf      || '',
+        SACADO_CEP:       sac.CEP              || rec.sacado_cep     || '',
+        AVALISTA_NOME:    rec.avalista_nome  || '',
+        AVALISTA_CIC:     rec.avalista_cic   || '',
+        STATUS:           'pendente',
+        SITUACAO:         'Gravado',
+        STATUS_EFACTOR:   rec.status_efactor || (rec._ORIGEM === 'OPEITE' ? 'Registrado' : ''),
+        NUM_LANCAMENTO:   (!isNaN(numLanc) && numLanc > 0) ? numLanc : '',
+        DESCRICAO:        '',
+      }
+
+      const { data: criado, error } = await createBoleto(contaId, payload)
+      if (error) {
+        errors++
+        console.error('[autoImportarParaCapt] Erro ao criar boleto para registro', rec.num_lancamento || rec.numero_documento, ':', error.message)
+      } else {
+        imported++
+        if (!isNaN(numLanc) && numLanc > 0) existentes.add(numLanc)
+        if (criado) boletos.push(criado)
+      }
+    }
+
+    console.log(`[autoImportarParaCapt] Concluído: ${imported} criados, ${skipped} já existiam, ${errors} erros`)
+    return { data: { imported, skipped, errors, boletos }, error: null }
+  } catch (err) {
+    console.error('[autoImportarParaCapt] Erro geral:', err)
     return { data: null, error: err }
   }
 }

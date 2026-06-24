@@ -3,12 +3,12 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
-import { generateDuplicataPDF } from '../utils/duplicata'
+import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
-import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
+import { buildDuplicatasBoletosBlob, buildBorderoBlobs, buildPdfCompletoSemBoletos } from '../utils/assinaturaDocs'
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
@@ -494,13 +494,51 @@ export default function BoletosPage() {
       return
     }
     setShowCnab400Sub(false)
-
     setOpenActionsMenu(false)
 
+    const activeId = getActiveContaId()
     const filteredBoletos = getFilteredBoletos()
-    const boletosParaRemessa = Array.from(selectedRows)
+    const selecionados = Array.from(selectedRows)
       .map(index => filteredBoletos[index])
-      .filter(boleto => boleto)
+      .filter(b => b)
+
+    // Separar registros que já estão em capt_boletos dos que precisam ser importados
+    const comCapt  = selecionados.filter(b => b._hasCapt !== false)
+    const semCapt  = selecionados.filter(b => b._hasCapt === false)
+
+    let boletosParaRemessa = comCapt
+
+    if (semCapt.length > 0) {
+      console.log(`[CNAB400] ${semCapt.length} registro(s) sem capt_boletos — importando automaticamente...`)
+      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
+
+      if (importErr || !importResult) {
+        alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
+        return
+      }
+
+      if (importResult.errors > 0) {
+        const continuar = window.confirm(
+          `${importResult.errors} registro(s) não puderam ser importados para capt_boletos.\n` +
+          `${importResult.imported} importados, ${importResult.skipped} já existiam.\n\n` +
+          `Deseja continuar a geração do CNAB400 com os registros disponíveis?`
+        )
+        if (!continuar) return
+      } else if (importResult.imported > 0 || importResult.skipped > 0) {
+        console.log(`[CNAB400] Auto-importação: ${importResult.imported} criados, ${importResult.skipped} já existiam.`)
+      }
+
+      // Recarregar lista para manter estado do UI atualizado (não bloqueia o fluxo)
+      loadBoletos()
+
+      // Combinar os boletos já em capt com os recém-criados
+      boletosParaRemessa = [...comCapt, ...importResult.boletos]
+    }
+
+    if (boletosParaRemessa.length === 0) {
+      alert('Nenhum boleto disponível para gerar remessa.')
+      return
+    }
 
     // Verificar se algum boleto já está registrado em capt_registrado
     try {
@@ -602,6 +640,114 @@ export default function BoletosPage() {
       alert('Erro ao gerar remessa CNAB400: ' + error.message)
     } finally {
       setGeneratingCNAB400(false)
+    }
+  }
+
+  const handleGerarRelatorio = () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    setOpenActionsMenu(false)
+
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
+
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '—'
+      const d = new Date(dateStr + 'T00:00:00')
+      return d.toLocaleDateString('pt-BR')
+    }
+
+    const formatValor = (val) => {
+      if (val == null || val === '') return '—'
+      return Number(val).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
+    const now = new Date()
+    const dataEmissao = now.toLocaleDateString('pt-BR')
+    const horaEmissao = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const nomeEmpresa = contaData?.nome_correntista || contaData?.cedente || ''
+
+    const rows = selecionados.map(b => `
+      <tr>
+        <td>${b.num_lancamento || '—'}</td>
+        <td>${formatDate(b.data_emissao)}</td>
+        <td>${b.num_titulo || b.numero_documento || '—'}</td>
+        <td style="text-align:right">${formatValor(b.valor)}</td>
+        <td>${formatDate(b.data_vencimento)}</td>
+        <td>${b.sacado_nome || '—'}</td>
+        <td>${b.sacado_cic || '—'}</td>
+      </tr>
+    `).join('')
+
+    const totalValor = selecionados.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Relatório de Boletos</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm 12mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 9pt; color: #000; background: #fff; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1.5px solid #000; padding-bottom: 8px; }
+    .header-left h1 { font-size: 14pt; font-weight: bold; }
+    .header-left .empresa { font-size: 10pt; color: #000; margin-top: 2px; }
+    .header-right { text-align: right; font-size: 8pt; color: #000; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    thead tr { background: #fff; color: #000; }
+    thead th { padding: 3px 6px; text-align: left; font-size: 8pt; font-weight: bold; border: none; border-bottom: 1.5px solid #000; }
+    thead th.right { text-align: right; }
+    tbody tr { background: #fff; }
+    tbody td { padding: 2px 6px; border: none; color: #000; font-size: 8pt; vertical-align: middle; line-height: 1.2; }
+    tbody td.right { text-align: right; }
+    .footer { margin-top: 12px; border-top: 1px solid #000; padding-top: 6px; display: flex; justify-content: space-between; font-size: 8pt; }
+    .total { font-weight: bold; font-size: 9pt; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Relatório de Boletos</h1>
+      ${nomeEmpresa ? `<div class="empresa">${nomeEmpresa}</div>` : ''}
+    </div>
+    <div class="header-right">
+      <div>Emitido em: ${dataEmissao} às ${horaEmissao}</div>
+      <div>${selecionados.length} registro(s)</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>LANC</th>
+        <th>EMISSÃO</th>
+        <th>DOCUMENTO</th>
+        <th class="right">VALOR</th>
+        <th>VENCIMENTO</th>
+        <th>NOME</th>
+        <th>CIC</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+  <div class="footer">
+    <div></div>
+    <div class="total">Total: R$ ${formatValor(totalValor)}</div>
+  </div>
+</body>
+</html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    win.onload = () => {
+      win.print()
     }
   }
 
@@ -818,15 +964,109 @@ export default function BoletosPage() {
     setShowZapsignModal(true)
   }
 
+  const handleDownloadCessao = async () => {
+    if (selectedRows.size === 0) { alert('Selecione pelo menos um boleto'); return }
+    setOpenActionsMenu(false)
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows).map(i => filteredBoletos[i]).filter(Boolean)
+    try {
+      const blob = generateCessaoDireitosBlob(selecionados, contaData)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const now = new Date()
+      const dd = String(now.getDate()).padStart(2, '0')
+      const mm = String(now.getMonth() + 1).padStart(2, '0')
+      const yyyy = now.getFullYear()
+      link.href = url
+      link.download = `cessao_${dd}${mm}${yyyy}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Erro ao gerar cessão: ' + e.message)
+    }
+  }
+
   // Executa o envio à ZapSign conforme o modo escolhido no ZapsignModal.
   // Retorna { ok, fail, links:[{label,url}], error? } para o modal exibir.
-  const runZapsign = async ({ mode, sacado }) => {
+  const runZapsign = async ({ mode, sacado, incluirBoletos }) => {
     const filteredBoletos = getFilteredBoletos()
     const selecionados = Array.from(selectedRows)
       .map(index => filteredBoletos[index])
       .filter(b => b)
 
     if (selecionados.length === 0) return { ok: 0, fail: 0, links: [], error: 'Nenhum título selecionado.' }
+
+    const activeContaId = getActiveContaId()
+
+    // Auto-importar registros OPEITE sem entrada em capt_boletos (necessário para salvar status ZapSign)
+    const semCapt = selecionados.filter(b => !b._hasCapt && b.num_lancamento)
+    if (semCapt.length > 0) {
+      await autoImportarParaCapt(activeContaId, semCapt)
+    }
+
+    // Helper: persiste token ZapSign em capt_boletos via num_lancamento (cobre auto-importados e existentes)
+    const persistirZapsign = async (boletos, docToken, signUrl) => {
+      const lancamentos = boletos.map(b => b.num_lancamento).filter(Boolean)
+      if (lancamentos.length > 0) {
+        await updateBoletosByLancamentos(activeContaId, lancamentos, {
+          zapsign_doc_token: docToken,
+          zapsign_sign_url: signUrl || '',
+          zapsign_status: 'pendente',
+        })
+      }
+      // Boletos com id real (sem prefixo) mas sem num_lancamento — fallback por id
+      for (const b of boletos) {
+        if (b.num_lancamento) continue
+        const idReal = b.id && !String(b.id).startsWith('ope_') && !String(b.id).startsWith('reg_')
+        if (idReal) {
+          await updateBoleto(b.id, { zapsign_doc_token: docToken, zapsign_sign_url: signUrl || '', zapsign_status: 'pendente' })
+        }
+      }
+    }
+
+    // Modo sem boletos: cessão + borderô + duplicatas (2 por página)
+    if (incluirBoletos === false) {
+      const { blobs, notas: notasPdf } = await buildPdfCompletoSemBoletos(selecionados, contaData)
+      let ok = 0, fail = 0
+      const links = []
+      const captName = (CAPT_SIGNER.name || '').trim().toUpperCase()
+      const cedenteSigner0 = {
+        name: contaData?.nome_correntista || 'Cedente',
+        email: contaData?.email || '',
+        phone: contaData?.telefone || '',
+      }
+      const captSigner0 = { ...CAPT_SIGNER }
+      let primeiroDocToken = null
+      for (let i = 0; i < blobs.length; i++) {
+        const docName = i === 0
+          ? `Cessão + Duplicatas (${selecionados.length} títulos)`
+          : `Duplicatas parte ${i + 1}`
+        const r = await criarDocumentoAssinatura({
+          name: docName,
+          pdfBlob: blobs[i],
+          signers: [cedenteSigner0, captSigner0],
+          placements: [],
+        })
+        if (r.error) {
+          fail++
+        } else {
+          ok++
+          ;(r.data?.signers || []).forEach(s => {
+            const isCapt = String(s.name || '').trim().toUpperCase() === captName
+            if (s.sign_url && !isCapt) links.push({ label: docName + ' — ' + (s.name || ''), url: s.sign_url })
+          })
+          if (i === 0 && r.data?.doc_token) {
+            primeiroDocToken = r.data.doc_token
+            await persistirZapsign(selecionados, r.data.doc_token, r.data.sign_url)
+          }
+        }
+      }
+      setSelectedRows(new Set())
+      await loadBoletos()
+      return { ok, fail, links, notes: notasPdf }
+    }
 
     // Posições das assinaturas (coordenadas ZapSign 0–100, origem inferior-esquerda).
     // Convertidas dos valores em mm informados (A4 210×297): left% = mm/210*100; bottom% = (297−mm_topo)/297*100.
@@ -917,10 +1157,14 @@ export default function BoletosPage() {
       const notes = []
       let extraPdfBlobs
       if (mode === 'sem') {
-        const bRes = await buildBorderoBlob(selecionados)
-        if (bRes && bRes.blob) {
-          // No Sem Sacado os assinantes do anexo são [cedente(0), capt(1)] (mesma ordem do doc principal)
-          extraPdfBlobs = [{ name: 'Borderô', blob: bRes.blob, placements: borderoPlacements(idxCedente, idxCapt, borderoBottomPct(bRes)) }]
+        // Gera UM borderô por COD_OPERACAO único (vários títulos do mesmo borderô → apenas 1 PDF)
+        const bResults = await buildBorderoBlobs(selecionados)
+        if (bResults.length > 0) {
+          extraPdfBlobs = bResults.map((bRes, i) => ({
+            name: bResults.length > 1 ? `Borderô ${i + 1}` : 'Borderô',
+            blob: bRes.blob,
+            placements: borderoPlacements(idxCedente, idxCapt, borderoBottomPct(bRes)),
+          }))
         } else {
           notes.push('Borderô NÃO anexado: nenhum título selecionado tem operação vinculada (num_lancamento / OPECAB BI-LC).')
         }
@@ -956,37 +1200,9 @@ export default function BoletosPage() {
           : 'Aviso: o Borderô pode não ter sido anexado (verifique os logs do ZapSign).')
       }
 
-      // Com Sacado: o Borderô NÃO entra no envelope do sacado (anexo herdaria o sacado).
-      // Então criamos um documento SEPARADO do Borderô assinado só por Cedente + CAPT.
-      if (mode === 'com') {
-        const bRes = await buildBorderoBlob(selecionados)
-        if (bRes && bRes.blob) {
-          const rB = await criarDocumentoAssinatura({
-            name: 'Borderô',
-            pdfBlob: bRes.blob,
-            signers: [cedenteSigner, captSigner], // 0=cedente, 1=capt
-            placements: borderoPlacements(0, 1, borderoBottomPct(bRes)),
-          })
-          if (rB.error) {
-            fail++
-          } else {
-            ok++
-            pushLinks(rB.data?.signers, 'Borderô')
-          }
-        }
-      }
-
-      // Persistir token/link nos boletos do documento (todos do borderô no Sem Sacado)
+      // Persistir token/link nos boletos do documento
       if (primeiroDocToken) {
-        for (const b of boletosDoc) {
-          if (b.id) {
-            await updateBoleto(b.id, {
-              zapsign_doc_token: primeiroDocToken,
-              zapsign_sign_url: primeiroSignUrl,
-              zapsign_status: 'pendente',
-            })
-          }
-        }
+        await persistirZapsign(boletosDoc, primeiroDocToken, primeiroSignUrl)
       }
 
       setSelectedRows(new Set())
@@ -1267,6 +1483,18 @@ export default function BoletosPage() {
                       )}
                     </>
                   )}
+                  <button
+                    onClick={handleDownloadCessao}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                  >
+                    📋 Cessão de Direitos
+                  </button>
+                  <button
+                    onClick={handleGerarRelatorio}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                  >
+                    📊 Gerar Relatório
+                  </button>
                   <button
                     onClick={handleDeleteSelectedBoletos}
                     className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"

@@ -12,7 +12,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { getBoletos, getContaInfo, getOPEITEInadimplentesTotal } from '../services/boletoService'
+import { getBoletos, getContaInfo, getOPEITEInadimplentesTotal, getOPEITEAbertoTotal } from '../services/boletoService'
 
 ChartJS.register(
   CategoryScale,
@@ -61,78 +61,42 @@ export default function DashboardPage() {
         // Salvar todos os boletos para exibição na tabela
         setBoletos(boletosData)
 
-        // ============================================================================
-        // CARD 1: BOLETOS EM ABERTO
-        // Critério: status='pendente' E situacao='Registrado'
-        // ============================================================================
+        // Boletos de capt_boletos para a tabela recente e clientes ativos
         const boletosAbertos = boletosData.filter(b =>
           b.status === 'pendente' && b.situacao === 'Registrado'
         )
-        const totalAberto = boletosAbertos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
 
-        // ============================================================================
-        // CARD 2: RECEITA RECEBIDA
-        // Critério: status='pago'
-        // ============================================================================
-        const boletosPagos = boletos.filter(b => b.status === 'pago')
-        const totalPago = boletosPagos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
-
-        // ============================================================================
-        // CARD 3: INADIMPLENTES (VENCIDOS)
-        // Critério: status='pendente' E situacao='Registrado' E data_vencimento < hoje
-        // ============================================================================
-        const hoje = new Date()
-        hoje.setHours(0, 0, 0, 0)
-
-        // Filtrar apenas boletos em aberto que estão vencidos
-        const boletosInadimplentes = boletosAbertos.filter(b => {
-          if (!b.data_vencimento) return false
-
-          let dataVencimento
-          if (typeof b.data_vencimento === 'string') {
-            // Suporta formatos: YYYY-MM-DD e DD/MM/YYYY
-            if (b.data_vencimento.includes('-')) {
-              const [year, month, day] = b.data_vencimento.split('-')
-              dataVencimento = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
-            } else if (b.data_vencimento.includes('/')) {
-              const [day, month, year] = b.data_vencimento.split('/')
-              dataVencimento = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
-            } else {
-              return false
-            }
-          } else {
-            dataVencimento = new Date(b.data_vencimento)
-          }
-
-          dataVencimento.setHours(0, 0, 0, 0)
-          // Retorna true apenas se a data de vencimento for ANTERIOR a hoje
-          return dataVencimento < hoje
-        })
-
-        // Soma dos valores dos boletos inadimplentes (vencidos)
-        const totalInadimplenteBoletos = boletosInadimplentes.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
-
-        // Somar OPEITE com STATUS='IN' (inadimplentes no Efactor)
-        let totalInadimplanteOpeite = 0
-        try {
-          const contaInfo = await getContaInfo(activeId)
-          const codCedente = contaInfo?.data?.cedente
-          if (codCedente) {
-            totalInadimplanteOpeite = await getOPEITEInadimplentesTotal(codCedente)
-          }
-        } catch (e) {
-          console.warn('[Dashboard] Erro ao buscar OPEITE inadimplentes:', e)
-        }
-        const totalInadimplentes = totalInadimplenteBoletos + totalInadimplanteOpeite
-
-        // Clientes Ativos: Contar CICs únicos dos boletos em aberto
-        // Extrair sacado_cic de todos os boletos em aberto e contar únicos
+        // Clientes Ativos: CICs únicos dos boletos em aberto
         const cicUnicos = new Set(
           boletosAbertos
-            .filter(b => b.sacado_cic && b.sacado_cic.trim() !== '') // Filtrar CICs vazios
-            .map(b => b.sacado_cic.trim()) // Extrair e remover espaços
+            .filter(b => b.sacado_cic && b.sacado_cic.trim() !== '')
+            .map(b => b.sacado_cic.trim())
         )
         const quantidadeClientesUnicos = cicUnicos.size
+
+        // ============================================================================
+        // CARDS OPEITE: buscar cod_cedente da conta e somar VR_FACE por STATUS
+        // ============================================================================
+        let totalAberto = 0       // BOLETOS EM ABERTO: STATUS IN ('IN','PR','DO')
+        let totalInadimplentes = 0 // INADIMPLENTES:    STATUS = 'IN'
+        try {
+          const contaInfo = await getContaInfo(activeId)
+          const codCedente = contaInfo?.data?.cod_cedente
+          if (codCedente) {
+            const [aberto, inadimpl] = await Promise.all([
+              getOPEITEAbertoTotal(codCedente),
+              getOPEITEInadimplentesTotal(codCedente),
+            ])
+            totalAberto = aberto
+            totalInadimplentes = inadimpl
+          }
+        } catch (e) {
+          console.warn('[Dashboard] Erro ao buscar totais OPEITE:', e)
+        }
+
+        // Receita recebida: boletos pagos em capt_boletos
+        const boletosPagos = boletosData.filter(b => b.status === 'pago')
+        const totalPago = boletosPagos.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
 
         setStats({
           totalRecebido: totalAberto,

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
-import { generateDuplicataPDF } from '../../utils/duplicata'
+import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../../utils/duplicata'
 import { generateBorderoPDF } from '../../utils/bordero'
 import { getContaInfo, getBorderoData } from '../../services/boletoService'
+import { supabase } from '../../lib/supabase'
 import BoletoDetailsModal from './BoletoDetailsModal'
 
 const formatDate = (dateStr) => {
@@ -79,9 +80,10 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   // Ícone redondo: green=sim, red=não, orange=aguardando
   const StatusDot = ({ color, title }) => {
     const colors = {
-      green: 'bg-green-800',
-      red: 'bg-red-800',
-      orange: 'bg-yellow-300',
+      green: 'bg-green-500',
+      red: 'bg-red-700',
+      orange: 'bg-orange-500',
+      yellow: 'bg-yellow-400',
     }
     return (
       <span
@@ -96,22 +98,22 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
       boleto.status_efactor === 'Enviado' || boleto.status_efactor === 'Antecipado' ? 'Aguardando' : 'Não'
     )
     if (label === 'Sim') return { color: 'green', title: 'Antecipado (confirmado em OPEITE)' }
-    if (label === 'Aguardando') return { color: 'orange', title: 'Antecipação solicitada — aguardando OPEITE' }
+    if (label === 'Aguardando') return { color: 'yellow', title: 'Antecipação solicitada — aguardando OPEITE' }
     return { color: 'red', title: 'Não antecipado' }
   }
 
   const getContaStatus = (boleto) => {
     const label = String(boleto._contaLabel ?? boleto.situacao ?? '').toLowerCase()
     if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado em capt_registrado' }
-    if (label === 'remessa') return { color: 'orange', title: 'CNAB400 enviado — aguardando registro BTG' }
+    if (label === 'remessa') return { color: 'yellow', title: 'CNAB400 enviado — aguardando registro BTG' }
     return { color: 'red', title: 'Não registrado' }
   }
 
   const getAssinaStatus = (boleto) => {
     const st = String(boleto.zapsign_status || '').toLowerCase()
-    if (!boleto.zapsign_doc_id && !boleto.zapsign_status) return { color: 'red', title: 'Não assinado' }
+    if (!st) return { color: 'red', title: 'Não enviado para assinatura' }
     if (st === 'signed' || st === 'completed' || st === 'finalizado' || st === 'assinado') return { color: 'green', title: 'Assinado' }
-    return { color: 'orange', title: 'Aguardando assinatura' }
+    return { color: 'yellow', title: 'Aguardando assinatura' }
   }
 
   const toggleRow = (index) => {
@@ -300,6 +302,26 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
 
       console.log('[Duplicata] Conta info:', { id: contaInfo?.id, tem_logo: !!contaInfo?.logo })
 
+      // Fix endereço para registros OPEITE (o modo unificado não carrega endereço do SACADO)
+      if (!boletoForDuplicata.sacado_endereco && boleto._COD_SACADO) {
+        try {
+          const { data: sac } = await supabase
+            .from('SACADO')
+            .select('ENDERECO, BAIRRO, CIDADE, UF, CEP')
+            .eq('COD_SACADO', boleto._COD_SACADO)
+            .single()
+          if (sac) {
+            boletoForDuplicata.sacado_endereco = sac.ENDERECO || ''
+            boletoForDuplicata.sacado_bairro   = sac.BAIRRO   || ''
+            boletoForDuplicata.sacado_cidade   = sac.CIDADE   || ''
+            boletoForDuplicata.sacado_uf       = sac.UF       || ''
+            boletoForDuplicata.sacado_cep      = sac.CEP      || ''
+          }
+        } catch (e) {
+          console.warn('[Duplicata] Não foi possível buscar endereço do SACADO:', e.message)
+        }
+      }
+
       // Gerar Duplicata PDF (passa null como logoUrl - será usado logo da conta)
       const duplicataBlob = await generateDuplicataPDF(boletoForDuplicata, contaInfo, null)
       console.log('[Duplicata] PDF gerado, tamanho:', duplicataBlob?.size, 'bytes')
@@ -347,6 +369,27 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
       alert('Erro ao gerar borderô: ' + err.message)
     } finally {
       setGeneratingBordero(false)
+    }
+  }
+
+  const handleDownloadCessaoSingle = async (boleto) => {
+    setOpenMenu(null)
+    try {
+      let contaInfo = contaData
+      if (!contaInfo && boleto.conta_id) {
+        const { data } = await getContaInfo(boleto.conta_id)
+        contaInfo = data || {}
+      }
+      const blob = generateCessaoDireitosBlob([boleto], contaInfo)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `cessao_${boleto.numero_documento || boleto.id}.pdf`
+      document.body.appendChild(link); link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Erro ao gerar cessão: ' + e.message)
     }
   }
 
@@ -491,6 +534,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                           className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                         >
                           📋 Detalhes
+                        </button>
+                        <button
+                          onClick={() => handleDownloadCessaoSingle(boleto)}
+                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                        >
+                          📋 Cessão de Direitos
                         </button>
                       <button
                         onClick={() => {

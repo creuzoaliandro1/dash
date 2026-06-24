@@ -587,7 +587,6 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
 
   try {
     await renderDuplicataOnDoc(pdf, boleto, conta)
-    renderCessaoDireitos(pdf, boleto, conta, 159)
 
     const blob = pdf.output('blob')
     return blob
@@ -596,6 +595,172 @@ export const generateDuplicataPDF = async (boleto, conta, logoUrl) => {
     throw error
   }
 
+}
+
+// ============================================================
+// Renderiza 2 duplicatas em uma página A4 (sem Cessão).
+// boleto2 pode ser null (renderiza só boleto1 nesse caso).
+// ============================================================
+export const render2DuplicatasOnPage = async (doc, boleto1, boleto2, conta) => {
+  await renderDuplicataOnDoc(doc, boleto1, conta, 8)
+  if (boleto2) {
+    await renderDuplicataOnDoc(doc, boleto2, conta, 152)
+  }
+}
+
+// ============================================================
+// Renderiza o "INSTRUMENTO PARTICULAR..." em página A4 completa
+// com lista de todos os boletos na Cláusula Oitava.
+// ============================================================
+export const renderCessaoDireitosPageCompleta = (doc, boletos, conta) => {
+  const leftX = 10
+  const rightX = 200
+  const lineW = 190
+  let ty = 15
+
+  const cedNome = (conta?.nome_correntista || '').toUpperCase()
+  const cedDig = String(conta?.cic || '').replace(/\D/g, '')
+  const cedDoc = cedDig.length === 14
+    ? cedDig.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+    : cedDig.length === 11
+      ? cedDig.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+      : (conta?.cic || '')
+  const cedDocLbl = cedDig.length === 14 ? 'CNPJ nº' : 'CPF nº'
+  const cedEnd = [conta?.endereco, ((conta?.cidade || '') + '-' + (conta?.uf || ''))].filter(p => p && p !== '-').join(', ')
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9)
+  doc.text('INSTRUMENTO PARTICULAR DE CESSÃO DE DIREITOS CREDITÓRIOS E ANTECIPAÇÃO DE RECEBÍVEIS', 105, ty, { align: 'center' })
+  ty += 7
+
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'bold')
+  const cedPrefix = `CEDENTE: ${cedNome}`
+  doc.text(cedPrefix, leftX, ty)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`, ${cedDocLbl} ${cedDoc}, residente na ${cedEnd}.`, leftX + doc.getTextWidth(cedPrefix), ty)
+  ty += 4
+
+  doc.setFont('helvetica', 'bold')
+  const cesPrefix = 'CESSIONÁRIA: CAPT ADMINISTRAÇÃO DE PAGAMENTOS LTDA'
+  doc.text(cesPrefix, leftX, ty)
+  doc.setFont('helvetica', 'normal')
+  doc.text(', CNPJ nº 08.035.579/0001-30.', leftX + doc.getTextWidth(cesPrefix), ty)
+  ty += 4
+
+  const para = (text) => {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    const lines = doc.splitTextToSize(text, lineW)
+    lines.forEach(ln => { doc.text(ln, leftX, ty); ty += 3.4 })
+  }
+
+  para('As partes celebram o presente Instrumento de Cessão de Direitos Creditórios e Antecipação de Recebíveis.')
+  ty += 1
+
+  const clausulas = [
+    ['CLÁUSULA PRIMEIRA - DO CRÉDITO CEDIDO', 'O CEDENTE declara ser titular dos direitos creditórios decorrentes da duplicata mercantil anexa, originada de venda mercantil regularmente realizada ao SACADO, representada por Nota Fiscal/Fatura e respectiva duplicata.'],
+    ['CLÁUSULA SEGUNDA - DA CESSÃO', 'O CEDENTE cede e transfere à CESSIONÁRIA, em caráter irrevogável e irretratável, todos os direitos, ações e garantias relativos ao crédito referido, autorizando sua cobrança administrativa ou judicial.'],
+    ['CLÁUSULA TERCEIRA - DA ANTECIPAÇÃO DE RECEBÍVEIS', 'Em contrapartida à cessão, a CESSIONÁRIA pagará ao CEDENTE o valor líquido ajustado para aquisição do crédito. O CEDENTE reconhece que o valor recebido poderá ser inferior ao valor nominal do título em razão de deságio, remuneração da operação, tarifas, custos financeiros e encargos pactuados.'],
+    ['CLÁUSULA QUARTA - DAS DECLARAÇÕES E GARANTIAS', 'O CEDENTE declara que é legítimo titular do crédito, que a mercadoria foi entregue ou o serviço prestado, que o crédito é legítimo, líquido, certo e exigível, inexistindo impedimento legal, contratual ou judicial à presente cessão, sendo autênticas todas as informações e documentos fornecidos.'],
+    ['CLÁUSULA QUINTA - DA RESPONSABILIDADE DO CEDENTE', 'Constatada fraude, simulação, inexistência do crédito, devolução de mercadorias, cancelamento da nota fiscal, vício da operação comercial, contestação procedente do SACADO ou qualquer fato atribuível ao CEDENTE que impeça a liquidação do título, este restituirá imediatamente à CESSIONÁRIA os valores recebidos, acrescidos de correção monetária, juros legais e despesas incorridas.'],
+    ['CLÁUSULA SEXTA - DA NOTIFICAÇÃO AO SACADO', 'A CESSIONÁRIA poderá comunicar a cessão ao SACADO, nos termos do art. 290 do Código Civil, passando os pagamentos a serem efetuados diretamente à CESSIONÁRIA ou a quem indicar.'],
+    ['CLÁUSULA SÉTIMA - DA FUNDAMENTAÇÃO LEGAL', 'O presente instrumento é regido pelos arts. 286 a 298 da Lei nº 10.406/2002 e pela Lei nº 5.474/1968, além das demais normas aplicáveis.'],
+  ]
+
+  clausulas.forEach(([h, b]) => {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.text(h, leftX, ty)
+    ty += 3.8
+    para(b)
+    ty += 1
+  })
+
+  // Cláusula Oitava - Títulos Cedidos
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.text('CLÁUSULA OITAVA - DOS TÍTULOS CEDIDOS', leftX, ty)
+  ty += 3.8
+
+  const isSingular = boletos.length === 1
+  para(isSingular
+    ? 'O presente instrumento tem por objeto a cessão do seguinte título de crédito:'
+    : 'O presente instrumento tem por objeto a cessão dos seguintes títulos de crédito:')
+  ty += 1
+
+  // Tabela de títulos
+  const colHeaders = ['EMISSÃO', 'Nº TÍTULO', 'VENCIMENTO', 'VALOR R$', 'SACADO', 'CPF/CNPJ']
+  const colWidths = [22, 28, 22, 22, 56, 40]
+  let cx = leftX
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7)
+  colHeaders.forEach((h, i) => {
+    doc.text(h, cx, ty)
+    cx += colWidths[i]
+  })
+  ty += 0.5
+  doc.setDrawColor(0, 0, 0)
+  doc.setLineWidth(0.2)
+  doc.line(leftX, ty, leftX + lineW, ty)
+  ty += 3
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7)
+  boletos.forEach(b => {
+    cx = leftX
+    const rowData = [
+      formatDate(b.data_emissao),
+      String(b.numero_documento || b.num_titulo || ''),
+      formatDate(b.data_vencimento),
+      formatMoeda(b.valor || 0),
+      (b.sacado_nome || '').substring(0, 30),
+      String(b.sacado_cic || ''),
+    ]
+    rowData.forEach((cell, i) => {
+      doc.text(String(cell), cx, ty)
+      cx += colWidths[i]
+    })
+    ty += 0.5
+    doc.line(leftX, ty, leftX + lineW, ty)
+    ty += 3
+  })
+  ty += 1
+
+  // Assinaturas fixas em sy = 277mm
+  const sigInset = 10
+  const sCol = 72
+  const sLeftX = leftX + sigInset
+  const sRightX = rightX - sigInset
+  const lcx = sLeftX + sCol / 2
+  const rcx = sRightX - sCol / 2
+  const sy = 277
+
+  doc.setDrawColor(0, 0, 0)
+  doc.setLineWidth(0.3)
+  doc.line(sLeftX, sy, sLeftX + sCol, sy)
+  doc.line(sRightX - sCol, sy, sRightX, sy)
+  doc.setTextColor(255, 255, 255)
+  doc.text('<<cedente>>', lcx, sy - 9, { align: 'center' })
+  doc.text('<<capt>>', rcx, sy - 9, { align: 'center' })
+  doc.setTextColor(0, 0, 0)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  doc.text(cedNome, lcx, sy + 4, { align: 'center' })
+  doc.text('CAPT ADMINISTRAÇÃO DE PAGAMENTOS LTDA', rcx, sy + 4, { align: 'center' })
+  doc.text(`${cedDocLbl} ${cedDoc}`, lcx, sy + 8, { align: 'center' })
+  doc.text('CNPJ nº 08.035.579/0001-30', rcx, sy + 8, { align: 'center' })
+}
+
+// ============================================================
+// Gera um Blob PDF com apenas a página de cessão de direitos
+// contendo todos os boletos na Cláusula Oitava.
+// ============================================================
+export const generateCessaoDireitosBlob = (boletos, conta) => {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  renderCessaoDireitosPageCompleta(doc, boletos, conta)
+  return doc.output('blob')
 }
 
 
