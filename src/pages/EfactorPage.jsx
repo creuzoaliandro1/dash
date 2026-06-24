@@ -1632,7 +1632,7 @@ export default function EfactorPage() {
 
       {/* Pré-visualização do relatório PDF */}
       {pdfPreviewUrl && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg w-full max-w-5xl h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-2 border-b border-[#1f1f1f]">
               <h2 className="text-white text-sm font-semibold">Pré-visualização do relatório</h2>

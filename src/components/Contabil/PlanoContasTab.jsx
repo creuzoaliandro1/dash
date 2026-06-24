@@ -105,7 +105,7 @@ export default function PlanoContasTab() {
       </div>
 
       {modal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setModal(false)}>
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={() => setModal(false)}>
           <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-5 w-[440px]" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-semibold text-white mb-4">Nova Conta Contábil</h3>
             <div className="flex flex-col gap-3">

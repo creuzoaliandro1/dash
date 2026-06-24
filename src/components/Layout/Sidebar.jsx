@@ -181,16 +181,6 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
                 >
                   E-Factor
                 </button>
-                <button
-                  onClick={() => setCurrentPage('retorno')}
-                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                    currentPage === 'retorno'
-                      ? 'bg-[#1a1a1a] text-white'
-                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                  }`}
-                >
-                  Retorno
-                </button>
               </div>
             )}
           </div>

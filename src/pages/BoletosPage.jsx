@@ -3,11 +3,11 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF } from '../utils/duplicata'
-import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
+import { criarDocumentoAssinatura, CAPT_SIGNER } from '../services/zapsignService'
 import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
@@ -28,7 +28,6 @@ export default function BoletosPage() {
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
-  const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -50,12 +49,6 @@ export default function BoletosPage() {
   const [dataGeradoInicio, setDataGeradoInicio] = useState('')
   const [dataGeradoFim, setDataGeradoFim] = useState('')
   const [filterType, setFilterType] = useState('emissao')
-  const [showFiltroMenu, setShowFiltroMenu] = useState(false)
-  const [syncingZap, setSyncingZap] = useState(false)
-  const [dataRegistroInicio, setDataRegistroInicio] = useState('')
-  const [dataRegistroFim, setDataRegistroFim] = useState('')
-  const [dataAntecipadoInicio, setDataAntecipadoInicio] = useState('')
-  const [dataAntecipadoFim, setDataAntecipadoFim] = useState('')
   // Filtro de STATUS por checkbox (inicia somente "Pendentes" marcado)
   const [statusChecks, setStatusChecks] = useState({ pago: false, cancelado: false, pendente: true })
   const [efactorActive, setEfactorActive] = useState(false)
@@ -139,15 +132,8 @@ export default function BoletosPage() {
         const resultado = await carregarOPEITE(activeId, contaData)
         setBoletos(resultado.data || [])
       } else {
-        // Modo "Importados": visão unificada de capt_boletos + capt_registrado + OPEITE
-        // (match por valor+vencimento+cic; prioridade registrado > OPEITE > boletos).
-        // Garante ter o cedente/cod_cedente da conta para filtrar registrado/OPEITE.
-        let conta = contaData
-        if (!conta && activeId) {
-          const { data } = await getContaInfo(activeId)
-          conta = data || { id: activeId }
-        }
-        const resultado = await getBoletosImportadosUnificados(conta || { id: activeId })
+        // Carregar dados normais (capt_boletos)
+        const resultado = await getBoletos(activeId)
         setBoletos(resultado.data || [])
       }
     } catch (err) {
@@ -157,34 +143,12 @@ export default function BoletosPage() {
     setLoading(false)
   }, [efactorActive, contaData])
 
-  // Sincroniza status de assinatura ZapSign (boletos com zapsign_status='pendente')
-  const handleSyncZapSign = async (silent = false) => {
-    if (syncingZap) return
-    setSyncingZap(true)
-    try {
-      const activeId = getActiveContaId()
-      const { atualizados, error } = await syncZapSignPendentes(activeId)
-      if (error) {
-        console.warn('[ZapSign sync] erro:', error)
-      } else if (atualizados > 0) {
-        await loadBoletos()
-        if (!silent) alert(`✅ ${atualizados} assinatura(s) confirmada(s) pela ZapSign.`)
-      } else if (!silent) {
-        alert('Nenhuma nova assinatura encontrada na ZapSign.')
-      }
-    } finally {
-      setSyncingZap(false)
-    }
-  }
-
   // Carregar na montagem
   useEffect(() => {
     const activeId = getActiveContaId()
     if (activeId) {
       loadBoletos()
       loadContaData()
-      // Sincroniza assinaturas ZapSign em silêncio ao abrir a página
-      handleSyncZapSign(true)
     }
   }, [])
 
@@ -261,12 +225,6 @@ export default function BoletosPage() {
     // Proteger registros OPEITE
     if (boleto._ORIGEM === 'OPEITE') {
       alert('Não é possível editar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
-      return
-    }
-    // Na visão unificada, só é editável quando há um boleto real em capt_boletos.
-    // Linhas vindas apenas de capt_registrado/OPEITE não possuem registro editável.
-    if (boleto._fontes && boleto._hasCapt === false) {
-      alert('Este registro não está em capt_boletos (origem: ' + boleto._fontes.join(' + ') + '). Não há boleto local para editar.')
       return
     }
 
@@ -397,28 +355,54 @@ export default function BoletosPage() {
       return statusChecks.pendente
     })
 
+    // Filter by data de emissão
+    if (filterType === 'emissao') {
+      if (dataEmissaoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_emissao) return false
+          return boleto.data_emissao >= dataEmissaoInicio
+        })
+      }
+      if (dataEmissaoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_emissao) return false
+          return boleto.data_emissao <= dataEmissaoFim
+        })
+      }
+    }
+
     // Filter by data de vencimento
-    if (dataVencimentoInicio) {
-      filtered = filtered.filter(boleto => boleto.data_vencimento && boleto.data_vencimento >= dataVencimentoInicio)
-    }
-    if (dataVencimentoFim) {
-      filtered = filtered.filter(boleto => boleto.data_vencimento && boleto.data_vencimento <= dataVencimentoFim)
+    if (filterType === 'vencimento') {
+      if (dataVencimentoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_vencimento) return false
+          return boleto.data_vencimento >= dataVencimentoInicio
+        })
+      }
+      if (dataVencimentoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.data_vencimento) return false
+          return boleto.data_vencimento <= dataVencimentoFim
+        })
+      }
     }
 
-    // Filter by data de registro (emissão)
-    if (dataRegistroInicio) {
-      filtered = filtered.filter(boleto => boleto.data_emissao && boleto.data_emissao >= dataRegistroInicio)
-    }
-    if (dataRegistroFim) {
-      filtered = filtered.filter(boleto => boleto.data_emissao && boleto.data_emissao <= dataRegistroFim)
-    }
-
-    // Filter by data de antecipação
-    if (dataAntecipadoInicio) {
-      filtered = filtered.filter(boleto => boleto.data_antecipacao && boleto.data_antecipacao >= dataAntecipadoInicio)
-    }
-    if (dataAntecipadoFim) {
-      filtered = filtered.filter(boleto => boleto.data_antecipacao && boleto.data_antecipacao <= dataAntecipadoFim)
+    // Filter by data de geração (created_at)
+    if (filterType === 'gerado') {
+      if (dataGeradoInicio) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.created_at) return false
+          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
+          return boletoDate >= dataGeradoInicio
+        })
+      }
+      if (dataGeradoFim) {
+        filtered = filtered.filter(boleto => {
+          if (!boleto.created_at) return false
+          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
+          return boletoDate <= dataGeradoFim
+        })
+      }
     }
 
     return filtered
@@ -484,41 +468,21 @@ export default function BoletosPage() {
   }
 
   const handleGenerateRemessaCNAB400 = async (tipoOperacao = '01') => {
-    // CNAB400 não é permitido nos modos Conta Capt nem Efactor
-    if (efactorActive || contaCaptActive) {
-      alert('A geração de CNAB400 não está disponível nos modos Conta Capt ou Efactor.')
-      return
-    }
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
       return
     }
     setShowCnab400Sub(false)
 
+    setGeneratingCNAB400(true)
     setOpenActionsMenu(false)
 
-    const filteredBoletos = getFilteredBoletos()
-    const boletosParaRemessa = Array.from(selectedRows)
-      .map(index => filteredBoletos[index])
-      .filter(boleto => boleto)
-
-    // Verificar se algum boleto já está registrado em capt_registrado
     try {
-      const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
-      if (jaRegistrados.length > 0) {
-        setCnab400Confirm({ titulos: jaRegistrados, tipoOperacao, boletosParaRemessa })
-        return
-      }
-    } catch (e) {
-      console.warn('[CNAB400] Erro ao verificar títulos registrados:', e)
-    }
+      const filteredBoletos = getFilteredBoletos()
+      const boletosParaRemessa = Array.from(selectedRows)
+        .map(index => filteredBoletos[index])
+        .filter(boleto => boleto)
 
-    await doGerarRemessaCNAB400(boletosParaRemessa, tipoOperacao)
-  }
-
-  const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
-    setGeneratingCNAB400(true)
-    try {
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
       // Usar contaData ja carregado (ou recarregar se necessario)
@@ -583,16 +547,6 @@ export default function BoletosPage() {
         // Continua mesmo com erro - o arquivo já foi gerado
       }
 
-      // Se for Registro (01): marcar boletos como "Remessa" para indicar que aguardam registro
-      if (tipoOperacao === '01') {
-        const idsParaMarcar = boletosParaRemessa
-          .filter(b => b._hasCapt !== false && b.id && !String(b.id).startsWith('reg_') && !String(b.id).startsWith('ope_'))
-          .map(b => b.id)
-        if (idsParaMarcar.length > 0) {
-          await markBoletosRemessa(idsParaMarcar)
-        }
-      }
-
       alert(`Remessa CNAB400 "${filename}" gerada com sucesso!`)
       setSelectedRows(new Set())
       await loadContaData()
@@ -609,11 +563,6 @@ export default function BoletosPage() {
     // Proteger registros OPEITE
     if (boleto._ORIGEM === 'OPEITE') {
       alert('Não é possível deletar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
-      return
-    }
-    // Na visão unificada, só deleta quando há boleto real em capt_boletos.
-    if (boleto._fontes && boleto._hasCapt === false) {
-      alert('Este registro não está em capt_boletos (origem: ' + boleto._fontes.join(' + ') + '). Não há boleto local para deletar.')
       return
     }
 
@@ -1036,11 +985,9 @@ export default function BoletosPage() {
       .map(index => filteredBoletos[index])
       .filter(boleto => boleto)
 
-    // Separar registros sem boleto local (OPEITE/capt_registrado) dos boletos locais.
-    // Só é possível excluir o que existe de fato em capt_boletos.
-    const semBoletoLocal = (b) => b._ORIGEM === 'OPEITE' || (b._fontes && b._hasCapt === false)
-    const boletosPorExcluir = boletosParaDeletar.filter(b => !semBoletoLocal(b))
-    const boletosOpeite = boletosParaDeletar.filter(b => semBoletoLocal(b))
+    // Separar registros OPEITE dos registros locais
+    const boletosPorExcluir = boletosParaDeletar.filter(b => b._ORIGEM !== 'OPEITE')
+    const boletosOpeite = boletosParaDeletar.filter(b => b._ORIGEM === 'OPEITE')
 
     // Se houver registros OPEITE, avisar o usuário
     if (boletosOpeite.length > 0) {
@@ -1087,9 +1034,9 @@ export default function BoletosPage() {
   }
 
   return (
-    <div className="flex flex-col gap-2 flex-1 min-h-0">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Boletos</h1>
           <p className="text-sm text-[#666666] mt-1">Emissão, consulta e gestão de títulos</p>
@@ -1123,311 +1070,300 @@ export default function BoletosPage() {
         })()}
       </div>
 
-      {/* Upload Area + Action Buttons na mesma linha */}
-      <div className="flex items-center gap-3">
-        {/* Campo de pesquisa — flex-1, lado esquerdo */}
-        {!contaCaptActive && (
-          <div className="flex-1 relative">
+      {/* Upload Area */}
+      <FileUpload
+        userId={getActiveContaId()}
+        onShowPreview={handleShowPreview}
+        onImportError={handleImportError}
+        userType={userType}
+        selectedContaId={selectedContaId}
+        allContas={allContas}
+        contaData={contaData}
+        onEfactorToggle={handleToggleEfactor}
+        efactorActive={efactorActive}
+        onContaCaptClick={handleToggleContaCapt}
+        contaCaptActive={contaCaptActive}
+        onContaCaptImported={handleContaCaptImported}
+        importadosActive={importadosActive}
+        onImportadosClick={handleShowImportados}
+      />
+
+      {/* Search and Filter - All in one line (oculto no modo Conta Capt) */}
+      {!contaCaptActive && (
+      <div className="flex gap-3 items-start">
+        {/* Busca por texto */}
+        <div className="flex-1 relative">
+          <input
+            type="text"
+            placeholder="Buscar por documento, cliente, nosso número..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] focus:border-white focus:bg-[#1a1a1a] outline-none transition text-sm"
+          />
+          <svg className="absolute right-3 top-2.5 w-4 h-4 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+
+        {/* Filtro de Datas - Tipo (empilhado verticalmente) */}
+        <div className="flex flex-col gap-1 justify-center">
+          <label className="flex items-center gap-2 whitespace-nowrap">
             <input
-              type="text"
-              placeholder="Buscar por documento, cliente, nosso número..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] focus:border-white focus:bg-[#1a1a1a] outline-none transition text-sm"
+              type="radio"
+              name="filterType"
+              value="emissao"
+              checked={filterType === 'emissao'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataVencimentoInicio('')
+                setDataVencimentoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
             />
-            <svg className="absolute right-3 top-2.5 w-4 h-4 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-        )}
+            <span className="text-xs text-white cursor-pointer">Emissão</span>
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap">
+            <input
+              type="radio"
+              name="filterType"
+              value="vencimento"
+              checked={filterType === 'vencimento'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataEmissaoInicio('')
+                setDataEmissaoFim('')
+                setDataGeradoInicio('')
+                setDataGeradoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs text-white cursor-pointer">Vencimento</span>
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap">
+            <input
+              type="radio"
+              name="filterType"
+              value="gerado"
+              checked={filterType === 'gerado'}
+              onChange={(e) => {
+                setFilterType(e.target.value)
+                setDataEmissaoInicio('')
+                setDataEmissaoFim('')
+                setDataVencimentoInicio('')
+                setDataVencimentoFim('')
+              }}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs text-white cursor-pointer">Gerado</span>
+          </label>
+        </div>
 
-        {/* Card Importar + botões de modo (largura definida internamente em cada elemento) */}
-        <FileUpload
-          userId={getActiveContaId()}
-          onShowPreview={handleShowPreview}
-          onImportError={handleImportError}
-          userType={userType}
-          selectedContaId={selectedContaId}
-          allContas={allContas}
-          contaData={contaData}
-          onEfactorToggle={handleToggleEfactor}
-          efactorActive={efactorActive}
-          onContaCaptClick={handleToggleContaCapt}
-          contaCaptActive={contaCaptActive}
-          onContaCaptImported={handleContaCaptImported}
-          importadosActive={importadosActive}
-          onImportadosClick={handleShowImportados}
-        />
+        {/* Filtro de Datas - Campos (à direita do filtro de tipo) */}
+        <div className="flex flex-col gap-1">
+          {filterType === 'emissao' ? (
+            <>
+              <input
+                type="date"
+                value={dataEmissaoInicio}
+                onChange={(e) => setDataEmissaoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataEmissaoFim}
+                onChange={(e) => setDataEmissaoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          ) : filterType === 'vencimento' ? (
+            <>
+              <input
+                type="date"
+                value={dataVencimentoInicio}
+                onChange={(e) => setDataVencimentoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataVencimentoFim}
+                onChange={(e) => setDataVencimentoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          ) : (
+            <>
+              <input
+                type="date"
+                value={dataGeradoInicio}
+                onChange={(e) => setDataGeradoInicio(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de início"
+              />
+              <input
+                type="date"
+                value={dataGeradoFim}
+                onChange={(e) => setDataGeradoFim(e.target.value)}
+                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
+                title="Data de fim"
+              />
+            </>
+          )}
+        </div>
 
-        {!contaCaptActive && (
-          <>
-            {/* Botão Ações com Dropdown */}
-            <div className="relative">
+        {/* Filtro de STATUS por checkbox (empilhado verticalmente) */}
+        <div className="flex flex-col gap-1 justify-center pl-3 border-l border-[#2a2a2a]">
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.pendente}
+              onChange={(e) => setStatusChecks({ ...statusChecks, pendente: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Pendentes</span>
+          </label>
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.pago}
+              onChange={(e) => setStatusChecks({ ...statusChecks, pago: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Pago</span>
+          </label>
+          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
+            <input
+              type="checkbox"
+              checked={statusChecks.cancelado}
+              onChange={(e) => setStatusChecks({ ...statusChecks, cancelado: e.target.checked })}
+              className="w-4 h-4 cursor-pointer accent-white"
+            />
+            <span className="text-xs text-white">Cancelado</span>
+          </label>
+        </div>
+
+        {/* Botão Ações com Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setOpenActionsMenu(!openActionsMenu)}
+            disabled={selectedRows.size === 0 || generatingZip}
+            className={`px-4 py-2 text-sm font-medium rounded transition ${
+              selectedRows.size === 0 || generatingZip
+                ? 'bg-[#1a1a1a] text-[#666666] border border-[#2a2a2a] cursor-not-allowed'
+                : 'bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]'
+            }`}
+          >
+            Ações {selectedRows.size > 0 && `(${selectedRows.size})`}
+          </button>
+
+          {openActionsMenu && (
+            <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-56">
+              {efactorActive && (
+                <button
+                  onClick={handleImportOpeite}
+                  disabled={importingOpeite}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {importingOpeite ? '⏳ Importando...' : '📨 Importar'}
+                </button>
+              )}
               <button
-                onClick={() => setOpenActionsMenu(!openActionsMenu)}
-                disabled={selectedRows.size === 0 || generatingZip}
-                style={{ height: '36px', width: '110px' }}
-                className={`flex items-center justify-center text-sm font-medium rounded transition ${
-                  selectedRows.size === 0 || generatingZip
-                    ? 'bg-[#1a1a1a] text-[#666666] border border-[#2a2a2a] cursor-not-allowed'
-                    : 'bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]'
-                }`}
+                onClick={handleGenerateSecondViaZip}
+                disabled={generatingZip}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Ações {selectedRows.size > 0 && `(${selectedRows.size})`}
+                {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
               </button>
-
-              {openActionsMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-56">
-                  {efactorActive && (
-                    <button
-                      onClick={handleImportOpeite}
-                      disabled={importingOpeite}
-                      className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {importingOpeite ? '⏳ Importando...' : '📨 Importar'}
-                    </button>
-                  )}
+              <button
+                onClick={handleAntecipacao}
+                disabled={processandoAntecipacao}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
+              </button>
+              <button
+                onClick={handleRetornarAntecipacao}
+                disabled={retornandoAntecipacao}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
+              </button>
+              <button
+                onClick={() => setShowAssinarSub(!showAssinarSub)}
+                disabled={assinandoZapsign}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+              >
+                <span>{assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}</span>
+                <span className="text-[#666666]">{showAssinarSub ? '▾' : '▸'}</span>
+              </button>
+              {showAssinarSub && (
+                <div className="bg-[#141414] border-b border-[#2a2a2a]">
                   <button
-                    onClick={handleGenerateSecondViaZip}
-                    disabled={generatingZip}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => handleAssinarZapsign('com')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                   >
-                    {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
+                    👤 Com Sacado
                   </button>
                   <button
-                    onClick={handleAntecipacao}
-                    disabled={processandoAntecipacao}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => handleAssinarZapsign('sem')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                   >
-                    {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
-                  </button>
-                  <button
-                    onClick={handleRetornarAntecipacao}
-                    disabled={retornandoAntecipacao}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
-                  </button>
-                  <button
-                    onClick={() => setShowAssinarSub(!showAssinarSub)}
-                    disabled={assinandoZapsign}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
-                  >
-                    <span>{assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}</span>
-                    <span className="text-[#666666]">{showAssinarSub ? '▾' : '▸'}</span>
-                  </button>
-                  {showAssinarSub && (
-                    <div className="bg-[#141414] border-b border-[#2a2a2a]">
-                      <button
-                        onClick={() => handleAssinarZapsign('com')}
-                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                      >
-                        👤 Com Sacado
-                      </button>
-                      <button
-                        onClick={() => handleAssinarZapsign('sem')}
-                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                      >
-                        🚫 Sem Sacado
-                      </button>
-                    </div>
-                  )}
-                  {/* CNAB400 disponível apenas no modo Importados (não em Conta Capt nem Efactor) */}
-                  {!efactorActive && !contaCaptActive && (
-                    <>
-                      <button
-                        onClick={() => setShowCnab400Sub(!showCnab400Sub)}
-                        disabled={generatingCNAB400}
-                        className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
-                      >
-                        <span>{generatingCNAB400 ? '⏳ Gerando...' : '📄 CNAB400'}</span>
-                        <span className="text-[#666666]">{showCnab400Sub ? '▾' : '▸'}</span>
-                      </button>
-                      {showCnab400Sub && (
-                        <div className="bg-[#141414] border-b border-[#2a2a2a]">
-                          <button
-                            onClick={() => handleGenerateRemessaCNAB400('01')}
-                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                          >
-                            Registro
-                          </button>
-                          <button
-                            onClick={() => handleGenerateRemessaCNAB400('06')}
-                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                          >
-                            Alterar
-                          </button>
-                          <button
-                            onClick={() => handleGenerateRemessaCNAB400('02')}
-                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                          >
-                            Baixa
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                  <button
-                    onClick={handleDeleteSelectedBoletos}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    🗑️ Excluir
+                    🚫 Sem Sacado
                   </button>
                 </div>
               )}
-            </div>
-
-            {/* Botão Filtro com Dropdown */}
-            <div className="relative">
               <button
-                onClick={() => setShowFiltroMenu(!showFiltroMenu)}
-                style={{ height: '36px', width: '110px' }}
-                className="flex items-center justify-center text-sm font-medium rounded transition bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]"
+                onClick={() => setShowCnab400Sub(!showCnab400Sub)}
+                disabled={generatingCNAB400}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
               >
-                Filtro
+                <span>{generatingCNAB400 ? '⏳ Gerando...' : '📄 CNAB400'}</span>
+                <span className="text-[#666666]">{showCnab400Sub ? '▾' : '▸'}</span>
               </button>
-
-              {showFiltroMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 p-4 min-w-72">
-                  {/* Vencimento */}
-                  <div className="mb-3">
-                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Vencimento</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="date"
-                        value={dataVencimentoInicio}
-                        onChange={(e) => setDataVencimentoInicio(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Início"
-                      />
-                      <input
-                        type="date"
-                        value={dataVencimentoFim}
-                        onChange={(e) => setDataVencimentoFim(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Final"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Registro */}
-                  <div className="mb-3">
-                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Registro</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="date"
-                        value={dataRegistroInicio}
-                        onChange={(e) => setDataRegistroInicio(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Início"
-                      />
-                      <input
-                        type="date"
-                        value={dataRegistroFim}
-                        onChange={(e) => setDataRegistroFim(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Final"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Antecipado */}
-                  <div className="mb-3">
-                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Antecipado</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="date"
-                        value={dataAntecipadoInicio}
-                        onChange={(e) => setDataAntecipadoInicio(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Início"
-                      />
-                      <input
-                        type="date"
-                        value={dataAntecipadoFim}
-                        onChange={(e) => setDataAntecipadoFim(e.target.value)}
-                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
-                        title="Final"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Status */}
-                  <div className="pt-3 border-t border-[#2a2a2a] flex gap-4">
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={statusChecks.pendente}
-                        onChange={(e) => setStatusChecks({ ...statusChecks, pendente: e.target.checked })}
-                        className="w-4 h-4 cursor-pointer accent-white"
-                      />
-                      <span className="text-xs text-white">Pendentes</span>
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={statusChecks.pago}
-                        onChange={(e) => setStatusChecks({ ...statusChecks, pago: e.target.checked })}
-                        className="w-4 h-4 cursor-pointer accent-white"
-                      />
-                      <span className="text-xs text-white">Pagos</span>
-                    </label>
-                    <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={statusChecks.cancelado}
-                        onChange={(e) => setStatusChecks({ ...statusChecks, cancelado: e.target.checked })}
-                        className="w-4 h-4 cursor-pointer accent-white"
-                      />
-                      <span className="text-xs text-white">Cancelado</span>
-                    </label>
-                  </div>
-
-                  {/* Limpar filtros */}
+              {showCnab400Sub && (
+                <div className="bg-[#141414] border-b border-[#2a2a2a]">
                   <button
-                    onClick={() => {
-                      setDataVencimentoInicio(''); setDataVencimentoFim('')
-                      setDataRegistroInicio(''); setDataRegistroFim('')
-                      setDataAntecipadoInicio(''); setDataAntecipadoFim('')
-                      setStatusChecks({ pago: false, cancelado: false, pendente: true })
-                    }}
-                    className="mt-3 w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
+                    onClick={() => handleGenerateRemessaCNAB400('01')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                   >
-                    Limpar filtros
+                    Registro
+                  </button>
+                  <button
+                    onClick={() => handleGenerateRemessaCNAB400('06')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    Alterar
+                  </button>
+                  <button
+                    onClick={() => handleGenerateRemessaCNAB400('02')}
+                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                  >
+                    Baixa
                   </button>
                 </div>
               )}
-            </div>
-
-            {/* Botão Novo */}
-            <button
-              onClick={handleCreateNew}
-              style={{ height: '36px', width: '110px' }}
-              className="flex items-center justify-center bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"
-            >
-              + Novo
-            </button>
-
-            {/* Botão Sync ZapSign */}
-            <button
-              onClick={() => handleSyncZapSign(false)}
-              disabled={syncingZap}
-              style={{ height: '36px', width: '36px' }}
-              className="flex items-center justify-center bg-[#1a1a1a] text-white border border-[#2a2a2a] rounded hover:bg-[#222222] transition disabled:opacity-50"
-              title={syncingZap ? 'Consultando ZapSign...' : 'Sincronizar assinaturas ZapSign'}
-            >
-              <svg
-                className={`w-4 h-4 ${syncingZap ? 'animate-spin' : ''}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              <button
+                onClick={handleDeleteSelectedBoletos}
+                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-          </>
-        )}
+                🗑️ Excluir
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Emitir boleto — ao lado direito de Ações */}
+        <button
+          onClick={handleCreateNew}
+          className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition whitespace-nowrap"
+        >
+          + Novo
+        </button>
       </div>
-
+      )}
 
       {/* Tabela: capt_registrado (modo Conta Capt) ou capt_boletos */}
       {contaCaptActive ? (
@@ -1441,7 +1377,6 @@ export default function BoletosPage() {
             selectedRows={selectedRows}
             onSelectedRowsChange={setSelectedRows}
             contaData={contaData}
-            showGerado={!importadosActive}
           />
         </div>
       )}
@@ -1470,7 +1405,7 @@ export default function BoletosPage() {
 
       {/* Modal de Importação Efactor — confirmação + escolha de cedente de destino */}
       {showEfactorImportModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-lg font-semibold text-white mb-4">Importar registros do Efactor</h2>
 
@@ -1548,7 +1483,7 @@ export default function BoletosPage() {
 
       {/* Import Result Modal */}
       {showImportResult && importStatus && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-lg font-semibold text-white mb-4">{importStatus.title}</h2>
 
@@ -1588,45 +1523,6 @@ export default function BoletosPage() {
           onClose={() => setShowZapsignModal(false)}
           onSubmit={runZapsign}
         />
-      )}
-
-      {/* Modal de confirmação: títulos já registrados no CNAB400 */}
-      {cnab400Confirm && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
-          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-md w-full p-6 space-y-4">
-            <h3 className="text-white font-semibold text-base">⚠️ Títulos já Registrados</h3>
-            <p className="text-[#a3a3a3] text-sm">
-              Os seguintes títulos já constam em <span className="text-white font-medium">capt_registrado</span> e podem ter sido processados pelo banco:
-            </p>
-            <ul className="space-y-1 max-h-48 overflow-y-auto">
-              {cnab400Confirm.titulos.map(({ boleto }, i) => (
-                <li key={i} className="text-sm text-white bg-[#111111] border border-[#2a2a2a] rounded px-3 py-1.5 font-mono">
-                  {boleto.numero_documento || boleto.id}
-                  {boleto.sacado_nome ? <span className="text-[#666666] ml-2 font-sans">{boleto.sacado_nome}</span> : null}
-                </li>
-              ))}
-            </ul>
-            <p className="text-[#a3a3a3] text-sm">Deseja gerar a remessa mesmo assim?</p>
-            <div className="flex gap-3 justify-end pt-2">
-              <button
-                onClick={() => setCnab400Confirm(null)}
-                className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  const { tipoOperacao, boletosParaRemessa } = cnab400Confirm
-                  setCnab400Confirm(null)
-                  doGerarRemessaCNAB400(boletosParaRemessa, tipoOperacao)
-                }}
-                className="px-5 py-2 text-sm bg-white text-black font-medium rounded hover:opacity-90 transition"
-              >
-                Gerar mesmo assim
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )

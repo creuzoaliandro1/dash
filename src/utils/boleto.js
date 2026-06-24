@@ -578,7 +578,7 @@ const extrairDadosBeneficiario = (contaData) => {
              logradouro, numero, complemento, bairro, cidade, uf, cep, enderecoCompleto }
 }
 
-export const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
+const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
     const M = 10, CW = 190
 
     const benef = extrairDadosBeneficiario(contaData)
@@ -731,7 +731,7 @@ export const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
 // ============================================================
 // PDF - Renderiza ficha de compensacao (parte inferior)
 // ============================================================
-export const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
+const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     const M = 10, CW = 190
     const ROW_H = 6.5, INST_H = ROW_H * 3  // 3 sub-linhas direita, mesma altura das demais
 
