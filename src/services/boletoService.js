@@ -76,7 +76,7 @@ export const getBoletos = async (contaId) => {
 
       let query = supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
+        .select('id, numero_documento, num_titulo, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
         .order('created_at', { ascending: false })
         .range(start, end)
 
@@ -637,7 +637,7 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
     while (true) {
       const { data, error } = await supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO')
+        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
         .in('COD_SACADO', cods)
         .in('STATUS', ['DO', 'PR', 'IN'])
         .range(from, from + ps - 1)
@@ -647,6 +647,12 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
       if (data.length < ps) break
       from += ps
     }
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI
+    all.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
     return { data: all, error: null }
   } catch (err) {
     console.error('[buscarOpeitePorCic] Erro:', err)
@@ -1542,7 +1548,7 @@ export const getOPEITEByCedente = async (codCedente) => {
 
       const { data, error } = await supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('COD_CEDENTE', codCedente)
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
@@ -1569,6 +1575,13 @@ export const getOPEITEByCedente = async (codCedente) => {
     }
 
     console.log(`[BoletoService] ✓ Total de OPEITE: ${allOpeite.length} registros`)
+
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI
+    allOpeite.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
 
     // Buscar dados de SACADO para pegar NOME_CORRENTISTA
     const codSacadoSet = new Set(allOpeite.map(o => o.COD_SACADO).filter(Boolean))
@@ -1873,10 +1886,9 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
 
       let query = supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
-        .gte('DT_VENCI', hojeStr)
         .range(start, end)
 
       if (codCedente) {
@@ -1891,6 +1903,16 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
       if (data.length < pageSize) break
       page++
     }
+
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI (antes de qualquer filtro por data)
+    allOpeite.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
+
+    // Aplicar filtro de vencimento >= hoje após substituição PR
+    allOpeite = allOpeite.filter(o => (o.DT_VENCI || '') >= hojeStr)
 
     console.log(`[BoletoService] Efactor OPEITE: ${allOpeite.length} registros antes da exclusão de já inseridos`)
 

@@ -964,7 +964,7 @@ export const generateMultipleBoletoPDFs = async (boletos, contaData) => {
     for (const boleto of boletos) {
         try {
             const blob = await generateSingleBoletoPDF(boleto, contaData)
-            blobs.push({ blob, filename: `boleto_${boleto.numero_documento || boleto.id || 'doc'}.pdf` })
+            blobs.push({ blob, filename: `boleto_${boleto.num_titulo || boleto.numero_documento || boleto.id || 'doc'}.pdf` })
         } catch (error) {
             console.error('[PDF] Erro ao gerar PDF para boleto:', boleto.numero_documento, error)
         }

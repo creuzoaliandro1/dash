@@ -371,7 +371,7 @@ export const generateMultipleBoletoPDFs = async (records) => {
       }
 
       const pdfBlob = await generateSingleBoletoPDF(boletoData)
-      const filename = `boleto_${record.numero_documento || 'documento'}.pdf`
+      const filename = `boleto_${record.num_titulo || record.numero_documento || 'documento'}.pdf`
 
       pdfs.push({
         filename,

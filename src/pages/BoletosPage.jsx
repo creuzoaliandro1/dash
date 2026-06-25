@@ -390,10 +390,10 @@ export default function BoletosPage() {
       const term = searchTerm.toLowerCase()
       filtered = filtered.filter(boleto => {
         return (
-          (boleto.numero_documento && boleto.numero_documento.toLowerCase().includes(term)) ||
+          (boleto.numero_documento != null && String(boleto.numero_documento).toLowerCase().includes(term)) ||
           (boleto.sacado_nome && boleto.sacado_nome.toLowerCase().includes(term)) ||
-          (boleto.nosso_numero && boleto.nosso_numero.toLowerCase().includes(term)) ||
-          (boleto.sacado_cic && boleto.sacado_cic.toLowerCase().includes(term))
+          (boleto.nosso_numero != null && String(boleto.nosso_numero).toLowerCase().includes(term)) ||
+          (boleto.sacado_cic != null && String(boleto.sacado_cic).toLowerCase().includes(term))
         )
       })
     }

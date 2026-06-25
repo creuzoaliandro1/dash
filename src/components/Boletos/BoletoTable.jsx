@@ -61,6 +61,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   // Estado para preview de PDF da 2ª via
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null)
+  const [pdfPreviewBoleto, setPdfPreviewBoleto] = useState(null)
 
   // Estado para preview de PDF da Duplicata
   const [duplicataPdfOpen, setDuplicataPdfOpen] = useState(false)
@@ -258,6 +259,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
       // Criar URL para preview
       const url = URL.createObjectURL(pdfBlob)
       setPdfPreviewUrl(url)
+      setPdfPreviewBoleto(boleto)
       setPdfPreviewOpen(true)
 
       setOpenMenu(null)
@@ -579,12 +581,23 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
               {/* Header */}
               <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
                 <h2 className="text-white text-sm font-medium">2ª Via do Boleto</h2>
-                <button
-                  onClick={() => setPdfPreviewOpen(false)}
-                  className="text-[#666666] hover:text-white transition text-2xl"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  {pdfPreviewUrl && pdfPreviewBoleto && (
+                    <a
+                      href={pdfPreviewUrl}
+                      download={`boleto_${pdfPreviewBoleto.num_titulo || pdfPreviewBoleto.numero_documento || pdfPreviewBoleto.id || 'doc'}.pdf`}
+                      className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] hover:border-[#444] px-3 py-1 rounded transition"
+                    >
+                      ⬇ Baixar
+                    </a>
+                  )}
+                  <button
+                    onClick={() => setPdfPreviewOpen(false)}
+                    className="text-[#666666] hover:text-white transition text-2xl"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               {/* Content */}
