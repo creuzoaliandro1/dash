@@ -76,7 +76,7 @@ export const getBoletos = async (contaId) => {
 
       let query = supabase
         .from('capt_boletos')
-        .select('id, numero_documento, num_titulo, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
         .order('created_at', { ascending: false })
         .range(start, end)
 

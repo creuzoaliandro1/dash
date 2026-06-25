@@ -467,7 +467,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                   {boleto.data_emissao ? formatDate(boleto.data_emissao) : '—'}
                 </div>
                 <div style={{ flex: '0 0 105px' }} className="text-white font-medium text-right">
-                  {boleto.numero_documento || '—'}
+                  {boleto.num_titulo || boleto.numero_documento || '—'}
                 </div>
                 <div style={{ flex: '0 0 65px' }} className="text-white font-mono text-right">
                   {boleto.valor ? formatCurrency(boleto.valor) : '0,00'}

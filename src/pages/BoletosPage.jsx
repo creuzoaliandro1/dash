@@ -1846,7 +1846,7 @@ export default function BoletosPage() {
             <ul className="space-y-1 max-h-48 overflow-y-auto">
               {cnab400Confirm.titulos.map(({ boleto }, i) => (
                 <li key={i} className="text-sm text-white bg-[#111111] border border-[#2a2a2a] rounded px-3 py-1.5 font-mono">
-                  {boleto.numero_documento || boleto.id}
+                  {boleto.num_titulo || boleto.numero_documento || boleto.id}
                   {boleto.sacado_nome ? <span className="text-[#666666] ml-2 font-sans">{boleto.sacado_nome}</span> : null}
                 </li>
               ))}
