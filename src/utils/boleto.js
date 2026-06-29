@@ -578,7 +578,7 @@ const extrairDadosBeneficiario = (contaData) => {
              logradouro, numero, complemento, bairro, cidade, uf, cep, enderecoCompleto }
 }
 
-const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
+export const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
     const M = 10, CW = 190
 
     const benef = extrairDadosBeneficiario(contaData)
@@ -731,7 +731,7 @@ const renderFatura = async (doc, boleto, contaData, boletoStartY) => {
 // ============================================================
 // PDF - Renderiza ficha de compensacao (parte inferior)
 // ============================================================
-const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
+export const renderFichaCompensacao = async (doc, boleto, contaData, startY) => {
     const M = 10, CW = 190
     const ROW_H = 6.5, INST_H = ROW_H * 3  // 3 sub-linhas direita, mesma altura das demais
 
@@ -964,7 +964,7 @@ export const generateMultipleBoletoPDFs = async (boletos, contaData) => {
     for (const boleto of boletos) {
         try {
             const blob = await generateSingleBoletoPDF(boleto, contaData)
-            blobs.push({ blob, filename: `boleto_${boleto.numero_documento || boleto.id || 'doc'}.pdf` })
+            blobs.push({ blob, filename: `boleto_${boleto.num_titulo || boleto.numero_documento || boleto.id || 'doc'}.pdf` })
         } catch (error) {
             console.error('[PDF] Erro ao gerar PDF para boleto:', boleto.numero_documento, error)
         }

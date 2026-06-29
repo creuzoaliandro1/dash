@@ -76,7 +76,7 @@ export const getBoletos = async (contaId) => {
 
       let query = supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
         .order('created_at', { ascending: false })
         .range(start, end)
 
@@ -351,6 +351,189 @@ export const createBoletosBulk = async (contaId, boletosData) => {
   }
 }
 
+// ============================================================================
+// IMPORT CONTA CAPT → capt_registrado
+// Regras:
+//  - Grava sempre em capt_registrado (nunca em capt_boletos)
+//  - Se já existe em capt_registrado (por num_linha_digtvl) → atualiza
+//  - Se não existe → insere
+//  - Se existe em capt_boletos (por codigo_barras = num_linha_digtvl) → exclui
+// ============================================================================
+export const importContaCaptToRegistrado = async (boletosData) => {
+  try {
+    if (!Array.isArray(boletosData) || boletosData.length === 0) {
+      return { data: { inserted: 0, updated: 0, deletedFromBoletos: 0, errors: 0 }, error: null }
+    }
+
+    // Converte data (Excel serial, DD/MM/YYYY ou YYYY-MM-DD) para YYYY-MM-DD
+    const toISO = (v) => {
+      if (!v) return null
+      if (typeof v === 'number') {
+        const d = new Date(Math.round((v - 25569) * 86400 * 1000))
+        return isNaN(d) ? null : d.toISOString().slice(0, 10)
+      }
+      const s = String(v).trim()
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const [dd, mm, yyyy] = s.split('/')
+        return `${yyyy}-${mm}-${dd}`
+      }
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+      return null
+    }
+
+    const toNum = (v) => {
+      if (!v && v !== 0) return null
+      if (typeof v === 'number') return v
+      const s = String(v).trim().replace(/[^\d.,]/g, '')
+      if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || null
+      return parseFloat(s) || null
+    }
+
+    // Mapeia campos da ContaCaptUpload → capt_registrado
+    const toRegistradoRow = (b) => ({
+      num_linha_digtvl: String(b.CODIGO_BARRAS || '').replace(/\D/g, '') || null,
+      numero_documento:            b.NUMERO_DOCUMENTO || null,
+      nom_rz_soc_pagdr:            b.SACADO_NOME     || null,
+      cnpj_cpf_pagdr:              String(b.SACADO_CIC  || '').replace(/\D/g, '') || null,
+      cep_pagdr:                   String(b.SACADO_CEP  || '').replace(/\D/g, '') || null,
+      lograd_pagdr:                b.SACADO_ENDERECO  || null,
+      numero_endereco_pagdr:       b.SACADO_NUMERO    || null,
+      complemento_endereco_pagdr:  b.SACADO_COMPLEMENTO || null,
+      cid_pagdr:                   b.SACADO_CIDADE    || null,
+      uf_pagdr:                    b.SACADO_UF        || null,
+      email_pagdr:                 b.SACADO_EMAIL     || null,
+      telefone_pagdr:              b.SACADO_TELEFONE  || null,
+      identd_nosso_num:            b.NOSSO_NUMERO     || null,
+      vlr_tit:                     toNum(b.VALOR),
+      dt_ems_tit:                  toISO(b.EMISSAO),
+      dt_venc_tit:                 toISO(b.VENCIMENTO),
+      nome_sacador_avalista:       b.AVALISTA_NOME    || null,
+      descricao:                   b.DESCRICAO        || null,
+      situacao_boleto:             b.STATUS           || null,
+    })
+
+    const rows = boletosData.map(toRegistradoRow)
+    // Conjunto de linhas digitáveis do lote (sempre só dígitos)
+    const linhasDigitaveis = [...new Set(rows.map(r => r.num_linha_digtvl).filter(Boolean))]
+    const linhasSet = new Set(linhasDigitaveis)
+
+    // 1) Buscar registros existentes em capt_registrado varrendo TODAS as páginas.
+    //    O campo num_linha_digtvl pode estar armazenado com formatação (espaços, pontos)
+    //    ou só dígitos — por isso normalizamos os dois lados para comparar.
+    //    existingMap: digits-only → { id, storedValue }
+    const existingMap = new Map()
+    {
+      const pageSize = 1000
+      let from = 0
+      while (true) {
+        const { data, error } = await supabase
+          .from('capt_registrado')
+          .select('id, num_linha_digtvl')
+          .range(from, from + pageSize - 1)
+        if (error) { console.warn('[importContaCaptToRegistrado] Erro ao ler capt_registrado:', error.message); break }
+        if (!data || data.length === 0) break
+        data.forEach(r => {
+          const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
+          if (norm && linhasSet.has(norm)) {
+            existingMap.set(norm, r.id)
+          }
+        })
+        if (data.length < pageSize) break
+        from += pageSize
+      }
+    }
+    console.log(`[importContaCaptToRegistrado] ${existingMap.size} registro(s) já existente(s) em capt_registrado`)
+
+    // 2) Excluir de capt_boletos qualquer registro cujo codigo_barras bata com
+    //    uma das linhas digitáveis importadas.
+    //    Estratégia: carrega TODA capt_boletos em páginas (comparação em JS),
+    //    evitando URLs longas que causam 400 ao usar .in() com strings de 47 dígitos.
+    let deletedFromBoletos = 0
+    {
+      const idsParaExcluir = []
+      const pageSize = 1000
+      let from = 0
+      while (true) {
+        const { data: bPage, error: bErr } = await supabase
+          .from('capt_boletos')
+          .select('id, codigo_barras')
+          .range(from, from + pageSize - 1)
+        if (bErr) { console.warn('[importContaCaptToRegistrado] Erro ao ler capt_boletos:', bErr.message); break }
+        if (!bPage || bPage.length === 0) break
+        bPage.forEach(b => {
+          const norm = String(b.codigo_barras || '').replace(/\D/g, '')
+          if (norm && linhasSet.has(norm)) idsParaExcluir.push(b.id)
+        })
+        if (bPage.length < pageSize) break
+        from += pageSize
+      }
+      // Exclui em lotes de 100 IDs (UUIDs são curtos, sem risco de URL longa)
+      const delBatch = 100
+      for (let i = 0; i < idsParaExcluir.length; i += delBatch) {
+        const chunk = idsParaExcluir.slice(i, i + delBatch)
+        const { error: delErr } = await supabase.from('capt_boletos').delete().in('id', chunk)
+        if (!delErr) deletedFromBoletos += chunk.length
+        else console.warn('[importContaCaptToRegistrado] Erro ao excluir capt_boletos:', delErr.message)
+      }
+    }
+
+    // 3) Separar em inserções e atualizações (por num_linha_digtvl normalizado)
+    const toInsert = []
+    const toUpdate = [] // [{id, row}]
+    for (const row of rows) {
+      const norm = String(row.num_linha_digtvl || '').replace(/\D/g, '')
+      const existingId = norm ? existingMap.get(norm) : null
+      if (existingId) {
+        toUpdate.push({ id: existingId, row })
+      } else {
+        toInsert.push(row)
+      }
+    }
+
+    // 4) Inserir novos em lote
+    let inserted = 0
+    let errors = 0
+    const BATCH = 500
+    for (let i = 0; i < toInsert.length; i += BATCH) {
+      const chunk = toInsert.slice(i, i + BATCH)
+      const { error } = await supabase.from('capt_registrado').insert(chunk)
+      if (error) {
+        errors += chunk.length
+        console.error('[importContaCaptToRegistrado] Erro ao inserir lote:', error.message)
+      } else {
+        inserted += chunk.length
+      }
+    }
+
+    // 5) Atualizar existentes em lote usando update por id
+    //    (Supabase não suporta bulk update com diferentes valores, então fazemos em paralelo controlado)
+    let updated = 0
+    const UPDATE_CONCURRENCY = 10
+    for (let i = 0; i < toUpdate.length; i += UPDATE_CONCURRENCY) {
+      const slice = toUpdate.slice(i, i + UPDATE_CONCURRENCY)
+      const results = await Promise.all(
+        slice.map(({ id, row }) =>
+          supabase.from('capt_registrado').update(row).eq('id', id)
+        )
+      )
+      results.forEach(({ error }) => {
+        if (error) {
+          errors++
+          console.error('[importContaCaptToRegistrado] Erro ao atualizar:', error.message)
+        } else {
+          updated++
+        }
+      })
+    }
+
+    console.log(`[importContaCaptToRegistrado] ${inserted} inserido(s), ${updated} atualizado(s), ${deletedFromBoletos} removido(s) de capt_boletos, ${errors} erro(s)`)
+    return { data: { inserted, updated, deletedFromBoletos, errors }, error: null }
+  } catch (err) {
+    console.error('[importContaCaptToRegistrado] Erro geral:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Buscar Lançamento (E-Factor): para os boletos SEM num_lancamento, pareia cada um
 // com o melhor candidato OPEITE do MESMO sacado (CIC). Retorna linhas comparativas.
 export const buscarLancamentos = async (boletos) => {
@@ -454,7 +637,7 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
     while (true) {
       const { data, error } = await supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO')
+        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
         .in('COD_SACADO', cods)
         .in('STATUS', ['DO', 'PR', 'IN'])
         .range(from, from + ps - 1)
@@ -464,6 +647,12 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
       if (data.length < ps) break
       from += ps
     }
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI
+    all.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
     return { data: all, error: null }
   } catch (err) {
     console.error('[buscarOpeitePorCic] Erro:', err)
@@ -577,6 +766,123 @@ export const updateBoleto = async (boletoId, updates) => {
   } catch (err) {
     console.error('Erro ao atualizar boleto:', err)
     return { data: null, error: err }
+  }
+}
+
+// Atualiza múltiplos boletos por num_lancamento (útil após auto-import para ZapSign)
+export const updateBoletosByLancamentos = async (contaId, lancamentos, updates) => {
+  const nums = lancamentos.map(Number).filter(n => !isNaN(n) && n > 0)
+  if (!nums.length) return { error: null }
+  const { error } = await supabase
+    .from('capt_boletos')
+    .update(updates)
+    .eq('conta_id', contaId)
+    .in('num_lancamento', nums)
+  if (error) console.error('[updateBoletosByLancamentos]', error.message)
+  return { error }
+}
+
+/**
+ * Remove de capt_boletos todos os registros cuja conta_id = contaId e cujo nosso_numero
+ * já existe em capt_registrado (identd_nosso_num). Retorna { excluidos, error }.
+ */
+// ============================================================
+// capt_assina — funções de serviço
+// ============================================================
+
+/**
+ * Determina o valor de `lancamento` e `digitavel` para gravar em capt_assina,
+ * com base na origem do boleto (OPEITE, CAPT ou REGISTRADO).
+ */
+export const resolverLancamentoAssina = (boleto) => {
+  const origem = boleto._ORIGEM || (boleto.num_lancamento ? 'OPEITE' : 'CAPT')
+  let lancamento = ''
+  let digitavel = ''
+
+  if (origem === 'OPEITE') {
+    lancamento = String(boleto.num_lancamento || '')
+    digitavel = boleto.codigo_barras || ''
+  } else if (origem === 'REGISTRADO') {
+    lancamento = boleto.num_linha_digtvl || String(boleto.nosso_numero || '')
+    digitavel = boleto.num_linha_digtvl || ''
+  } else {
+    // CAPT (capt_boletos)
+    lancamento = boleto.codigo_barras || String(boleto.nosso_numero || '')
+    digitavel = boleto.codigo_barras || ''
+  }
+  return { lancamento, digitavel }
+}
+
+/**
+ * Insere registros em capt_assina — um por boleto.
+ * `docResp` = objeto retornado pela API ZapSign (doc_token, open_id, status, name, etc.)
+ * `boletos` = array de boletos selecionados (do unified view)
+ * `contaId` = UUID da conta
+ */
+export const insertCaptAssina = async (contaId, docResp, boletos) => {
+  if (!docResp?.token || !boletos?.length) return { error: null }
+  const rows = boletos.map((b) => {
+    const { lancamento, digitavel } = resolverLancamentoAssina(b)
+    return {
+      conta_id: contaId,
+      doc_token: docResp.token,
+      open_id: docResp.open_id || null,
+      status: 'pendente',
+      nome_documento: docResp.name || '',
+      original_file: docResp.original_file || null,
+      signed_file: docResp.signed_file || null,
+      zapsign_created_at: docResp.created_at || null,
+      zapsign_updated_at: docResp.last_update_at || null,
+      signers: docResp.signers || [],
+      lancamento: lancamento || null,
+      digitavel: digitavel || null,
+    }
+  })
+  const { error } = await supabase.from('capt_assina').insert(rows)
+  if (error) console.error('[insertCaptAssina]', error.message)
+  return { error }
+}
+
+/**
+ * Atualiza status (e signed_file) em capt_assina para todos os registros com doc_token.
+ */
+export const updateCaptAssinaStatus = async (docToken, status, signedFile) => {
+  const updates = { status }
+  if (signedFile) updates.signed_file = signedFile
+  const { error } = await supabase
+    .from('capt_assina')
+    .update(updates)
+    .eq('doc_token', docToken)
+  if (error) console.error('[updateCaptAssinaStatus]', error.message)
+  return { error }
+}
+
+export const deletarBoletosJaRegistrados = async (contaId) => {
+  try {
+    // 1. Busca todos os identd_nosso_num de capt_registrado
+    const { data: regRows, error: regErr } = await supabase
+      .from('capt_registrado')
+      .select('identd_nosso_num')
+      .not('identd_nosso_num', 'is', null)
+    if (regErr) return { excluidos: 0, error: regErr }
+
+    const nossoNumerosRegistrados = [...new Set(
+      (regRows || []).map(r => String(r.identd_nosso_num || '').trim()).filter(Boolean)
+    )]
+    if (nossoNumerosRegistrados.length === 0) return { excluidos: 0, error: null }
+
+    // 2. Deleta de capt_boletos onde nosso_numero bate com algum identd_nosso_num
+    const { data: deleted, error: delErr } = await supabase
+      .from('capt_boletos')
+      .delete()
+      .eq('conta_id', contaId)
+      .in('nosso_numero', nossoNumerosRegistrados)
+      .select('id')
+    if (delErr) return { excluidos: 0, error: delErr }
+
+    return { excluidos: (deleted || []).length, error: null }
+  } catch (err) {
+    return { excluidos: 0, error: err }
   }
 }
 
@@ -1172,6 +1478,61 @@ export const reconciliateOpeiteWithBoletos = async (contaId) => {
   }
 }
 
+// Soma VR_FACE dos registros OPEITE com STATUS='IN' para um dado COD_CEDENTE.
+// Usado no card Inadimplentes do Dashboard.
+export const getOPEITEInadimplentesTotal = async (codCedente) => {
+  if (!codCedente) return 0
+  try {
+    let total = 0
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('VR_FACE')
+        .eq('COD_CEDENTE', codCedente)
+        .eq('STATUS', 'IN')
+        .range(from, from + pageSize - 1)
+      if (error) { console.warn('[getOPEITEInadimplentesTotal]', error.message); break }
+      if (!data || data.length === 0) break
+      data.forEach(o => { total += parseFloat(o.VR_FACE) || 0 })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return total
+  } catch (err) {
+    console.warn('[getOPEITEInadimplentesTotal] Exceção:', err)
+    return 0
+  }
+}
+
+// Soma VR_FACE de OPEITE onde STATUS IN ('IN','PR','DO') — boletos em aberto no Efactor
+export const getOPEITEAbertoTotal = async (codCedente) => {
+  if (!codCedente) return 0
+  try {
+    let total = 0
+    let from = 0
+    const pageSize = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('OPEITE')
+        .select('VR_FACE')
+        .eq('COD_CEDENTE', codCedente)
+        .in('STATUS', ['IN', 'PR', 'DO'])
+        .range(from, from + pageSize - 1)
+      if (error) { console.warn('[getOPEITEAbertoTotal]', error.message); break }
+      if (!data || data.length === 0) break
+      data.forEach(o => { total += parseFloat(o.VR_FACE) || 0 })
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return total
+  } catch (err) {
+    console.warn('[getOPEITEAbertoTotal] Exceção:', err)
+    return 0
+  }
+}
+
 // Buscar registros OPEITE filtrando por COD_CEDENTE (para origem Efactor)
 export const getOPEITEByCedente = async (codCedente) => {
   try {
@@ -1187,7 +1548,7 @@ export const getOPEITEByCedente = async (codCedente) => {
 
       const { data, error } = await supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('COD_CEDENTE', codCedente)
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
@@ -1214,6 +1575,13 @@ export const getOPEITEByCedente = async (codCedente) => {
     }
 
     console.log(`[BoletoService] ✓ Total de OPEITE: ${allOpeite.length} registros`)
+
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI
+    allOpeite.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
 
     // Buscar dados de SACADO para pegar NOME_CORRENTISTA
     const codSacadoSet = new Set(allOpeite.map(o => o.COD_SACADO).filter(Boolean))
@@ -1272,6 +1640,230 @@ export const getOPEITEByCedente = async (codCedente) => {
   }
 }
 
+// ============================================================================
+// VISÃO UNIFICADA "IMPORTADOS": une capt_boletos + capt_registrado + OPEITE.
+// Faz o matching por VALOR + VENCIMENTO + CIC. Quando o mesmo título aparece
+// em 2 ou 3 fontes, exibe APENAS UM registro, priorizando os dados de
+// capt_registrado, depois OPEITE, depois capt_boletos. Registros sem
+// correspondência aparecem individualmente.
+// Vínculos por cedente:
+//   capt_boletos.conta_id            = CONTAS.id
+//   capt_registrado.cod_cedente_titular = CONTAS.cedente  (texto, ex. "1124527")
+//   OPEITE.COD_CEDENTE               = CONTAS.cod_cedente (inteiro, ex. 462)
+// ============================================================================
+
+// Normalizações usadas na chave de matching
+const _digitsOnly = (v) => String(v ?? '').replace(/\D/g, '')
+const _toCents = (v) => Math.round((parseFloat(v) || 0) * 100)
+const _isoDate = (d) => (d ? String(d).slice(0, 10) : '')
+const _matchKey = (valor, venc, cic) => `${_toCents(valor)}|${_isoDate(venc)}|${_digitsOnly(cic)}`
+
+// Carrega TODA a capt_registrado (a tabela é registrada sob a conta-mãe CAPT, então o
+// vínculo com um título do perfil é feito pela CHAVE valor+vencimento+cic, e não pelo
+// cedente). Mantém cod_cedente_titular e situacao_boleto para as regras de exibição.
+const getAllRegistrado = async () => {
+  let all = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const start = page * pageSize
+    const { data, error } = await supabase
+      .from('capt_registrado')
+      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular')
+      .range(start, start + pageSize - 1)
+    if (error) {
+      console.error('[getAllRegistrado] erro:', error.message)
+      break
+    }
+    if (!data || data.length === 0) break
+    all = all.concat(data)
+    if (data.length < pageSize) break
+    page++
+  }
+  return all
+}
+
+// Indexa um array de registros (já no formato unificado) por _key
+const _indexByKey = (arr) => {
+  const m = new Map()
+  for (const rec of arr) {
+    if (!m.has(rec._key)) m.set(rec._key, [])
+    m.get(rec._key).push(rec)
+  }
+  return m
+}
+
+export const getBoletosImportadosUnificados = async (contaData) => {
+  try {
+    const contaId = contaData?.id ?? null
+    const cedenteTxt = contaData?.cedente ? String(contaData.cedente).trim() : ''
+    const codCedente = contaData?.cod_cedente ?? null
+
+    // Carrega as 3 fontes em paralelo. capt_registrado é carregada inteira pois o
+    // vínculo é por chave (valor+venc+cic), não por cedente (ver getAllRegistrado).
+    const [boletosRes, registrados, opeiteRes] = await Promise.all([
+      getBoletos(contaId),
+      getAllRegistrado(),
+      codCedente != null ? getOPEITEByCedente(codCedente) : Promise.resolve({ data: [] }),
+    ])
+
+    const boletos = boletosRes?.data || []
+    const opeite = opeiteRes?.data || []
+
+    // --- Normaliza cada fonte para a forma usada pela BoletoTable ---
+    const captRecs = boletos.map((b) => ({
+      ...b,
+      _ORIGEM: 'CAPT',
+      _hasCapt: true,
+      _key: _matchKey(b.valor, b.data_vencimento, b.sacado_cic),
+    }))
+
+    const opeiteRecs = opeite.map((o) => ({
+      ...o, // já vem em snake_case (getOPEITEByCedente) com _ORIGEM:'OPEITE'
+      _key: _matchKey(o.valor, o.data_vencimento, o.sacado_cic),
+    }))
+
+    const regRecs = registrados.map((r) => ({
+      _registrado_id: r.id,
+      id: `reg_${r.id}`,
+      _ORIGEM: 'REGISTRADO',
+      num_lancamento: null,
+      created_at: r.created_at || r.dt_inclusao || null,
+      data_emissao: r.dt_ems_tit || null,
+      numero_documento: r.numero_documento || r.num_doc_tit || '',
+      valor: parseFloat(r.vlr_tit) || 0,
+      data_vencimento: r.dt_venc_tit || null,
+      sacado_nome: r.nom_rz_soc_pagdr || '',
+      sacado_cic: r.cnpj_cpf_pagdr || '',
+      status: r.situacao_boleto || '',
+      status_efactor: null,
+      situacao: 'registrado', // dispara coluna CONTA = "Sim"
+      zapsign_status: null,
+      nosso_numero: r.identd_nosso_num || '',
+      num_linha_digtvl: r.num_linha_digtvl || '',
+      _situacaoReg: r.situacao_boleto || '',
+      _cedenteTitular: String(r.cod_cedente_titular ?? '').trim(),
+      _key: _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr),
+    }))
+
+    const regByKey = _indexByKey(regRecs)
+    const opeByKey = _indexByKey(opeiteRecs)
+    const captByKey = _indexByKey(captRecs)
+
+    // Monta um registro mesclado a partir das 3 fontes (qualquer uma pode faltar).
+    // Exibição prioriza REGISTRADO > OPEITE > CAPT; ações usam o registro CAPT (se houver).
+    const buildMerged = (R, O, C) => {
+      const primary = R || O || C       // fonte dos campos de exibição (prioridade)
+      const base = C || primary          // base p/ identidade e ações (capt é editável)
+      const merged = { ...base }
+
+      // Campos de exibição vêm da fonte prioritária
+      merged.data_emissao = primary.data_emissao
+      merged.numero_documento = primary.numero_documento
+      merged.valor = primary.valor
+      merged.data_vencimento = primary.data_vencimento
+      merged.sacado_nome = primary.sacado_nome
+      merged.sacado_cic = primary.sacado_cic
+      merged.status = primary.status
+
+      // Colunas cruzadas
+      // LANC: do capt ou do OPEITE
+      merged.num_lancamento = (C && C.num_lancamento) || (O && O.num_lancamento) || primary.num_lancamento || null
+      // ANTECIPA: status_efactor do capt, senão do OPEITE
+      merged.status_efactor = (C && C.status_efactor) || (O && O.status_efactor) || null
+      // ASSINA: somente o capt possui ZapSign
+      merged.zapsign_status = C ? C.zapsign_status : null
+      merged.zapsign_sign_url = C ? C.zapsign_sign_url : null
+      // CONTA: "registrado" se presente em capt_registrado
+      merged.situacao = R ? 'registrado' : (C ? C.situacao : (primary.situacao || ''))
+
+      // Origem primária (para badge/guards) e disponibilidade do registro CAPT
+      merged._ORIGEM = R ? 'REGISTRADO' : (O ? 'OPEITE' : 'CAPT')
+      merged._hasCapt = !!C
+      merged._fontes = [R && 'REGISTRADO', O && 'OPEITE', C && 'CAPT'].filter(Boolean)
+
+      // Rótulos das colunas (regras do modo Importados, baseadas na presença em cada fonte):
+      // CONTA   = "Sim" se está em capt_registrado, senão "Não"
+      // ANTECIPA= "Sim" se está em OPEITE (ou já antecipado); "Enviado" se a antecipação
+      //           foi solicitada (capt.status_efactor='Enviado') aguardando aparecer em OPEITE; senão "Não"
+      // STATUS  = "Vencer" se está em OPEITE E capt_registrado; senão "Pendente"
+      const captStatusEfactor = C ? C.status_efactor : null
+      const captSituacao = C ? String(C.situacao || '').toLowerCase() : ''
+
+      // Registrado: verde se em capt_registrado, amarelo se CNAB400 foi gerado (situacao='Remessa'),
+      // vermelho caso contrário.
+      merged._contaLabel = R
+        ? 'Sim'
+        : (captSituacao === 'remessa' ? 'Remessa' : 'Não')
+
+      // Antecipado: verde se aparece em OPEITE (confirmado), amarelo se solicitado mas
+      // ainda não está em OPEITE, vermelho se não solicitado.
+      merged._antecipaLabel = O
+        ? 'Sim'
+        : (captStatusEfactor === 'Enviado' || captStatusEfactor === 'Antecipado'
+          ? 'Aguardando'
+          : 'Não')
+
+      merged._statusLabel = (R && O) ? 'Vencer' : 'Pendente'
+
+      // Identidade: usa id do capt se existir; senão id estável da fonte prioritária
+      if (C) {
+        merged.id = C.id
+        merged.conta_id = C.conta_id
+      } else if (R) {
+        merged.id = R.id // `reg_<id>`
+      } else if (O) {
+        merged.id = `ope_${O.num_lancamento || O._key}`
+      }
+      return merged
+    }
+
+    const todasKeys = new Set([...regByKey.keys(), ...opeByKey.keys(), ...captByKey.keys()])
+    const rows = []
+    for (const k of todasKeys) {
+      const R = regByKey.get(k) || []
+      const O = opeByKey.get(k) || []
+      const C = captByKey.get(k) || []
+      const n = Math.max(R.length, O.length, C.length)
+      for (let i = 0; i < n; i++) {
+        const Ri = R[i] || null
+        const Oi = O[i] || null
+        const Ci = C[i] || null
+
+        // Visibilidade (regra do modo Importados): mostra a linha se
+        //  - está em capt_boletos, OU
+        //  - está em OPEITE (já filtrado DO/IN/PR), OU
+        //  - é um registrado AVULSO (sem capt/OPEITE) "A Vencer" do cedente do perfil ativo.
+        // capt_registrado de OUTRO cedente só entra quando casa com um título do perfil
+        // (capt/OPEITE) — aí serve apenas para marcar CONTA=Sim, sem virar linha própria.
+        const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
+          && Ri._cedenteTitular === cedenteTxt
+          && Ri._situacaoReg === 'A Vencer'
+
+        if (!(Ci || Oi || registradoAvulsoVisivel)) continue
+
+        rows.push(buildMerged(Ri, Oi, Ci))
+      }
+    }
+
+    // Ordenação: sem LANC primeiro (topo), depois LANC decrescente (maior = mais recente)
+    rows.sort((a, b) => {
+      const la = a.num_lancamento || null
+      const lb = b.num_lancamento || null
+      if (!la && !lb) return 0
+      if (!la) return -1   // sem LANC sobe ao topo
+      if (!lb) return 1
+      return lb - la        // decrescente
+    })
+
+    console.log(`[Unificado] capt=${captRecs.length} registrado=${regRecs.length} opeite=${opeiteRecs.length} -> ${rows.length} linha(s)`)
+    return { data: rows, error: null }
+  } catch (err) {
+    console.error('[getBoletosImportadosUnificados] Erro:', err)
+    return { data: [], error: err }
+  }
+}
+
 // Buscar registros OPEITE disponíveis para a view "Efactor" da EfactorPage.
 // - codCedente null => todos os registros (usuário Master sem perfil selecionado)
 // - Exclui NUM_LANCAMENTO já inseridos em capt_boletos (num_lancamento)
@@ -1294,10 +1886,9 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
 
       let query = supabase
         .from('OPEITE')
-        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
+        .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
-        .gte('DT_VENCI', hojeStr)
         .range(start, end)
 
       if (codCedente) {
@@ -1312,6 +1903,16 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
       if (data.length < pageSize) break
       page++
     }
+
+    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI (antes de qualquer filtro por data)
+    allOpeite.forEach(o => {
+      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+        o.DT_VENCI = o.DT_VENCI_NOVO
+      }
+    })
+
+    // Aplicar filtro de vencimento >= hoje após substituição PR
+    allOpeite = allOpeite.filter(o => (o.DT_VENCI || '') >= hojeStr)
 
     console.log(`[BoletoService] Efactor OPEITE: ${allOpeite.length} registros antes da exclusão de já inseridos`)
 
@@ -1641,6 +2242,118 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
     }
   } catch (err) {
     console.error('[Import OPEITE] Erro geral:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Auto-importa para capt_boletos os registros do modo Importados que ainda não têm entrada
+// em capt_boletos (_hasCapt === false). Funciona tanto com registros de origem OPEITE quanto
+// REGISTRADO (capt_registrado). Retorna os objetos capt_boletos criados para uso imediato
+// na geração de remessa CNAB400.
+export const autoImportarParaCapt = async (contaId, records) => {
+  try {
+    if (!contaId || !records || records.length === 0) {
+      return { data: { imported: 0, skipped: 0, errors: 0, boletos: [] }, error: null }
+    }
+
+    console.log(`[autoImportarParaCapt] ${records.length} registro(s) sem capt_boletos para conta ${contaId}`)
+
+    // Dedup por num_lancamento (OPEITE): verifica o que já existe em capt_boletos
+    const numLancamentosOpeite = records
+      .map(r => Number(r.num_lancamento))
+      .filter(n => !isNaN(n) && n > 0)
+
+    const existentes = new Set()
+    if (numLancamentosOpeite.length > 0) {
+      const { data: jaExistem } = await supabase
+        .from('capt_boletos')
+        .select('num_lancamento')
+        .eq('conta_id', contaId)
+        .in('num_lancamento', numLancamentosOpeite)
+      if (jaExistem) jaExistem.forEach(b => existentes.add(Number(b.num_lancamento)))
+    }
+
+    // Buscar endereço completo dos sacados OPEITE (o modo unificado só carrega nome+CIC).
+    // importOpeiteToBoletos já faz isso, então seguimos o mesmo padrão aqui.
+    const codSacadoSet = new Set(records.map(r => r._COD_SACADO).filter(Boolean))
+    const sacadoMap = {}
+    if (codSacadoSet.size > 0) {
+      const codArray = Array.from(codSacadoSet)
+      for (let i = 0; i < codArray.length; i += 1000) {
+        const batch = codArray.slice(i, i + 1000)
+        const { data: sacados, error: sacErr } = await supabase
+          .from('SACADO')
+          .select('COD_SACADO, NOME_CORRENTISTA, CIC, ENDERECO, BAIRRO, CIDADE, UF, CEP')
+          .in('COD_SACADO', batch)
+        if (!sacErr && sacados) {
+          sacados.forEach(s => { sacadoMap[s.COD_SACADO] = s })
+        } else if (sacErr) {
+          console.warn('[autoImportarParaCapt] Aviso ao buscar SACADO:', sacErr.message)
+        }
+      }
+    }
+
+    let imported = 0
+    let skipped = 0
+    let errors = 0
+    const boletos = []
+
+    for (const rec of records) {
+      // Checar dedup por num_lancamento
+      const numLanc = Number(rec.num_lancamento)
+      if (!isNaN(numLanc) && numLanc > 0 && existentes.has(numLanc)) {
+        // Já existe em capt_boletos — buscar e usar o existente
+        const { data: existente } = await supabase
+          .from('capt_boletos')
+          .select('*')
+          .eq('conta_id', contaId)
+          .eq('num_lancamento', numLanc)
+          .single()
+        if (existente) boletos.push(existente)
+        skipped++
+        continue
+      }
+
+      // Para registros OPEITE: preferir dados completos do SACADO (com endereço).
+      // Para registros REGISTRADO: os campos já estão mapeados no objeto mesclado.
+      const sac = sacadoMap[rec._COD_SACADO] || {}
+
+      const payload = {
+        NUM_TITULO:       rec.num_titulo || rec.numero_documento || '',
+        EMISSAO:          rec.data_emissao  || null,
+        VENCIMENTO:       rec.data_vencimento || null,
+        VALOR:            rec.valor || 0,
+        SACADO_NOME:      sac.NOME_CORRENTISTA || rec.sacado_nome || '',
+        SACADO_CIC:       sac.CIC              || rec.sacado_cic  || '',
+        SACADO_ENDERECO:  sac.ENDERECO         || rec.sacado_endereco || '',
+        SACADO_BAIRRO:    sac.BAIRRO           || rec.sacado_bairro  || '',
+        SACADO_CIDADE:    sac.CIDADE           || rec.sacado_cidade  || '',
+        SACADO_UF:        sac.UF               || rec.sacado_uf      || '',
+        SACADO_CEP:       sac.CEP              || rec.sacado_cep     || '',
+        AVALISTA_NOME:    rec.avalista_nome  || '',
+        AVALISTA_CIC:     rec.avalista_cic   || '',
+        STATUS:           'pendente',
+        SITUACAO:         'Gravado',
+        STATUS_EFACTOR:   rec.status_efactor || (rec._ORIGEM === 'OPEITE' ? 'Registrado' : ''),
+        NUM_LANCAMENTO:   (!isNaN(numLanc) && numLanc > 0) ? numLanc : '',
+        DESCRICAO:        '',
+      }
+
+      const { data: criado, error } = await createBoleto(contaId, payload)
+      if (error) {
+        errors++
+        console.error('[autoImportarParaCapt] Erro ao criar boleto para registro', rec.num_lancamento || rec.numero_documento, ':', error.message)
+      } else {
+        imported++
+        if (!isNaN(numLanc) && numLanc > 0) existentes.add(numLanc)
+        if (criado) boletos.push(criado)
+      }
+    }
+
+    console.log(`[autoImportarParaCapt] Concluído: ${imported} criados, ${skipped} já existiam, ${errors} erros`)
+    return { data: { imported, skipped, errors, boletos }, error: null }
+  } catch (err) {
+    console.error('[autoImportarParaCapt] Erro geral:', err)
     return { data: null, error: err }
   }
 }
@@ -2336,6 +3049,56 @@ export const getContaRemessaCount = async (cedente) => {
         console.error('Erro ao contar remessas:', err)
         return { count: 0, error: err }
     }
+}
+
+// Marcar boletos como "Remessa" (CNAB400 Registro gerado) para indicar que estão aguardando registro no banco.
+// O ícone Registrado ficará amarelo até aparecer em capt_registrado (verde).
+// Verifica quais boletos (por codigo_barras) já existem em capt_registrado.
+// Retorna array de { boleto, num_titulo_registrado } para os que já estão registrados.
+export const checkBoletosJaRegistrados = async (boletos) => {
+  // Monta mapa: codigo_barras normalizado → boleto
+  const normMap = new Map()
+  for (const b of boletos) {
+    const norm = String(b.codigo_barras || '').replace(/\D/g, '')
+    if (norm) normMap.set(norm, b)
+  }
+  if (normMap.size === 0) return []
+
+  const jaRegistrados = []
+  const pageSize = 1000
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('capt_registrado')
+      .select('num_linha_digtvl, NUM_TITULO')
+      .range(from, from + pageSize - 1)
+    if (error) { console.warn('[checkBoletosJaRegistrados]', error.message); break }
+    if (!data || data.length === 0) break
+    data.forEach(r => {
+      const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
+      if (norm && normMap.has(norm)) {
+        jaRegistrados.push({ boleto: normMap.get(norm), num_titulo_registrado: r.NUM_TITULO })
+      }
+    })
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return jaRegistrados
+}
+
+export const markBoletosRemessa = async (ids) => {
+  if (!ids || ids.length === 0) return { error: null }
+  try {
+    const { error } = await supabase
+      .from('capt_boletos')
+      .update({ situacao: 'Remessa' })
+      .in('id', ids)
+    if (error) throw error
+    return { error: null }
+  } catch (err) {
+    console.error('[markBoletosRemessa] Erro:', err)
+    return { error: err }
+  }
 }
 
 // Incrementar contador cnab400 da conta apos gerar remessa

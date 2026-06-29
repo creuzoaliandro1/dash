@@ -1,4 +1,80 @@
 import { supabase } from '../lib/supabase'
+import { updateCaptAssinaStatus } from './boletoService'
+
+// Consulta o status atual de todos os boletos com zapsign_status='pendente'
+// na conta informada, atualiza no DB e retorna quantos foram marcados como assinados.
+// Chama a Edge Function 'zapsign-check-status'.
+export const syncZapSignPendentes = async (contaId) => {
+  try {
+    // 1. Busca boletos pendentes com doc_token
+    let query = supabase
+      .from('capt_boletos')
+      .select('id, zapsign_doc_token, zapsign_status')
+      .eq('zapsign_status', 'pendente')
+      .not('zapsign_doc_token', 'is', null)
+    if (contaId) query = query.eq('conta_id', contaId)
+
+    const { data: pendentes, error: fetchErr } = await query
+    if (fetchErr) return { atualizados: 0, error: fetchErr }
+    if (!pendentes || pendentes.length === 0) return { atualizados: 0, error: null }
+
+    // Tokens únicos (um documento pode ter vários boletos)
+    const tokenMap = {} // token → [id, ...]
+    for (const b of pendentes) {
+      if (!b.zapsign_doc_token) continue
+      if (!tokenMap[b.zapsign_doc_token]) tokenMap[b.zapsign_doc_token] = []
+      tokenMap[b.zapsign_doc_token].push(b.id)
+    }
+    const tokens = Object.keys(tokenMap)
+    if (tokens.length === 0) return { atualizados: 0, error: null }
+
+    // 2. Consulta ZapSign via Edge Function
+    const { data: efData, error: efErr } = await supabase.functions.invoke('zapsign-check-status', {
+      body: { tokens },
+    })
+    console.log('[syncZapSign] efData:', JSON.stringify(efData), 'efErr:', efErr)
+    if (efErr) return { atualizados: 0, error: efErr, raw: null }
+
+    const results = efData?.results ?? []
+    let atualizados = 0
+
+    // 3. Para cada token assinado, atualiza os boletos no DB
+    for (const r of results) {
+      console.log('[syncZapSign] token:', r.token, 'status:', r.status, 'raw_status:', r.raw_status, 'signers:', JSON.stringify(r.signers_status))
+
+      // Considera assinado se:
+      //   (a) o documento inteiro está finalizado (r.status === 'assinado'), OU
+      //   (b) ao menos um signatário não-CAPT assinou individualmente.
+      // Caso (b) existe porque CAPT não tem email/telefone e nunca acessa o link —
+      // o documento nunca alcança status "completo" no ZapSign, mas o cedente já assinou.
+      const signatarioNaoCaptAssinou = Array.isArray(r.signers_status) &&
+        r.signers_status.some(s => {
+          const isCapt = String(s.name || '').toUpperCase().includes('CAPT')
+          const st = String(s.status || '').toLowerCase()
+          return !isCapt && (st === 'signed' || st === 'assinado' || st === 'ok' || st === 'completed')
+        })
+
+      if (r.status !== 'assinado' && !signatarioNaoCaptAssinou) continue
+
+      const ids = tokenMap[r.token] ?? []
+      if (ids.length === 0) continue
+
+      // Atualiza capt_boletos
+      const { error: upErr } = await supabase
+        .from('capt_boletos')
+        .update({ zapsign_status: 'assinado' })
+        .in('id', ids)
+      if (!upErr) atualizados += ids.length
+
+      // Atualiza capt_assina (signed_file pode ser null se ainda temporário)
+      await updateCaptAssinaStatus(r.token, 'assinado', r.signed_file || null)
+    }
+
+    return { atualizados, error: null, raw: results }
+  } catch (err) {
+    return { atualizados: 0, error: err }
+  }
+}
 
 // Assinante fixo: a própria CAPT (CESSIONÁRIA). Ajuste e-mail/telefone se desejar.
 // Como os links são apenas gerados (sem envio automático), e-mail/telefone são opcionais.

@@ -3,12 +3,12 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getImportadosUnificados } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
-import { generateDuplicataPDF } from '../utils/duplicata'
-import { criarDocumentoAssinatura, CAPT_SIGNER } from '../services/zapsignService'
-import { buildDuplicatasBoletosBlob, buildBorderoBlob } from '../utils/assinaturaDocs'
+import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
+import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
+import { buildDuplicatasBoletosBlob, buildBorderoBlobs, buildPdfCompletoSemBoletos } from '../utils/assinaturaDocs'
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
@@ -28,6 +28,7 @@ export default function BoletosPage() {
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
+  const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -49,6 +50,12 @@ export default function BoletosPage() {
   const [dataGeradoInicio, setDataGeradoInicio] = useState('')
   const [dataGeradoFim, setDataGeradoFim] = useState('')
   const [filterType, setFilterType] = useState('emissao')
+  const [showFiltroMenu, setShowFiltroMenu] = useState(false)
+  const [syncingZap, setSyncingZap] = useState(false)
+  const [dataRegistroInicio, setDataRegistroInicio] = useState('')
+  const [dataRegistroFim, setDataRegistroFim] = useState('')
+  const [dataAntecipadoInicio, setDataAntecipadoInicio] = useState('')
+  const [dataAntecipadoFim, setDataAntecipadoFim] = useState('')
   // Filtro de STATUS por checkbox (inicia somente "Pendentes" marcado)
   const [statusChecks, setStatusChecks] = useState({ pago: false, cancelado: false, pendente: true })
   const [efactorActive, setEfactorActive] = useState(false)
@@ -121,31 +128,69 @@ export default function BoletosPage() {
     setContaData(data || null)
   }, [])
 
-  const loadSeqRef = useRef(0)
   const loadBoletos = useCallback(async () => {
-    const seq = ++loadSeqRef.current
     setLoading(true)
     try {
       const activeId = getActiveContaId()
       console.log('[BoletosPage] loadBoletos para conta:', activeId, 'Efactor:', efactorActive)
 
-      let resultado
       if (efactorActive) {
         // Carregar dados do Efactor (OPEITE)
-        resultado = await carregarOPEITE(activeId, contaData)
+        const resultado = await carregarOPEITE(activeId, contaData)
+        setBoletos(resultado.data || [])
       } else {
-        // Importados: união capt_boletos + capt_registrado + OPEITE (mapeados nas colunas atuais)
-        resultado = await getImportadosUnificados(activeId, contaData, userType)
+        // Modo "Importados": visão unificada de capt_boletos + capt_registrado + OPEITE
+        // (match por valor+vencimento+cic; prioridade registrado > OPEITE > boletos).
+        // Garante ter o cedente/cod_cedente da conta para filtrar registrado/OPEITE.
+        let conta = contaData
+        if (!conta && activeId) {
+          const { data } = await getContaInfo(activeId)
+          conta = data || { id: activeId }
+        }
+        const resultado = await getBoletosImportadosUnificados(conta || { id: activeId })
+        setBoletos(resultado.data || [])
       }
-      // Ignora respostas obsoletas: impede que uma carga anterior (sem contaData,
-      // logo sem filtro de perfil) sobrescreva a carga já filtrada.
-      if (seq === loadSeqRef.current) setBoletos(resultado.data || [])
     } catch (err) {
       console.error('Erro ao carregar boletos:', err)
-      if (seq === loadSeqRef.current) setBoletos([])
+      setBoletos([])
     }
-    if (seq === loadSeqRef.current) setLoading(false)
+    setLoading(false)
   }, [efactorActive, contaData])
+
+  // Sincroniza tudo: ZapSign (Assina), limpa boletos já registrados (Registro) e recarrega (Antecipa)
+  const handleSyncZapSign = async (silent = false) => {
+    if (syncingZap) return
+    setSyncingZap(true)
+    try {
+      const activeId = getActiveContaId()
+      const msgs = []
+
+      // 1. Assinaturas ZapSign
+      const { atualizados, error: zapErr } = await syncZapSignPendentes(activeId)
+      if (zapErr) {
+        console.warn('[Sync] ZapSign erro:', zapErr)
+      } else if (atualizados > 0) {
+        msgs.push(`${atualizados} assinatura(s) confirmada(s)`)
+      }
+
+      // 2. Remove de capt_boletos os registros que já aparecem em capt_registrado
+      const { excluidos, error: regErr } = await deletarBoletosJaRegistrados(activeId)
+      if (regErr) {
+        console.warn('[Sync] Registro erro:', regErr)
+      } else if (excluidos > 0) {
+        msgs.push(`${excluidos} boleto(s) migrado(s) para Registrado`)
+      }
+
+      // 3. Recarrega tudo (atualiza Antecipa, Registro, Assina)
+      await loadBoletos()
+
+      if (!silent) {
+        alert(msgs.length > 0 ? `✅ ${msgs.join(' | ')}` : 'Nenhuma atualização encontrada.')
+      }
+    } finally {
+      setSyncingZap(false)
+    }
+  }
 
   // Carregar na montagem
   useEffect(() => {
@@ -153,6 +198,8 @@ export default function BoletosPage() {
     if (activeId) {
       loadBoletos()
       loadContaData()
+      // Sincroniza assinaturas ZapSign em silêncio ao abrir a página
+      handleSyncZapSign(true)
     }
   }, [])
 
@@ -231,9 +278,10 @@ export default function BoletosPage() {
       alert('Não é possível editar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
       return
     }
-    // Proteger registros vindos de capt_registrado (Relatório de Gestão)
-    if (boleto._ORIGEM === 'REGISTRADO') {
-      alert('Não é possível editar registros do Relatório de Gestão (capt_registrado).')
+    // Na visão unificada, só é editável quando há um boleto real em capt_boletos.
+    // Linhas vindas apenas de capt_registrado/OPEITE não possuem registro editável.
+    if (boleto._fontes && boleto._hasCapt === false) {
+      alert('Este registro não está em capt_boletos (origem: ' + boleto._fontes.join(' + ') + '). Não há boleto local para editar.')
       return
     }
 
@@ -342,10 +390,10 @@ export default function BoletosPage() {
       const term = searchTerm.toLowerCase()
       filtered = filtered.filter(boleto => {
         return (
-          (boleto.numero_documento && boleto.numero_documento.toLowerCase().includes(term)) ||
+          (boleto.numero_documento != null && String(boleto.numero_documento).toLowerCase().includes(term)) ||
           (boleto.sacado_nome && boleto.sacado_nome.toLowerCase().includes(term)) ||
-          (boleto.nosso_numero && boleto.nosso_numero.toLowerCase().includes(term)) ||
-          (boleto.sacado_cic && boleto.sacado_cic.toLowerCase().includes(term))
+          (boleto.nosso_numero != null && String(boleto.nosso_numero).toLowerCase().includes(term)) ||
+          (boleto.sacado_cic != null && String(boleto.sacado_cic).toLowerCase().includes(term))
         )
       })
     }
@@ -364,54 +412,28 @@ export default function BoletosPage() {
       return statusChecks.pendente
     })
 
-    // Filter by data de emissão
-    if (filterType === 'emissao') {
-      if (dataEmissaoInicio) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.data_emissao) return false
-          return boleto.data_emissao >= dataEmissaoInicio
-        })
-      }
-      if (dataEmissaoFim) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.data_emissao) return false
-          return boleto.data_emissao <= dataEmissaoFim
-        })
-      }
-    }
-
     // Filter by data de vencimento
-    if (filterType === 'vencimento') {
-      if (dataVencimentoInicio) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.data_vencimento) return false
-          return boleto.data_vencimento >= dataVencimentoInicio
-        })
-      }
-      if (dataVencimentoFim) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.data_vencimento) return false
-          return boleto.data_vencimento <= dataVencimentoFim
-        })
-      }
+    if (dataVencimentoInicio) {
+      filtered = filtered.filter(boleto => boleto.data_vencimento && boleto.data_vencimento >= dataVencimentoInicio)
+    }
+    if (dataVencimentoFim) {
+      filtered = filtered.filter(boleto => boleto.data_vencimento && boleto.data_vencimento <= dataVencimentoFim)
     }
 
-    // Filter by data de geração (created_at)
-    if (filterType === 'gerado') {
-      if (dataGeradoInicio) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.created_at) return false
-          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
-          return boletoDate >= dataGeradoInicio
-        })
-      }
-      if (dataGeradoFim) {
-        filtered = filtered.filter(boleto => {
-          if (!boleto.created_at) return false
-          const boletoDate = boleto.created_at.split('T')[0] // Extrai apenas a data (yyyy-mm-dd)
-          return boletoDate <= dataGeradoFim
-        })
-      }
+    // Filter by data de registro (emissão)
+    if (dataRegistroInicio) {
+      filtered = filtered.filter(boleto => boleto.data_emissao && boleto.data_emissao >= dataRegistroInicio)
+    }
+    if (dataRegistroFim) {
+      filtered = filtered.filter(boleto => boleto.data_emissao && boleto.data_emissao <= dataRegistroFim)
+    }
+
+    // Filter by data de antecipação
+    if (dataAntecipadoInicio) {
+      filtered = filtered.filter(boleto => boleto.data_antecipacao && boleto.data_antecipacao >= dataAntecipadoInicio)
+    }
+    if (dataAntecipadoFim) {
+      filtered = filtered.filter(boleto => boleto.data_antecipacao && boleto.data_antecipacao <= dataAntecipadoFim)
     }
 
     return filtered
@@ -477,21 +499,79 @@ export default function BoletosPage() {
   }
 
   const handleGenerateRemessaCNAB400 = async (tipoOperacao = '01') => {
+    // CNAB400 não é permitido nos modos Conta Capt nem Efactor
+    if (efactorActive || contaCaptActive) {
+      alert('A geração de CNAB400 não está disponível nos modos Conta Capt ou Efactor.')
+      return
+    }
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
       return
     }
     setShowCnab400Sub(false)
-
-    setGeneratingCNAB400(true)
     setOpenActionsMenu(false)
 
-    try {
-      const filteredBoletos = getFilteredBoletos()
-      const boletosParaRemessa = Array.from(selectedRows)
-        .map(index => filteredBoletos[index])
-        .filter(boleto => boleto)
+    const activeId = getActiveContaId()
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
 
+    // Separar registros que já estão em capt_boletos dos que precisam ser importados
+    const comCapt  = selecionados.filter(b => b._hasCapt !== false)
+    const semCapt  = selecionados.filter(b => b._hasCapt === false)
+
+    let boletosParaRemessa = comCapt
+
+    if (semCapt.length > 0) {
+      console.log(`[CNAB400] ${semCapt.length} registro(s) sem capt_boletos — importando automaticamente...`)
+      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
+
+      if (importErr || !importResult) {
+        alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
+        return
+      }
+
+      if (importResult.errors > 0) {
+        const continuar = window.confirm(
+          `${importResult.errors} registro(s) não puderam ser importados para capt_boletos.\n` +
+          `${importResult.imported} importados, ${importResult.skipped} já existiam.\n\n` +
+          `Deseja continuar a geração do CNAB400 com os registros disponíveis?`
+        )
+        if (!continuar) return
+      } else if (importResult.imported > 0 || importResult.skipped > 0) {
+        console.log(`[CNAB400] Auto-importação: ${importResult.imported} criados, ${importResult.skipped} já existiam.`)
+      }
+
+      // Recarregar lista para manter estado do UI atualizado (não bloqueia o fluxo)
+      loadBoletos()
+
+      // Combinar os boletos já em capt com os recém-criados
+      boletosParaRemessa = [...comCapt, ...importResult.boletos]
+    }
+
+    if (boletosParaRemessa.length === 0) {
+      alert('Nenhum boleto disponível para gerar remessa.')
+      return
+    }
+
+    // Verificar se algum boleto já está registrado em capt_registrado
+    try {
+      const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
+      if (jaRegistrados.length > 0) {
+        setCnab400Confirm({ titulos: jaRegistrados, tipoOperacao, boletosParaRemessa })
+        return
+      }
+    } catch (e) {
+      console.warn('[CNAB400] Erro ao verificar títulos registrados:', e)
+    }
+
+    await doGerarRemessaCNAB400(boletosParaRemessa, tipoOperacao)
+  }
+
+  const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
+    setGeneratingCNAB400(true)
+    try {
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
       // Usar contaData ja carregado (ou recarregar se necessario)
@@ -556,6 +636,16 @@ export default function BoletosPage() {
         // Continua mesmo com erro - o arquivo já foi gerado
       }
 
+      // Se for Registro (01): marcar boletos como "Remessa" para indicar que aguardam registro
+      if (tipoOperacao === '01') {
+        const idsParaMarcar = boletosParaRemessa
+          .filter(b => b._hasCapt !== false && b.id && !String(b.id).startsWith('reg_') && !String(b.id).startsWith('ope_'))
+          .map(b => b.id)
+        if (idsParaMarcar.length > 0) {
+          await markBoletosRemessa(idsParaMarcar)
+        }
+      }
+
       alert(`Remessa CNAB400 "${filename}" gerada com sucesso!`)
       setSelectedRows(new Set())
       await loadContaData()
@@ -568,15 +658,123 @@ export default function BoletosPage() {
     }
   }
 
+  const handleGerarRelatorio = () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    setOpenActionsMenu(false)
+
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
+
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '—'
+      const d = new Date(dateStr + 'T00:00:00')
+      return d.toLocaleDateString('pt-BR')
+    }
+
+    const formatValor = (val) => {
+      if (val == null || val === '') return '—'
+      return Number(val).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
+    const now = new Date()
+    const dataEmissao = now.toLocaleDateString('pt-BR')
+    const horaEmissao = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const nomeEmpresa = contaData?.nome_correntista || contaData?.cedente || ''
+
+    const rows = selecionados.map(b => `
+      <tr>
+        <td>${b.num_lancamento || '—'}</td>
+        <td>${formatDate(b.data_emissao)}</td>
+        <td>${b.num_titulo || b.numero_documento || '—'}</td>
+        <td style="text-align:right">${formatValor(b.valor)}</td>
+        <td>${formatDate(b.data_vencimento)}</td>
+        <td>${b.sacado_nome || '—'}</td>
+        <td>${b.sacado_cic || '—'}</td>
+      </tr>
+    `).join('')
+
+    const totalValor = selecionados.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Relatório de Boletos</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm 12mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 9pt; color: #000; background: #fff; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 1.5px solid #000; padding-bottom: 8px; }
+    .header-left h1 { font-size: 14pt; font-weight: bold; }
+    .header-left .empresa { font-size: 10pt; color: #000; margin-top: 2px; }
+    .header-right { text-align: right; font-size: 8pt; color: #000; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    thead tr { background: #fff; color: #000; }
+    thead th { padding: 3px 6px; text-align: left; font-size: 8pt; font-weight: bold; border: none; border-bottom: 1.5px solid #000; }
+    thead th.right { text-align: right; }
+    tbody tr { background: #fff; }
+    tbody td { padding: 2px 6px; border: none; color: #000; font-size: 8pt; vertical-align: middle; line-height: 1.2; }
+    tbody td.right { text-align: right; }
+    .footer { margin-top: 12px; border-top: 1px solid #000; padding-top: 6px; display: flex; justify-content: space-between; font-size: 8pt; }
+    .total { font-weight: bold; font-size: 9pt; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Relatório de Boletos</h1>
+      ${nomeEmpresa ? `<div class="empresa">${nomeEmpresa}</div>` : ''}
+    </div>
+    <div class="header-right">
+      <div>Emitido em: ${dataEmissao} às ${horaEmissao}</div>
+      <div>${selecionados.length} registro(s)</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>LANC</th>
+        <th>EMISSÃO</th>
+        <th>DOCUMENTO</th>
+        <th class="right">VALOR</th>
+        <th>VENCIMENTO</th>
+        <th>NOME</th>
+        <th>CIC</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+    </tbody>
+  </table>
+  <div class="footer">
+    <div></div>
+    <div class="total">Total: R$ ${formatValor(totalValor)}</div>
+  </div>
+</body>
+</html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    win.onload = () => {
+      win.print()
+    }
+  }
+
   const handleDeleteSingleBoleto = async (boleto) => {
     // Proteger registros OPEITE
     if (boleto._ORIGEM === 'OPEITE') {
       alert('Não é possível deletar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
       return
     }
-    // Proteger registros vindos de capt_registrado (Relatório de Gestão)
-    if (boleto._ORIGEM === 'REGISTRADO') {
-      alert('Não é possível deletar registros do Relatório de Gestão (capt_registrado) por aqui.')
+    // Na visão unificada, só deleta quando há boleto real em capt_boletos.
+    if (boleto._fontes && boleto._hasCapt === false) {
+      alert('Este registro não está em capt_boletos (origem: ' + boleto._fontes.join(' + ') + '). Não há boleto local para deletar.')
       return
     }
 
@@ -781,15 +979,110 @@ export default function BoletosPage() {
     setShowZapsignModal(true)
   }
 
+  const handleDownloadCessao = async () => {
+    if (selectedRows.size === 0) { alert('Selecione pelo menos um boleto'); return }
+    setOpenActionsMenu(false)
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows).map(i => filteredBoletos[i]).filter(Boolean)
+    try {
+      const blob = generateCessaoDireitosBlob(selecionados, contaData)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const now = new Date()
+      const dd = String(now.getDate()).padStart(2, '0')
+      const mm = String(now.getMonth() + 1).padStart(2, '0')
+      const yyyy = now.getFullYear()
+      link.href = url
+      link.download = `cessao_${dd}${mm}${yyyy}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Erro ao gerar cessão: ' + e.message)
+    }
+  }
+
   // Executa o envio à ZapSign conforme o modo escolhido no ZapsignModal.
   // Retorna { ok, fail, links:[{label,url}], error? } para o modal exibir.
-  const runZapsign = async ({ mode, sacado }) => {
+  const runZapsign = async ({ mode, sacado, incluirBoletos }) => {
     const filteredBoletos = getFilteredBoletos()
     const selecionados = Array.from(selectedRows)
       .map(index => filteredBoletos[index])
       .filter(b => b)
 
     if (selecionados.length === 0) return { ok: 0, fail: 0, links: [], error: 'Nenhum título selecionado.' }
+
+    const activeContaId = getActiveContaId()
+
+    // Auto-importar registros OPEITE sem entrada em capt_boletos (necessário para salvar status ZapSign)
+    const semCapt = selecionados.filter(b => !b._hasCapt && b.num_lancamento)
+    if (semCapt.length > 0) {
+      await autoImportarParaCapt(activeContaId, semCapt)
+    }
+
+    // Helper: persiste token ZapSign em capt_boletos via num_lancamento (cobre auto-importados e existentes)
+    const persistirZapsign = async (boletos, docToken, signUrl) => {
+      const lancamentos = boletos.map(b => b.num_lancamento).filter(Boolean)
+      if (lancamentos.length > 0) {
+        await updateBoletosByLancamentos(activeContaId, lancamentos, {
+          zapsign_doc_token: docToken,
+          zapsign_sign_url: signUrl || '',
+          zapsign_status: 'pendente',
+        })
+      }
+      // Boletos com id real (sem prefixo) mas sem num_lancamento — fallback por id
+      for (const b of boletos) {
+        if (b.num_lancamento) continue
+        const idReal = b.id && !String(b.id).startsWith('ope_') && !String(b.id).startsWith('reg_')
+        if (idReal) {
+          await updateBoleto(b.id, { zapsign_doc_token: docToken, zapsign_sign_url: signUrl || '', zapsign_status: 'pendente' })
+        }
+      }
+    }
+
+    // Modo sem boletos: cessão + borderô + duplicatas (2 por página)
+    if (incluirBoletos === false) {
+      const { blobs, notas: notasPdf } = await buildPdfCompletoSemBoletos(selecionados, contaData)
+      let ok = 0, fail = 0
+      const links = []
+      const captName = (CAPT_SIGNER.name || '').trim().toUpperCase()
+      const cedenteSigner0 = {
+        name: contaData?.nome_correntista || 'Cedente',
+        email: contaData?.email || '',
+        phone: contaData?.telefone || '',
+      }
+      const captSigner0 = { ...CAPT_SIGNER }
+      let primeiroDocToken = null
+      for (let i = 0; i < blobs.length; i++) {
+        const docName = i === 0
+          ? `Cessão + Duplicatas (${selecionados.length} títulos)`
+          : `Duplicatas parte ${i + 1}`
+        const r = await criarDocumentoAssinatura({
+          name: docName,
+          pdfBlob: blobs[i],
+          signers: [cedenteSigner0, captSigner0],
+          placements: [],
+        })
+        if (r.error) {
+          fail++
+        } else {
+          ok++
+          ;(r.data?.signers || []).forEach(s => {
+            const isCapt = String(s.name || '').trim().toUpperCase() === captName
+            if (s.sign_url && !isCapt) links.push({ label: docName + ' — ' + (s.name || ''), url: s.sign_url })
+          })
+          if (i === 0 && r.data?.doc_token) {
+            primeiroDocToken = r.data.doc_token
+            await persistirZapsign(selecionados, r.data.doc_token, r.data.sign_url)
+            await insertCaptAssina(activeContaId, r.data, selecionados)
+          }
+        }
+      }
+      setSelectedRows(new Set())
+      await loadBoletos()
+      return { ok, fail, links, notes: notasPdf }
+    }
 
     // Posições das assinaturas (coordenadas ZapSign 0–100, origem inferior-esquerda).
     // Convertidas dos valores em mm informados (A4 210×297): left% = mm/210*100; bottom% = (297−mm_topo)/297*100.
@@ -880,10 +1173,14 @@ export default function BoletosPage() {
       const notes = []
       let extraPdfBlobs
       if (mode === 'sem') {
-        const bRes = await buildBorderoBlob(selecionados)
-        if (bRes && bRes.blob) {
-          // No Sem Sacado os assinantes do anexo são [cedente(0), capt(1)] (mesma ordem do doc principal)
-          extraPdfBlobs = [{ name: 'Borderô', blob: bRes.blob, placements: borderoPlacements(idxCedente, idxCapt, borderoBottomPct(bRes)) }]
+        // Gera UM borderô por COD_OPERACAO único (vários títulos do mesmo borderô → apenas 1 PDF)
+        const bResults = await buildBorderoBlobs(selecionados)
+        if (bResults.length > 0) {
+          extraPdfBlobs = bResults.map((bRes, i) => ({
+            name: bResults.length > 1 ? `Borderô ${i + 1}` : 'Borderô',
+            blob: bRes.blob,
+            placements: borderoPlacements(idxCedente, idxCapt, borderoBottomPct(bRes)),
+          }))
         } else {
           notes.push('Borderô NÃO anexado: nenhum título selecionado tem operação vinculada (num_lancamento / OPECAB BI-LC).')
         }
@@ -919,37 +1216,10 @@ export default function BoletosPage() {
           : 'Aviso: o Borderô pode não ter sido anexado (verifique os logs do ZapSign).')
       }
 
-      // Com Sacado: o Borderô NÃO entra no envelope do sacado (anexo herdaria o sacado).
-      // Então criamos um documento SEPARADO do Borderô assinado só por Cedente + CAPT.
-      if (mode === 'com') {
-        const bRes = await buildBorderoBlob(selecionados)
-        if (bRes && bRes.blob) {
-          const rB = await criarDocumentoAssinatura({
-            name: 'Borderô',
-            pdfBlob: bRes.blob,
-            signers: [cedenteSigner, captSigner], // 0=cedente, 1=capt
-            placements: borderoPlacements(0, 1, borderoBottomPct(bRes)),
-          })
-          if (rB.error) {
-            fail++
-          } else {
-            ok++
-            pushLinks(rB.data?.signers, 'Borderô')
-          }
-        }
-      }
-
-      // Persistir token/link nos boletos do documento (todos do borderô no Sem Sacado)
+      // Persistir token/link nos boletos do documento e gravar em capt_assina
       if (primeiroDocToken) {
-        for (const b of boletosDoc) {
-          if (b.id) {
-            await updateBoleto(b.id, {
-              zapsign_doc_token: primeiroDocToken,
-              zapsign_sign_url: primeiroSignUrl,
-              zapsign_status: 'pendente',
-            })
-          }
-        }
+        await persistirZapsign(boletosDoc, primeiroDocToken, primeiroSignUrl)
+        await insertCaptAssina(activeContaId, r1.data, selecionados)
       }
 
       setSelectedRows(new Set())
@@ -999,13 +1269,15 @@ export default function BoletosPage() {
       .map(index => filteredBoletos[index])
       .filter(boleto => boleto)
 
-    // Separar registros protegidos (OPEITE/REGISTRADO) dos registros locais (capt_boletos)
-    const boletosPorExcluir = boletosParaDeletar.filter(b => !b._ORIGEM)
-    const boletosOpeite = boletosParaDeletar.filter(b => b._ORIGEM === 'OPEITE' || b._ORIGEM === 'REGISTRADO')
+    // Separar registros sem boleto local (OPEITE/capt_registrado) dos boletos locais.
+    // Só é possível excluir o que existe de fato em capt_boletos.
+    const semBoletoLocal = (b) => b._ORIGEM === 'OPEITE' || (b._fontes && b._hasCapt === false)
+    const boletosPorExcluir = boletosParaDeletar.filter(b => !semBoletoLocal(b))
+    const boletosOpeite = boletosParaDeletar.filter(b => semBoletoLocal(b))
 
-    // Se houver registros protegidos, avisar o usuário
+    // Se houver registros OPEITE, avisar o usuário
     if (boletosOpeite.length > 0) {
-      const mensagem = `${boletosOpeite.length} registro(s) selecionado(s) vem do Efactor (OPEITE) ou do Relatório de Gestão (capt_registrado) e não pode ser deletado. Apenas os ${boletosPorExcluir.length} boleto(s) local(is) serão deletados.`
+      const mensagem = `${boletosOpeite.length} boleto(s) selecionado(s) é do Efactor (OPEITE) e não pode ser deletado. Apenas os ${boletosPorExcluir.length} boleto(s) local(is) serão deletados.`
       if (boletosPorExcluir.length === 0) {
         alert(mensagem)
         return
@@ -1048,9 +1320,9 @@ export default function BoletosPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 flex-1 min-h-0">
+    <div className="flex flex-col gap-2 flex-1 min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-2xl font-bold text-white">Boletos</h1>
           <p className="text-sm text-[#666666] mt-1">Emissão, consulta e gestão de títulos</p>
@@ -1084,300 +1356,323 @@ export default function BoletosPage() {
         })()}
       </div>
 
-      {/* Upload Area */}
-      <FileUpload
-        userId={getActiveContaId()}
-        onShowPreview={handleShowPreview}
-        onImportError={handleImportError}
-        userType={userType}
-        selectedContaId={selectedContaId}
-        allContas={allContas}
-        contaData={contaData}
-        onEfactorToggle={handleToggleEfactor}
-        efactorActive={efactorActive}
-        onContaCaptClick={handleToggleContaCapt}
-        contaCaptActive={contaCaptActive}
-        onContaCaptImported={handleContaCaptImported}
-        importadosActive={importadosActive}
-        onImportadosClick={handleShowImportados}
-      />
-
-      {/* Search and Filter - All in one line (oculto no modo Conta Capt) */}
-      {!contaCaptActive && (
-      <div className="flex gap-3 items-start">
-        {/* Busca por texto */}
-        <div className="flex-1 relative">
-          <input
-            type="text"
-            placeholder="Buscar por documento, cliente, nosso número..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] focus:border-white focus:bg-[#1a1a1a] outline-none transition text-sm"
-          />
-          <svg className="absolute right-3 top-2.5 w-4 h-4 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div>
-
-        {/* Filtro de Datas - Tipo (empilhado verticalmente) */}
-        <div className="flex flex-col gap-1 justify-center">
-          <label className="flex items-center gap-2 whitespace-nowrap">
+      {/* Upload Area + Action Buttons na mesma linha */}
+      <div className="flex items-center gap-3">
+        {/* Campo de pesquisa — flex-1, lado esquerdo */}
+        {!contaCaptActive && (
+          <div className="flex-1 relative">
             <input
-              type="radio"
-              name="filterType"
-              value="emissao"
-              checked={filterType === 'emissao'}
-              onChange={(e) => {
-                setFilterType(e.target.value)
-                setDataVencimentoInicio('')
-                setDataVencimentoFim('')
-              }}
-              className="w-4 h-4 cursor-pointer"
+              type="text"
+              placeholder="Buscar por documento, cliente, nosso número..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-4 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] focus:border-white focus:bg-[#1a1a1a] outline-none transition text-sm"
             />
-            <span className="text-xs text-white cursor-pointer">Emissão</span>
-          </label>
-          <label className="flex items-center gap-2 whitespace-nowrap">
-            <input
-              type="radio"
-              name="filterType"
-              value="vencimento"
-              checked={filterType === 'vencimento'}
-              onChange={(e) => {
-                setFilterType(e.target.value)
-                setDataEmissaoInicio('')
-                setDataEmissaoFim('')
-                setDataGeradoInicio('')
-                setDataGeradoFim('')
-              }}
-              className="w-4 h-4 cursor-pointer"
-            />
-            <span className="text-xs text-white cursor-pointer">Vencimento</span>
-          </label>
-          <label className="flex items-center gap-2 whitespace-nowrap">
-            <input
-              type="radio"
-              name="filterType"
-              value="gerado"
-              checked={filterType === 'gerado'}
-              onChange={(e) => {
-                setFilterType(e.target.value)
-                setDataEmissaoInicio('')
-                setDataEmissaoFim('')
-                setDataVencimentoInicio('')
-                setDataVencimentoFim('')
-              }}
-              className="w-4 h-4 cursor-pointer"
-            />
-            <span className="text-xs text-white cursor-pointer">Gerado</span>
-          </label>
-        </div>
+            <svg className="absolute right-3 top-2.5 w-4 h-4 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        )}
 
-        {/* Filtro de Datas - Campos (à direita do filtro de tipo) */}
-        <div className="flex flex-col gap-1">
-          {filterType === 'emissao' ? (
-            <>
-              <input
-                type="date"
-                value={dataEmissaoInicio}
-                onChange={(e) => setDataEmissaoInicio(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de início"
-              />
-              <input
-                type="date"
-                value={dataEmissaoFim}
-                onChange={(e) => setDataEmissaoFim(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de fim"
-              />
-            </>
-          ) : filterType === 'vencimento' ? (
-            <>
-              <input
-                type="date"
-                value={dataVencimentoInicio}
-                onChange={(e) => setDataVencimentoInicio(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de início"
-              />
-              <input
-                type="date"
-                value={dataVencimentoFim}
-                onChange={(e) => setDataVencimentoFim(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de fim"
-              />
-            </>
-          ) : (
-            <>
-              <input
-                type="date"
-                value={dataGeradoInicio}
-                onChange={(e) => setDataGeradoInicio(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de início"
-              />
-              <input
-                type="date"
-                value={dataGeradoFim}
-                onChange={(e) => setDataGeradoFim(e.target.value)}
-                className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-32"
-                title="Data de fim"
-              />
-            </>
-          )}
-        </div>
+        {/* Card Importar + botões de modo (largura definida internamente em cada elemento) */}
+        <FileUpload
+          userId={getActiveContaId()}
+          onShowPreview={handleShowPreview}
+          onImportError={handleImportError}
+          userType={userType}
+          selectedContaId={selectedContaId}
+          allContas={allContas}
+          contaData={contaData}
+          onEfactorToggle={handleToggleEfactor}
+          efactorActive={efactorActive}
+          onContaCaptClick={handleToggleContaCapt}
+          contaCaptActive={contaCaptActive}
+          onContaCaptImported={handleContaCaptImported}
+          importadosActive={importadosActive}
+          onImportadosClick={handleShowImportados}
+        />
 
-        {/* Filtro de STATUS por checkbox (empilhado verticalmente) */}
-        <div className="flex flex-col gap-1 justify-center pl-3 border-l border-[#2a2a2a]">
-          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
-            <input
-              type="checkbox"
-              checked={statusChecks.pendente}
-              onChange={(e) => setStatusChecks({ ...statusChecks, pendente: e.target.checked })}
-              className="w-4 h-4 cursor-pointer accent-white"
-            />
-            <span className="text-xs text-white">Pendentes</span>
-          </label>
-          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
-            <input
-              type="checkbox"
-              checked={statusChecks.pago}
-              onChange={(e) => setStatusChecks({ ...statusChecks, pago: e.target.checked })}
-              className="w-4 h-4 cursor-pointer accent-white"
-            />
-            <span className="text-xs text-white">Pago</span>
-          </label>
-          <label className="flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
-            <input
-              type="checkbox"
-              checked={statusChecks.cancelado}
-              onChange={(e) => setStatusChecks({ ...statusChecks, cancelado: e.target.checked })}
-              className="w-4 h-4 cursor-pointer accent-white"
-            />
-            <span className="text-xs text-white">Cancelado</span>
-          </label>
-        </div>
-
-        {/* Botão Ações com Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setOpenActionsMenu(!openActionsMenu)}
-            disabled={selectedRows.size === 0 || generatingZip}
-            className={`px-4 py-2 text-sm font-medium rounded transition ${
-              selectedRows.size === 0 || generatingZip
-                ? 'bg-[#1a1a1a] text-[#666666] border border-[#2a2a2a] cursor-not-allowed'
-                : 'bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]'
-            }`}
-          >
-            Ações {selectedRows.size > 0 && `(${selectedRows.size})`}
-          </button>
-
-          {openActionsMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-56">
-              {efactorActive && (
-                <button
-                  onClick={handleImportOpeite}
-                  disabled={importingOpeite}
-                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {importingOpeite ? '⏳ Importando...' : '📨 Importar'}
-                </button>
-              )}
+        {!contaCaptActive && (
+          <>
+            {/* Botão Ações com Dropdown */}
+            <div className="relative">
               <button
-                onClick={handleGenerateSecondViaZip}
-                disabled={generatingZip}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setOpenActionsMenu(!openActionsMenu)}
+                disabled={selectedRows.size === 0 || generatingZip}
+                style={{ height: '36px', width: '110px' }}
+                className={`flex items-center justify-center text-sm font-medium rounded transition ${
+                  selectedRows.size === 0 || generatingZip
+                    ? 'bg-[#1a1a1a] text-[#666666] border border-[#2a2a2a] cursor-not-allowed'
+                    : 'bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]'
+                }`}
               >
-                {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
+                Ações {selectedRows.size > 0 && `(${selectedRows.size})`}
               </button>
-              <button
-                onClick={handleAntecipacao}
-                disabled={processandoAntecipacao}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
-              </button>
-              <button
-                onClick={handleRetornarAntecipacao}
-                disabled={retornandoAntecipacao}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
-              </button>
-              <button
-                onClick={() => setShowAssinarSub(!showAssinarSub)}
-                disabled={assinandoZapsign}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
-              >
-                <span>{assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}</span>
-                <span className="text-[#666666]">{showAssinarSub ? '▾' : '▸'}</span>
-              </button>
-              {showAssinarSub && (
-                <div className="bg-[#141414] border-b border-[#2a2a2a]">
+
+              {openActionsMenu && (
+                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 min-w-56">
+                  {efactorActive && (
+                    <button
+                      onClick={handleImportOpeite}
+                      disabled={importingOpeite}
+                      className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {importingOpeite ? '⏳ Importando...' : '📨 Importar'}
+                    </button>
+                  )}
                   <button
-                    onClick={() => handleAssinarZapsign('com')}
-                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                    onClick={handleGenerateSecondViaZip}
+                    disabled={generatingZip}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    👤 Com Sacado
+                    {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
                   </button>
                   <button
-                    onClick={() => handleAssinarZapsign('sem')}
-                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                    onClick={handleAntecipacao}
+                    disabled={processandoAntecipacao}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    🚫 Sem Sacado
+                    {processandoAntecipacao ? '⏳ Processando...' : '💰 Antecipar'}
+                  </button>
+                  <button
+                    onClick={handleRetornarAntecipacao}
+                    disabled={retornandoAntecipacao}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {retornandoAntecipacao ? '⏳ Retornando...' : '↩️ Retornar Antecipação'}
+                  </button>
+                  <button
+                    onClick={() => setShowAssinarSub(!showAssinarSub)}
+                    disabled={assinandoZapsign}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+                  >
+                    <span>{assinandoZapsign ? '⏳ Enviando...' : '✍️ Assinar (ZapSign)'}</span>
+                    <span className="text-[#666666]">{showAssinarSub ? '▾' : '▸'}</span>
+                  </button>
+                  {showAssinarSub && (
+                    <div className="bg-[#141414] border-b border-[#2a2a2a]">
+                      <button
+                        onClick={() => handleAssinarZapsign('com')}
+                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                      >
+                        👤 Com Sacado
+                      </button>
+                      <button
+                        onClick={() => handleAssinarZapsign('sem')}
+                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                      >
+                        🚫 Sem Sacado
+                      </button>
+                    </div>
+                  )}
+                  {/* CNAB400 disponível apenas no modo Importados (não em Conta Capt nem Efactor) */}
+                  {!efactorActive && !contaCaptActive && (
+                    <>
+                      <button
+                        onClick={() => setShowCnab400Sub(!showCnab400Sub)}
+                        disabled={generatingCNAB400}
+                        className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
+                      >
+                        <span>{generatingCNAB400 ? '⏳ Gerando...' : '📄 CNAB400'}</span>
+                        <span className="text-[#666666]">{showCnab400Sub ? '▾' : '▸'}</span>
+                      </button>
+                      {showCnab400Sub && (
+                        <div className="bg-[#141414] border-b border-[#2a2a2a]">
+                          <button
+                            onClick={() => handleGenerateRemessaCNAB400('01')}
+                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                          >
+                            Registro
+                          </button>
+                          <button
+                            onClick={() => handleGenerateRemessaCNAB400('06')}
+                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                          >
+                            Alterar
+                          </button>
+                          <button
+                            onClick={() => handleGenerateRemessaCNAB400('02')}
+                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                          >
+                            Baixa
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <button
+                    onClick={handleDownloadCessao}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                  >
+                    📋 Cessão de Direitos
+                  </button>
+                  <button
+                    onClick={handleGerarRelatorio}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                  >
+                    📊 Gerar Relatório
+                  </button>
+                  <button
+                    onClick={handleDeleteSelectedBoletos}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    🗑️ Excluir
                   </button>
                 </div>
               )}
-              <button
-                onClick={() => setShowCnab400Sub(!showCnab400Sub)}
-                disabled={generatingCNAB400}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between"
-              >
-                <span>{generatingCNAB400 ? '⏳ Gerando...' : '📄 CNAB400'}</span>
-                <span className="text-[#666666]">{showCnab400Sub ? '▾' : '▸'}</span>
-              </button>
-              {showCnab400Sub && (
-                <div className="bg-[#141414] border-b border-[#2a2a2a]">
-                  <button
-                    onClick={() => handleGenerateRemessaCNAB400('01')}
-                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                  >
-                    Registro
-                  </button>
-                  <button
-                    onClick={() => handleGenerateRemessaCNAB400('06')}
-                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                  >
-                    Alterar
-                  </button>
-                  <button
-                    onClick={() => handleGenerateRemessaCNAB400('02')}
-                    className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
-                  >
-                    Baixa
-                  </button>
-                </div>
-              )}
-              <button
-                onClick={handleDeleteSelectedBoletos}
-                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                🗑️ Excluir
-              </button>
             </div>
-          )}
-        </div>
 
-        {/* Emitir boleto — ao lado direito de Ações */}
-        <button
-          onClick={handleCreateNew}
-          className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition whitespace-nowrap"
-        >
-          + Novo
-        </button>
+            {/* Botão Filtro com Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowFiltroMenu(!showFiltroMenu)}
+                style={{ height: '36px', width: '110px' }}
+                className="flex items-center justify-center text-sm font-medium rounded transition bg-[#1a1a1a] text-white border border-[#2a2a2a] hover:bg-[#222222]"
+              >
+                Filtro
+              </button>
+
+              {showFiltroMenu && (
+                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 p-4 min-w-72">
+                  {/* Vencimento */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Vencimento</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="date"
+                        value={dataVencimentoInicio}
+                        onChange={(e) => setDataVencimentoInicio(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Início"
+                      />
+                      <input
+                        type="date"
+                        value={dataVencimentoFim}
+                        onChange={(e) => setDataVencimentoFim(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Final"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Registro */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Registro</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="date"
+                        value={dataRegistroInicio}
+                        onChange={(e) => setDataRegistroInicio(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Início"
+                      />
+                      <input
+                        type="date"
+                        value={dataRegistroFim}
+                        onChange={(e) => setDataRegistroFim(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Final"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Antecipado */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Antecipado</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="date"
+                        value={dataAntecipadoInicio}
+                        onChange={(e) => setDataAntecipadoInicio(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Início"
+                      />
+                      <input
+                        type="date"
+                        value={dataAntecipadoFim}
+                        onChange={(e) => setDataAntecipadoFim(e.target.value)}
+                        className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                        title="Final"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Status */}
+                  <div className="pt-3 border-t border-[#2a2a2a] flex gap-4">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusChecks.pendente}
+                        onChange={(e) => setStatusChecks({ ...statusChecks, pendente: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Pendentes</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusChecks.pago}
+                        onChange={(e) => setStatusChecks({ ...statusChecks, pago: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Pagos</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusChecks.cancelado}
+                        onChange={(e) => setStatusChecks({ ...statusChecks, cancelado: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Cancelado</span>
+                    </label>
+                  </div>
+
+                  {/* Limpar filtros */}
+                  <button
+                    onClick={() => {
+                      setDataVencimentoInicio(''); setDataVencimentoFim('')
+                      setDataRegistroInicio(''); setDataRegistroFim('')
+                      setDataAntecipadoInicio(''); setDataAntecipadoFim('')
+                      setStatusChecks({ pago: false, cancelado: false, pendente: true })
+                    }}
+                    className="mt-3 w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
+                  >
+                    Limpar filtros
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Botão Novo */}
+            <button
+              onClick={handleCreateNew}
+              style={{ height: '36px', width: '110px' }}
+              className="flex items-center justify-center bg-white text-black text-sm font-medium rounded hover:opacity-90 transition"
+            >
+              + Novo
+            </button>
+
+            {/* Botão Sync ZapSign */}
+            <button
+              onClick={() => handleSyncZapSign(false)}
+              disabled={syncingZap}
+              style={{ height: '36px', width: '36px' }}
+              className="flex items-center justify-center bg-[#1a1a1a] text-white border border-[#2a2a2a] rounded hover:bg-[#222222] transition disabled:opacity-50"
+              title={syncingZap ? 'Sincronizando...' : 'Sincronizar (Assina · Registro · Antecipa)'}
+            >
+              <svg
+                className={`w-4 h-4 ${syncingZap ? 'animate-spin' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
-      )}
+
 
       {/* Tabela: capt_registrado (modo Conta Capt) ou capt_boletos */}
       {contaCaptActive ? (
@@ -1391,6 +1686,7 @@ export default function BoletosPage() {
             selectedRows={selectedRows}
             onSelectedRowsChange={setSelectedRows}
             contaData={contaData}
+            showGerado={!importadosActive}
           />
         </div>
       )}
@@ -1419,7 +1715,7 @@ export default function BoletosPage() {
 
       {/* Modal de Importação Efactor — confirmação + escolha de cedente de destino */}
       {showEfactorImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-lg font-semibold text-white mb-4">Importar registros do Efactor</h2>
 
@@ -1497,7 +1793,7 @@ export default function BoletosPage() {
 
       {/* Import Result Modal */}
       {showImportResult && importStatus && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-lg font-semibold text-white mb-4">{importStatus.title}</h2>
 
@@ -1537,6 +1833,45 @@ export default function BoletosPage() {
           onClose={() => setShowZapsignModal(false)}
           onSubmit={runZapsign}
         />
+      )}
+
+      {/* Modal de confirmação: títulos já registrados no CNAB400 */}
+      {cnab400Confirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-md w-full p-6 space-y-4">
+            <h3 className="text-white font-semibold text-base">⚠️ Títulos já Registrados</h3>
+            <p className="text-[#a3a3a3] text-sm">
+              Os seguintes títulos já constam em <span className="text-white font-medium">capt_registrado</span> e podem ter sido processados pelo banco:
+            </p>
+            <ul className="space-y-1 max-h-48 overflow-y-auto">
+              {cnab400Confirm.titulos.map(({ boleto }, i) => (
+                <li key={i} className="text-sm text-white bg-[#111111] border border-[#2a2a2a] rounded px-3 py-1.5 font-mono">
+                  {boleto.num_titulo || boleto.numero_documento || boleto.id}
+                  {boleto.sacado_nome ? <span className="text-[#666666] ml-2 font-sans">{boleto.sacado_nome}</span> : null}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[#a3a3a3] text-sm">Deseja gerar a remessa mesmo assim?</p>
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                onClick={() => setCnab400Confirm(null)}
+                className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const { tipoOperacao, boletosParaRemessa } = cnab400Confirm
+                  setCnab400Confirm(null)
+                  doGerarRemessaCNAB400(boletosParaRemessa, tipoOperacao)
+                }}
+                className="px-5 py-2 text-sm bg-white text-black font-medium rounded hover:opacity-90 transition"
+              >
+                Gerar mesmo assim
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
