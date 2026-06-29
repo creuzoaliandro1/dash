@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
@@ -289,7 +289,7 @@ export default function BoletosPage() {
     setShowModal(true)
   }
 
-  const handleSave = async (formData) => {
+  const handleSave = async (formData, pendingFiles = []) => {
     setLoading(true)
     const activeId = getActiveContaId()
     console.log('[BoletosPage] handleSave para conta:', activeId)
@@ -300,22 +300,48 @@ export default function BoletosPage() {
         numero_documento:  formData.NUM_TITULO     || '',
         data_emissao:      formData.EMISSAO        || null,
         data_vencimento:   formData.VENCIMENTO     || null,
+        data_limite_pagamento: formData.DATA_LIMITE_PGTO || null,
         valor:             parseFloat(formData.VALOR) || 0,
         nosso_numero:      formData.NOSSO_NUMERO   || '',
+        especie_titulo:    formData.ESPECIE_TITULO !== undefined && formData.ESPECIE_TITULO !== '' ? parseInt(formData.ESPECIE_TITULO, 10) : 2,
+        numero_carteira:   formData.NUMERO_CARTEIRA !== undefined && formData.NUMERO_CARTEIRA !== '' ? parseInt(formData.NUMERO_CARTEIRA, 10) : 1,
+        valor_abatimento:  parseFloat(formData.ABATIMENTO) || 0,
+        sacado_tipo_pessoa: formData.SACADO_TIPO_PESSOA !== undefined && formData.SACADO_TIPO_PESSOA !== '' ? parseInt(formData.SACADO_TIPO_PESSOA, 10) : null,
         sacado_nome:       formData.SACADO_NOME    || '',
         sacado_cic:        formData.SACADO_CIC     || '',
         sacado_cep:        formData.SACADO_CEP     || '',
         sacado_endereco:   formData.SACADO_ENDERECO|| '',
+        sacado_numero:     formData.SACADO_NUMERO  || '',
+        sacado_complemento: formData.SACADO_COMPLEMENTO || '',
         sacado_bairro:     formData.SACADO_BAIRRO  || '',
         sacado_cidade:     formData.SACADO_CIDADE  || '',
         sacado_uf:         formData.SACADO_UF      || '',
+        sacado_email:      formData.SACADO_EMAIL   || '',
+        sacado_telefone:   formData.SACADO_TELEFONE|| '',
+        avalista_tipo:     formData.AVALISTA_TIPO !== undefined && formData.AVALISTA_TIPO !== '' ? parseInt(formData.AVALISTA_TIPO, 10) : null,
         avalista_nome:     formData.AVALISTA        || '',
         avalista_cic:      formData.AVALISTA_CIC   || '',
+        juros_codigo:      formData.JUROS_TIPO     || null,
+        juros_data:        formData.JUROS_DATA     || null,
+        juros_valor:       parseFloat(formData.JUROS_VALOR) || 0,
+        multa_codigo:      formData.MULTA_TIPO     || null,
+        multa_data:        formData.MULTA_DATA     || null,
+        multa:             parseFloat(formData.MULTA_VALOR) || 0,
+        desconto_codigo:   formData.DESCONTO_TIPO  || null,
+        desconto_data:     formData.DESCONTO_DATA  || null,
+        desconto:          parseFloat(formData.DESCONTO_VALOR) || 0,
+        desconto2_codigo:  formData.DESCONTO2_TIPO || null,
+        desconto2_data:    formData.DESCONTO2_DATA || null,
+        desconto2_valor:   parseFloat(formData.DESCONTO2_VALOR) || 0,
+        desconto3_codigo:  formData.DESCONTO3_TIPO || null,
+        desconto3_data:    formData.DESCONTO3_DATA || null,
+        desconto3_valor:   parseFloat(formData.DESCONTO3_VALOR) || 0,
+        mensagem1:         formData.MENSAGEM1      || '',
+        mensagem2:         formData.MENSAGEM2      || '',
+        mensagem3:         formData.MENSAGEM3      || '',
         descricao:         formData.DESCRICAO      || '',
         status:            formData.STATUS         || 'pendente',
         situacao:          formData.SITUACAO       || '',
-        valor_pagamento:   parseFloat(formData.VALOR_PAGO) || 0,
-        data_pagamento:    formData.DATA_PAGO      || null,
       }
       const { error } = await updateBoleto(editingBoleto.id, updates)
       if (error) {
@@ -325,11 +351,26 @@ export default function BoletosPage() {
       }
     } else {
       // Criar novo boleto
-      const { error } = await createBoleto(activeId, formData)
+      const { data: novoBoleto, error } = await createBoleto(activeId, formData)
       if (error) {
         alert('Erro ao salvar boleto: ' + error.message)
         setLoading(false)
         return
+      }
+
+      // Enviar arquivos anexados junto ao boleto recém-criado
+      if (novoBoleto?.id && pendingFiles && pendingFiles.length > 0) {
+        const falhas = []
+        for (const file of pendingFiles) {
+          const { error: anexoErr } = await uploadAnexoBoleto(novoBoleto.id, file, activeId)
+          if (anexoErr) {
+            console.error('[BoletosPage] Erro ao anexar arquivo:', file.name, anexoErr)
+            falhas.push(file.name)
+          }
+        }
+        if (falhas.length > 0) {
+          alert('Boleto criado, mas falha ao anexar: ' + falhas.join(', '))
+        }
       }
     }
     setShowModal(false)

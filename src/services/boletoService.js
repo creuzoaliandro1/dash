@@ -169,11 +169,46 @@ export const createBoleto = async (contaId, boletoData) => {
       sacado_cep: boletoData.SACADO_CEP || '',
       sacado_telefone: boletoData.SACADO_TELEFONE || '',
       sacado_email: boletoData.SACADO_EMAIL || '',
-      avalista_nome: boletoData.AVALISTA_NOME || '',
+      avalista_nome: boletoData.AVALISTA || boletoData.AVALISTA_NOME || '',
       avalista_cic:  boletoData.AVALISTA_CIC  || '',
       valor_pagamento: parseFloat(boletoData.VALOR_PAGAMENTO || 0),
       data_pagamento: boletoData.DATA_PAGAMENTO ? convertDateToPG(boletoData.DATA_PAGAMENTO) : null,
       descricao: boletoData.DESCRICAO || '',
+      // --- Campos BMP (Registrar Boleto) ---
+      data_limite_pagamento: boletoData.DATA_LIMITE_PGTO ? convertDateToPG(boletoData.DATA_LIMITE_PGTO) : null,
+      especie_titulo: boletoData.ESPECIE_TITULO != null && boletoData.ESPECIE_TITULO !== '' ? parseInt(boletoData.ESPECIE_TITULO, 10) : 2,
+      numero_carteira: boletoData.NUMERO_CARTEIRA != null && boletoData.NUMERO_CARTEIRA !== '' ? parseInt(boletoData.NUMERO_CARTEIRA, 10) : 1,
+      valor_abatimento: parseFloat(boletoData.ABATIMENTO || 0) || 0,
+      tipo_registro: boletoData.TIPO_REGISTRO != null && boletoData.TIPO_REGISTRO !== '' ? parseInt(boletoData.TIPO_REGISTRO, 10) : 1,
+      // pagador (sacado)
+      sacado_tipo_pessoa: boletoData.SACADO_TIPO_PESSOA !== undefined && boletoData.SACADO_TIPO_PESSOA !== '' ? parseInt(boletoData.SACADO_TIPO_PESSOA, 10) : null,
+      sacado_numero: boletoData.SACADO_NUMERO || '',
+      sacado_complemento: boletoData.SACADO_COMPLEMENTO || '',
+      // sacador avalista
+      avalista_tipo: boletoData.AVALISTA_TIPO !== undefined && boletoData.AVALISTA_TIPO !== '' ? parseInt(boletoData.AVALISTA_TIPO, 10) : null,
+      // juros BMP (separado do juros diario calculado em 'juros')
+      juros_codigo: boletoData.JUROS_TIPO || null,
+      juros_data: boletoData.JUROS_DATA ? convertDateToPG(boletoData.JUROS_DATA) : null,
+      juros_valor: parseFloat(boletoData.JUROS_VALOR || 0) || 0,
+      // multa BMP (reutiliza coluna 'multa' como valor)
+      multa_codigo: boletoData.MULTA_TIPO || null,
+      multa_data: boletoData.MULTA_DATA ? convertDateToPG(boletoData.MULTA_DATA) : null,
+      multa: parseFloat(boletoData.MULTA_VALOR || 0) || 0,
+      // desconto principal (reutiliza coluna 'desconto' como valor)
+      desconto_codigo: boletoData.DESCONTO_TIPO || null,
+      desconto_data: boletoData.DESCONTO_DATA ? convertDateToPG(boletoData.DESCONTO_DATA) : null,
+      desconto: parseFloat(boletoData.DESCONTO_VALOR || 0) || 0,
+      // descontos adicionais (faixas 2 e 3)
+      desconto2_codigo: boletoData.DESCONTO2_TIPO || null,
+      desconto2_data: boletoData.DESCONTO2_DATA ? convertDateToPG(boletoData.DESCONTO2_DATA) : null,
+      desconto2_valor: parseFloat(boletoData.DESCONTO2_VALOR || 0) || 0,
+      desconto3_codigo: boletoData.DESCONTO3_TIPO || null,
+      desconto3_data: boletoData.DESCONTO3_DATA ? convertDateToPG(boletoData.DESCONTO3_DATA) : null,
+      desconto3_valor: parseFloat(boletoData.DESCONTO3_VALOR || 0) || 0,
+      // instrucoes ao beneficiario
+      mensagem1: boletoData.MENSAGEM1 || '',
+      mensagem2: boletoData.MENSAGEM2 || '',
+      mensagem3: boletoData.MENSAGEM3 || '',
     }
 
     // Campos opcionais vindos da importação do Efactor (OPEITE)
