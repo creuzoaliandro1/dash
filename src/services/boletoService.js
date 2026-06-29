@@ -2353,3 +2353,133 @@ export const incrementContaCnab400 = async (contaId, nextSeq) => {
           return { error: err }
     }
 }
+
+
+// ============================================================================
+// IMPORTADOS: união simples de capt_boletos + capt_registrado + OPEITE.
+// Cada fonte é mapeada para as colunas atuais da BoletoTable. SEM dedup,
+// SEM exclusão e SEM regra dos 3 — apenas apresentação dos registros.
+// ============================================================================
+
+// Mapeia uma linha de capt_registrado para o formato exibido na BoletoTable.
+const mapRegistradoParaColuna = (r) => ({
+  id: r.id,
+  numero_documento: r.numero_documento || r.num_doc_tit || '',
+  sacado_nome: r.nom_rz_soc_pagdr || '',
+  sacado_cic: r.cnpj_cpf_pagdr || '',
+  data_emissao: r.dt_ems_tit || '',
+  data_vencimento: r.dt_venc_tit || '',
+  valor: parseFloat(r.vlr_tit) || 0,
+  nosso_numero: r.identd_nosso_num || '',
+  status: 'pendente',
+  situacao: 'Registrado',
+  num_lancamento: '',
+  created_at: r.dt_inclusao || r.created_at || '',
+  _ORIGEM: 'REGISTRADO',
+})
+
+// Carrega capt_registrado (paginado) com os campos usados nas colunas.
+const carregarCaptRegistrado = async () => {
+  let all = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const start = page * pageSize
+    const { data, error } = await supabase
+      .from('capt_registrado')
+      .select('id, numero_documento, num_doc_tit, identd_nosso_num, nom_rz_soc_pagdr, cnpj_cpf_pagdr, dt_ems_tit, dt_inclusao, dt_venc_tit, vlr_tit, num_linha_digtvl, situacao_boleto, created_at')
+      .order('created_at', { ascending: false })
+      .range(start, start + pageSize - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    all = [...all, ...data]
+    if (data.length < pageSize) break
+    page++
+  }
+  return all
+}
+
+// Extrai o código de 7 dígitos da CONTA embutido na linha digitável (posições 24-30,
+// 1-based) — mesma regra do filtro por perfil usado na importação de arquivos.
+const extractContaDaLinha = (linha) => {
+  const d = String(linha || '').replace(/\D/g, '')
+  if (d.length < 30) return null
+  return d.substring(23, 30)
+}
+
+// União para o modo Importados: capt_boletos (perfil) + capt_registrado + OPEITE (cedente).
+export const getImportadosUnificados = async (contaId, contaData, userType = 'U') => {
+  try {
+    const [boletosRes, registradosRaw] = await Promise.all([
+      getBoletos(contaId),
+      carregarCaptRegistrado(),
+    ])
+    const boletos = boletosRes?.data || []
+
+    // Política de perfil: usuários NÃO master só veem registros de capt_registrado
+    // cuja linha digitável pertence à conta do perfil ativo (CONTAS.conta).
+    // Enquanto contaData não chegou (carga inicial), NÃO exibe nenhum registrado —
+    // evita o "flash" mostrando todos os registros antes do perfil carregar.
+    let registradosRelevantes = registradosRaw
+    if (userType !== 'M') {
+      const contaPerfil = (contaData && contaData.conta)
+        ? String(contaData.conta).padStart(8, '0').substring(0, 7)
+        : null
+      registradosRelevantes = contaPerfil
+        ? registradosRaw.filter((r) => extractContaDaLinha(r.num_linha_digtvl) === contaPerfil)
+        : []
+      console.log(`[Importados] Perfil não-master: capt_registrado filtrado por conta ${contaPerfil} (${registradosRelevantes.length}/${registradosRaw.length})`)
+    }
+    const registrados = registradosRelevantes.map(mapRegistradoParaColuna)
+
+    let opeite = []
+    if (contaData && contaData.cod_cedente) {
+      const { data } = await getOPEITEByCedente(contaData.cod_cedente)
+      opeite = data || []
+    } else {
+      console.warn('[Importados] Sem cod_cedente; OPEITE não incluído.')
+    }
+
+    const unificadoBruto = [...boletos, ...registrados, ...opeite]
+
+    // Regra dos 3: agrupa por (CIC, valor, vencimento). Quando há correspondência
+    // entre as fontes, colapsa em UMA única linha (remove duplicidades).
+    const dig = (v) => String(v ?? '').replace(/\D/g, '')
+    const chave3 = (r) => {
+      const c = dig(r.sacado_cic)
+      const cents = Math.round((parseFloat(r.valor) || 0) * 100)
+      const v = r.data_vencimento ? String(r.data_vencimento).slice(0, 10) : ''
+      return (c && cents && v) ? `${c}|${cents}|${v}` : null
+    }
+    const grupos = new Map()
+    const semChave = []
+    for (const r of unificadoBruto) {
+      const k = chave3(r)
+      if (!k) { semChave.push(r); continue }
+      if (!grupos.has(k)) grupos.set(k, [])
+      grupos.get(k).push(r)
+    }
+    const mesclados = []
+    for (const rows of grupos.values()) {
+      if (rows.length === 1) { mesclados.push(rows[0]); continue }
+      // Prioridade da linha base: capt_boletos (editável) > capt_registrado > OPEITE
+      const base = rows.find((r) => !r._ORIGEM) || rows.find((r) => r._ORIGEM === 'REGISTRADO') || rows[0]
+      const merged = { ...base }
+      // LANC: aproveita o num_lancamento de qualquer fonte (tipicamente OPEITE)
+      const comLanc = rows.find((r) => r.num_lancamento)
+      if (comLanc && comLanc.num_lancamento) {
+        merged.num_lancamento = comLanc.num_lancamento
+        merged.status_efactor = merged.status_efactor || 'Antecipado'
+      }
+      // CONTA = Sim quando o título também consta no Relatório de Gestão (capt_registrado)
+      if (rows.some((r) => r._ORIGEM === 'REGISTRADO')) merged.situacao = 'Registrado'
+      mesclados.push(merged)
+    }
+    const unificado = [...mesclados, ...semChave]
+    console.log(`[Importados] União: ${boletos.length} boletos + ${registrados.length} registrados + ${opeite.length} OPEITE = ${unificadoBruto.length} brutos -> ${unificado.length} após regra dos 3`)
+    return { data: unificado, error: null }
+  } catch (err) {
+    console.error('[Importados] Erro na união:', err)
+    return { data: [], error: err }
+  }
+}

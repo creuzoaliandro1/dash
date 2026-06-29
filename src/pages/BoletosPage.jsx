@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData } from '../services/boletoService'
+import { createBoleto, updateBoleto, getBoletos, deleteBoleto, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getImportadosUnificados } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF } from '../utils/duplicata'
@@ -121,26 +121,30 @@ export default function BoletosPage() {
     setContaData(data || null)
   }, [])
 
+  const loadSeqRef = useRef(0)
   const loadBoletos = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     try {
       const activeId = getActiveContaId()
       console.log('[BoletosPage] loadBoletos para conta:', activeId, 'Efactor:', efactorActive)
 
+      let resultado
       if (efactorActive) {
         // Carregar dados do Efactor (OPEITE)
-        const resultado = await carregarOPEITE(activeId, contaData)
-        setBoletos(resultado.data || [])
+        resultado = await carregarOPEITE(activeId, contaData)
       } else {
-        // Carregar dados normais (capt_boletos)
-        const resultado = await getBoletos(activeId)
-        setBoletos(resultado.data || [])
+        // Importados: união capt_boletos + capt_registrado + OPEITE (mapeados nas colunas atuais)
+        resultado = await getImportadosUnificados(activeId, contaData, userType)
       }
+      // Ignora respostas obsoletas: impede que uma carga anterior (sem contaData,
+      // logo sem filtro de perfil) sobrescreva a carga já filtrada.
+      if (seq === loadSeqRef.current) setBoletos(resultado.data || [])
     } catch (err) {
       console.error('Erro ao carregar boletos:', err)
-      setBoletos([])
+      if (seq === loadSeqRef.current) setBoletos([])
     }
-    setLoading(false)
+    if (seq === loadSeqRef.current) setLoading(false)
   }, [efactorActive, contaData])
 
   // Carregar na montagem
@@ -225,6 +229,11 @@ export default function BoletosPage() {
     // Proteger registros OPEITE
     if (boleto._ORIGEM === 'OPEITE') {
       alert('Não é possível editar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
+      return
+    }
+    // Proteger registros vindos de capt_registrado (Relatório de Gestão)
+    if (boleto._ORIGEM === 'REGISTRADO') {
+      alert('Não é possível editar registros do Relatório de Gestão (capt_registrado).')
       return
     }
 
@@ -563,6 +572,11 @@ export default function BoletosPage() {
     // Proteger registros OPEITE
     if (boleto._ORIGEM === 'OPEITE') {
       alert('Não é possível deletar registros do Efactor (OPEITE). Eles são gerenciados externamente.')
+      return
+    }
+    // Proteger registros vindos de capt_registrado (Relatório de Gestão)
+    if (boleto._ORIGEM === 'REGISTRADO') {
+      alert('Não é possível deletar registros do Relatório de Gestão (capt_registrado) por aqui.')
       return
     }
 
@@ -985,13 +999,13 @@ export default function BoletosPage() {
       .map(index => filteredBoletos[index])
       .filter(boleto => boleto)
 
-    // Separar registros OPEITE dos registros locais
-    const boletosPorExcluir = boletosParaDeletar.filter(b => b._ORIGEM !== 'OPEITE')
-    const boletosOpeite = boletosParaDeletar.filter(b => b._ORIGEM === 'OPEITE')
+    // Separar registros protegidos (OPEITE/REGISTRADO) dos registros locais (capt_boletos)
+    const boletosPorExcluir = boletosParaDeletar.filter(b => !b._ORIGEM)
+    const boletosOpeite = boletosParaDeletar.filter(b => b._ORIGEM === 'OPEITE' || b._ORIGEM === 'REGISTRADO')
 
-    // Se houver registros OPEITE, avisar o usuário
+    // Se houver registros protegidos, avisar o usuário
     if (boletosOpeite.length > 0) {
-      const mensagem = `${boletosOpeite.length} boleto(s) selecionado(s) é do Efactor (OPEITE) e não pode ser deletado. Apenas os ${boletosPorExcluir.length} boleto(s) local(is) serão deletados.`
+      const mensagem = `${boletosOpeite.length} registro(s) selecionado(s) vem do Efactor (OPEITE) ou do Relatório de Gestão (capt_registrado) e não pode ser deletado. Apenas os ${boletosPorExcluir.length} boleto(s) local(is) serão deletados.`
       if (boletosPorExcluir.length === 0) {
         alert(mensagem)
         return
