@@ -532,7 +532,7 @@ export const renderDuplicataOnDoc = async (pdf, boleto, conta, startY = 10) => {
   pdf.setFontSize(8)
   pdf.text('DADOS DO SACADO:', colS_X, gridRowY(30), { baseline: 'middle' })
   pdf.text('RAZÃO SOCIAL:', colS_X, gridRowY(33), { baseline: 'middle' })
-  pdf.text((boleto.sacado_nome || '').toUpperCase(), colS_X, gridRowY(35), { baseline: 'middle', maxWidth: colBH_X - colS_X - 2 })
+  pdf.text((boleto.sacado_nome || '').toUpperCase().substring(0, 50), colS_X, gridRowY(35), { baseline: 'middle' })
   pdf.text('CNPJ/CPF:', colBH_X, gridRowY(33), { baseline: 'middle' })
   pdf.text((boleto.sacado_cic || '').toUpperCase(), colBH_X, gridRowY(35), { baseline: 'middle', maxWidth: (startX + duplicataWidth) - colBH_X - 2 })
   pdf.text('ENDEREÇO:', colS_X, gridRowY(37), { baseline: 'middle' })

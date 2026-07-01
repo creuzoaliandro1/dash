@@ -470,12 +470,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           } else {
             imported++
 
-            // 4. Upload dos anexos se houver
-            if (arquivosAnexados[itemIdx] && arquivosAnexados[itemIdx].length > 0 && boletoResult && boletoResult.id) {
-              console.log(`[ImportPreview] Fazendo upload de ${arquivosAnexados[itemIdx].length} arquivo(s) para boleto ${boletoResult.id}`)
+            // 4. Upload dos anexos: XML de origem (automático, salvo em cada parcela
+            //    gerada a partir do arquivo) + anexos manuais selecionados pelo usuário.
+            const arquivosParaAnexar = [
+              ...(boletoData._xmlFile ? [boletoData._xmlFile] : []),
+              ...(arquivosAnexados[itemIdx] || [])
+            ]
+            if (arquivosParaAnexar.length > 0 && boletoResult && boletoResult.id) {
+              console.log(`[ImportPreview] Fazendo upload de ${arquivosParaAnexar.length} arquivo(s) para boleto ${boletoResult.id}`)
               try {
                 await Promise.all(
-                  arquivosAnexados[itemIdx].map(file =>
+                  arquivosParaAnexar.map(file =>
                     uploadAnexoBoleto(boletoResult.id, file, targetUserId)
                       .then(() => console.log(`[ImportPreview] ✓ Arquivo ${file.name} anexado`))
                       .catch(err => console.warn(`[ImportPreview] Erro ao anexar ${file.name}:`, err))

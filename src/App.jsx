@@ -56,7 +56,7 @@ export default function App() {
       {currentPage === 'contabil' && isMaster && <ContabilPage />}
       {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
-      {currentPage === 'retorno' && isMaster && <RetornoPage />}
+      {currentPage === 'retorno' && <RetornoPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>

@@ -137,65 +137,67 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
         ))}
       </nav>
 
-      {/* Operations Section - Only for Master Users */}
-      {isMaster && (
-        <div className="px-3 py-2 mt-4 flex flex-col gap-1 border-t border-[#1f1f1f] pt-4">
-          <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider px-2 py-2">Operações</p>
+      {/* Operations Section - visible to all users (Retorno) and Master (Conta Capt, E-Factor) */}
+      <div className="px-3 py-2 mt-4 flex flex-col gap-1 border-t border-[#1f1f1f] pt-4">
+        <p className="text-xs font-semibold text-[#666666] uppercase tracking-wider px-2 py-2">Operações</p>
 
-          {/* Importar with submenu - Master Only */}
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={() => setExpandedMenu(expandedMenu === 'importar' ? null : 'importar')}
-              className="flex items-center justify-between px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition w-full"
+        {/* Importar with submenu */}
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => setExpandedMenu(expandedMenu === 'importar' ? null : 'importar')}
+            className="flex items-center justify-between px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition w-full"
+          >
+            <span>Importar</span>
+            <svg
+              className={`w-4 h-4 transition ${expandedMenu === 'importar' ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
             >
-              <span>Importar</span>
-              <svg
-                className={`w-4 h-4 transition ${expandedMenu === 'importar' ? 'rotate-180' : ''}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-              </svg>
-            </button>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
 
-            {expandedMenu === 'importar' && (
-              <div className="pl-4 flex flex-col gap-1">
-                <button
-                  onClick={() => setCurrentPage('conta-capt')}
-                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                    currentPage === 'conta-capt'
-                      ? 'bg-[#1a1a1a] text-white'
-                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                  }`}
-                >
-                  Conta Capt
-                </button>
-                <button
-                  onClick={() => setCurrentPage('efactor')}
-                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                    currentPage === 'efactor'
-                      ? 'bg-[#1a1a1a] text-white'
-                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                  }`}
-                >
-                  E-Factor
-                </button>
-                <button
-                  onClick={() => setCurrentPage('retorno')}
-                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
-                    currentPage === 'retorno'
-                      ? 'bg-[#1a1a1a] text-white'
-                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
-                  }`}
-                >
-                  Retorno
-                </button>
-              </div>
-            )}
-          </div>
+          {expandedMenu === 'importar' && (
+            <div className="pl-4 flex flex-col gap-1">
+              {isMaster && (
+                <>
+                  <button
+                    onClick={() => setCurrentPage('conta-capt')}
+                    className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                      currentPage === 'conta-capt'
+                        ? 'bg-[#1a1a1a] text-white'
+                        : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                    }`}
+                  >
+                    Conta Capt
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage('efactor')}
+                    className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                      currentPage === 'efactor'
+                        ? 'bg-[#1a1a1a] text-white'
+                        : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                    }`}
+                  >
+                    E-Factor
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setCurrentPage('retorno')}
+                className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                  currentPage === 'retorno'
+                    ? 'bg-[#1a1a1a] text-white'
+                    : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                }`}
+              >
+                Retorno
+              </button>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Footer */}
       <div className="mt-auto px-3 py-3 border-t border-[#1f1f1f]">

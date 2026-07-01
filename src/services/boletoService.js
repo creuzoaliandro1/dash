@@ -1004,6 +1004,61 @@ export const getBoletoStats = async (contaId) => {
   }
 }
 
+// Fazer upload do arquivo CNAB400 (.REM) gerado para o Supabase Storage,
+// para que fique disponível para reenvio/consulta posterior mesmo que o
+// download local do usuário se perca.
+// Bucket dedicado: 'remessas' (separado do bucket 'titulos' usado p/ anexos de boleto)
+export const uploadRemessaCNAB400 = async (contaId, filename, blobOuTexto) => {
+  try {
+    if (!blobOuTexto) {
+      throw new Error('Conteúdo do arquivo de remessa não informado')
+    }
+
+    const BUCKET_NAME = 'remessas'
+    // Timestamp evita colisão caso a mesma sequência seja gerada mais de uma vez
+    const timestamp = new Date().getTime()
+    const caminho = `${contaId}/${timestamp}_${filename}`
+
+    // Aceita tanto Blob quanto string (conteúdo puro do CNAB400)
+    const blob = blobOuTexto instanceof Blob
+      ? blobOuTexto
+      : new Blob([blobOuTexto], { type: 'text/plain' })
+
+    console.log('[RemessaService] Fazendo upload do CNAB400:', caminho, 'Tamanho:', blob.size, 'Bucket:', BUCKET_NAME)
+
+    const { error: erroUpload } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(caminho, blob, { upsert: false, contentType: 'text/plain' })
+
+    if (erroUpload) {
+      console.error('[RemessaService] Erro ao fazer upload do CNAB400:', erroUpload)
+      throw erroUpload
+    }
+
+    console.log('[RemessaService] ✓ CNAB400 salvo no Supabase Storage:', caminho)
+    return { data: { caminho }, error: null }
+  } catch (err) {
+    console.error('[RemessaService] Erro ao salvar CNAB400 no storage:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Gerar URL de download para um arquivo de remessa CNAB400 salvo no storage
+export const getDownloadUrlRemessa = async (caminhoStorage) => {
+  try {
+    const { data, error } = await supabase.storage
+      .from('remessas')
+      .createSignedUrl(caminhoStorage, 3600) // URL válida por 1 hora
+
+    if (error) throw error
+
+    return { data: data.signedUrl, error: null }
+  } catch (err) {
+    console.error('[RemessaService] Erro ao gerar URL de download da remessa:', err)
+    return { data: null, error: err }
+  }
+}
+
 // Criar registro de remessa CNAB400 na tabela REMESSAS
 // IMPORTANTE: Apenas insere nos campos que existem na tabela
 export const createRemessa = async (contaId, remessaData) => {
@@ -1029,6 +1084,11 @@ export const createRemessa = async (contaId, remessaData) => {
       AGENCIA: conta?.agencia || '',
       // Campos opcionais para rastreamento (se a tabela tiver)
       GERADO: new Date().toISOString().split('T')[0],
+    }
+
+    // Caminho do arquivo no Supabase Storage (se o upload foi feito com sucesso)
+    if (remessaData.caminhoStorage) {
+      dataToInsert.CAMINHO_STORAGE = remessaData.caminhoStorage
     }
 
     console.log('[RemessaService] Inserindo remessa:', dataToInsert)

@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
@@ -656,6 +656,21 @@ export default function BoletosPage() {
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
 
+      // Salvar o arquivo .REM gerado no Supabase Storage, para consulta/reenvio
+      // posterior caso o download local se perca (opcional - não bloqueia o fluxo)
+      let caminhoStorage = null
+      try {
+        const { data: uploadResult, error: uploadError } = await uploadRemessaCNAB400(activeId, filename, cnab400Blob)
+        if (uploadError) {
+          console.warn('[CNAB400] Aviso ao salvar remessa no Supabase Storage (continua mesmo assim):', uploadError)
+        } else {
+          caminhoStorage = uploadResult?.caminho || null
+          console.log('[CNAB400] Remessa salva no Supabase Storage:', caminhoStorage)
+        }
+      } catch (err) {
+        console.warn('[CNAB400] Aviso ao salvar remessa no Supabase Storage:', err)
+      }
+
       // Track remittance in database (opcional - continua mesmo se falhar)
       const valorTotal = boletosParaRemessa.reduce((sum, b) => sum + (parseFloat(b.valor) || 0), 0)
 
@@ -664,6 +679,7 @@ export default function BoletosPage() {
           filename,
           quantidadeBoletos: boletosParaRemessa.length,
           valorTotal,
+          caminhoStorage,
         })
 
         if (remessaError) {

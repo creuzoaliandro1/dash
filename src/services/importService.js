@@ -262,6 +262,11 @@ async function parseXMLFile(file) {
     }
   }
 
+  // Anexa o arquivo XML original a cada boleto/parcela extraído do arquivo.
+  // Isso permite que, ao confirmar a importação (ImportPreview), o XML seja
+  // automaticamente salvo no Supabase Storage e vinculado a cada parcela criada.
+  boletos.forEach(b => { b._xmlFile = file })
+
   return boletos
 }
 
