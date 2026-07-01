@@ -197,6 +197,19 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
             </div>
           )}
         </div>
+
+        {isMaster && (
+          <button
+            onClick={() => setCurrentPage('acessos')}
+            className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+              currentPage === 'acessos'
+                ? 'bg-[#1a1a1a] text-white'
+                : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+            }`}
+          >
+            Acessos
+          </button>
+        )}
       </div>
 
       {/* Footer */}

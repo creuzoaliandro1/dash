@@ -3,7 +3,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
@@ -29,6 +29,7 @@ export default function BoletosPage() {
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
+  const [cnab400Regenerar, setCnab400Regenerar] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -596,7 +597,27 @@ export default function BoletosPage() {
       return
     }
 
-    // Verificar se algum boleto já está registrado em capt_registrado
+    // Verificar (lendo capt_boletos direto do banco — não confiar no campo
+    // 'situacao' já mesclado da view "Importados") se algum boleto selecionado
+    // já possui nosso_numero, código de barras e remessa gerados anteriormente
+    // (situacao='Remessa'). Se sim, perguntar se deseja gerar nova numeração
+    // ou manter os dados anteriores.
+    try {
+      const jaGerados = await checkBoletosJaGerados(boletosParaRemessa)
+      if (jaGerados.length > 0) {
+        setCnab400Regenerar({ titulos: jaGerados, tipoOperacao, boletosParaRemessa })
+        return
+      }
+    } catch (e) {
+      console.warn('[CNAB400] Erro ao verificar se boletos já foram gerados:', e)
+    }
+
+    await checkRegistradosEGerar(boletosParaRemessa, tipoOperacao)
+  }
+
+  // Verifica se algum boleto já está registrado em capt_registrado antes de
+  // efetivamente gerar o arquivo CNAB400 (etapa comum a todos os fluxos).
+  const checkRegistradosEGerar = async (boletosParaRemessa, tipoOperacao) => {
     try {
       const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
       if (jaRegistrados.length > 0) {
@@ -608,6 +629,48 @@ export default function BoletosPage() {
     }
 
     await doGerarRemessaCNAB400(boletosParaRemessa, tipoOperacao)
+  }
+
+  // Resolução do modal "já possui remessa gerada": gera nova numeração
+  // (mesma rotina de gravação de boleto novo: novo nosso_numero + codigo_barras)
+  // ou mantém os dados anteriores, e então segue o fluxo normal de geração.
+  const handleResolverCnab400Regenerar = async (gerarNovo) => {
+    if (!cnab400Regenerar) return
+    const { titulos, tipoOperacao, boletosParaRemessa } = cnab400Regenerar
+    setCnab400Regenerar(null)
+
+    if (!gerarNovo) {
+      await checkRegistradosEGerar(boletosParaRemessa, tipoOperacao)
+      return
+    }
+
+    setGeneratingCNAB400(true)
+    try {
+      const activeId = getActiveContaId()
+      const { atualizados, erros } = await regenerarNumeracaoBoletos(titulos, activeId)
+
+      if (erros.length > 0) {
+        console.warn('[CNAB400] Erros ao regenerar numeração:', erros)
+        const continuar = window.confirm(
+          `${erros.length} boleto(s) não puderam ser renumerados e serão enviados com os dados anteriores.\n\n` +
+          `Deseja continuar a geração do CNAB400?`
+        )
+        if (!continuar) return
+      }
+
+      const atualizadosPorId = new Map(atualizados.map(b => [String(b.id), b]))
+      const boletosAtualizados = boletosParaRemessa.map(
+        b => atualizadosPorId.get(String(b.id)) || b
+      )
+
+      await loadBoletos()
+      await checkRegistradosEGerar(boletosAtualizados, tipoOperacao)
+    } catch (e) {
+      console.error('[CNAB400] Erro ao regenerar numeração:', e)
+      alert('Erro ao gerar nova numeração: ' + e.message)
+    } finally {
+      setGeneratingCNAB400(false)
+    }
   }
 
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
@@ -1890,6 +1953,50 @@ export default function BoletosPage() {
           onClose={() => setShowZapsignModal(false)}
           onSubmit={runZapsign}
         />
+      )}
+
+      {/* Modal de confirmação: boleto(s) já possuem nosso_numero/codigo_barras/remessa gerados */}
+      {cnab400Regenerar && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-md w-full p-6 space-y-4">
+            <h3 className="text-white font-semibold text-base">⚠️ Remessa já Gerada</h3>
+            <p className="text-[#a3a3a3] text-sm">
+              O(s) título(s) abaixo já possuem <span className="text-white font-medium">Nosso Número</span>, <span className="text-white font-medium">código de barras</span> e uma <span className="text-white font-medium">remessa</span> gerados anteriormente:
+            </p>
+            <ul className="space-y-1 max-h-48 overflow-y-auto">
+              {cnab400Regenerar.titulos.map((boleto, i) => (
+                <li key={i} className="text-sm text-white bg-[#111111] border border-[#2a2a2a] rounded px-3 py-1.5 font-mono">
+                  {boleto.numero_documento || boleto.id}
+                  <span className="text-[#666666] ml-2 font-sans">Nosso Nº {boleto.nosso_numero}</span>
+                  {boleto.sacado_nome ? <span className="text-[#666666] ml-2 font-sans">{boleto.sacado_nome}</span> : null}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[#a3a3a3] text-sm">
+              Deseja gerar um novo Nosso Número e código de barras (mesma rotina de um boleto novo) ou manter os dados anteriores?
+            </p>
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                onClick={() => setCnab400Regenerar(null)}
+                className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleResolverCnab400Regenerar(false)}
+                className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
+              >
+                Manter anterior
+              </button>
+              <button
+                onClick={() => handleResolverCnab400Regenerar(true)}
+                className="px-5 py-2 text-sm bg-white text-black font-medium rounded hover:opacity-90 transition"
+              >
+                Gerar novo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal de confirmação: títulos já registrados no CNAB400 */}

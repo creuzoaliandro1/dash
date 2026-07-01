@@ -1712,7 +1712,9 @@ export const getOPEITEByCedente = async (codCedente) => {
         data_emissao: opeite.DT_LANCA || '',
         data_vencimento: opeite.DT_VENCI || '',
         valor: parseFloat(opeite.VR_FACE) || 0,
-        numero_documento: opeite.NUM_LANCAMENTO || '',
+        // Documento = número do título (NUM_TITULO), NUNCA o lançamento (NUM_LANCAMENTO,
+        // usado só em num_lancamento/coluna LANC) — eram iguais aqui por engano.
+        numero_documento: opeite.NUM_TITULO || '',
         sacado_nome: sacado.NOME_CORRENTISTA || '',
         sacado_cic: sacado.CIC || '',
         avalista_nome: opeite.NOME_AVALISTA || '',
@@ -2061,7 +2063,9 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
         data_emissao: opeite.DT_LANCA || '',
         data_vencimento: opeite.DT_VENCI || '',
         valor: parseFloat(opeite.VR_FACE) || 0,
-        numero_documento: opeite.NUM_LANCAMENTO || '',
+        // Documento = número do título (NUM_TITULO), NUNCA o lançamento (NUM_LANCAMENTO,
+        // usado só em num_lancamento/coluna LANC) — eram iguais aqui por engano.
+        numero_documento: opeite.NUM_TITULO || '',
         sacado_nome: sacado.NOME_CORRENTISTA || '',
         sacado_cic: sacado.CIC || '',
         avalista_nome: opeite.NOME_AVALISTA || '',
@@ -3203,6 +3207,79 @@ export const checkBoletosJaRegistrados = async (boletos) => {
     from += pageSize
   }
   return jaRegistrados
+}
+
+// Regenera nosso_numero + codigo_barras (e demais campos dependentes) de UM boleto
+// já existente, reaproveitando a mesma rotina de gravação de boleto novo:
+// 1) reserva um nosso_numero novo (RPC next_nosso_numero)
+// 2) grava via updateBoleto, que detecta a mudança em 'nosso_numero' e
+//    regenera automaticamente codigo_barras (e juros, se valor também mudar)
+// Verifica, lendo capt_boletos DIRETAMENTE do banco (não confia no campo
+// 'situacao' já mesclado em memória pela view "Importados", que sobrescreve
+// situacao para 'registrado' quando o título casa com capt_registrado — isso
+// mascarava o 'Remessa' e fazia o aviso abaixo nunca disparar), quais dos
+// boletos selecionados já possuem nosso_numero + codigo_barras + uma remessa
+// CNAB400 (situacao='Remessa') gerados anteriormente.
+// Retorna os boletos (com os dados atuais do banco) que já foram gerados.
+export const checkBoletosJaGerados = async (boletos) => {
+  const idsReais = boletos
+    .filter(b => b._hasCapt !== false && b.id && !String(b.id).startsWith('reg_') && !String(b.id).startsWith('ope_'))
+    .map(b => b.id)
+  if (idsReais.length === 0) return []
+
+  try {
+    const { data, error } = await supabase
+      .from('capt_boletos')
+      .select('id, nosso_numero, codigo_barras, situacao')
+      .in('id', idsReais)
+    if (error) throw error
+
+    const porId = new Map((data || []).map(d => [String(d.id), d]))
+    const jaGerados = []
+    for (const b of boletos) {
+      const fresh = porId.get(String(b.id))
+      if (fresh && fresh.nosso_numero && fresh.codigo_barras
+        && String(fresh.situacao || '').toLowerCase() === 'remessa') {
+        jaGerados.push({ ...b, nosso_numero: fresh.nosso_numero, codigo_barras: fresh.codigo_barras, situacao: fresh.situacao })
+      }
+    }
+    return jaGerados
+  } catch (err) {
+    console.warn('[checkBoletosJaGerados] Erro:', err.message)
+    return []
+  }
+}
+
+export const regenerarNumeracaoBoleto = async (boleto, contaId) => {
+  try {
+    const { nossoNumero, error: nnErr } = await getNextNossoNumero(contaId)
+    if (nnErr || !nossoNumero) {
+      throw nnErr || new Error('Falha ao gerar novo nosso número')
+    }
+    console.log(`[regenerarNumeracaoBoleto] Boleto ${boleto.id}: nosso_numero ${boleto.nosso_numero} -> ${nossoNumero}`)
+    const { data, error } = await updateBoleto(boleto.id, { nosso_numero: nossoNumero })
+    if (error) throw error
+    return { data, error: null }
+  } catch (err) {
+    console.error('[regenerarNumeracaoBoleto] Erro:', err)
+    return { data: null, error: err }
+  }
+}
+
+// Regenera nosso_numero/codigo_barras de VÁRIOS boletos (sequencial, para manter
+// a reserva de nosso_numero consistente). Retorna { atualizados, erros }.
+export const regenerarNumeracaoBoletos = async (boletos, contaId) => {
+  const atualizados = []
+  const erros = []
+  for (const boleto of boletos) {
+    const { data, error } = await regenerarNumeracaoBoleto(boleto, contaId)
+    if (error || !data) {
+      erros.push({ boleto, error })
+    } else {
+      atualizados.push(data)
+    }
+  }
+  return { atualizados, erros }
 }
 
 export const markBoletosRemessa = async (ids) => {

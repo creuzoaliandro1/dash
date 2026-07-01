@@ -5,31 +5,60 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// Auth helpers - usando tabela CONTAS
-export const signIn = async (cic, pass) => {
+// ============================================================
+// Auth — Supabase Auth vinculado à tabela CONTAS pelo e-mail.
+// Cada linha de CONTAS tem um e-mail único (sem duplicidade); o usuário
+// autenticado no Supabase Auth é resolvido para "sua" conta por esse e-mail.
+//
+// Mantemos o objeto 'user' em localStorage com o MESMO formato de antes
+// ({ id, cic, name, email, tipo }), pois MainLayout.jsx lê/escreve esse
+// objeto diretamente (inclui o switch de conta ativa do Master, que troca
+// 'id'/'name' preservando tipo='M'). Trocar apenas o mecanismo de login,
+// sem tocar nesse contrato, evita ter que reescrever o restante do app.
+// ============================================================
+
+const buildUserFromConta = (conta) => ({
+  id: conta.id,
+  cic: conta.cic,
+  name: conta.nome_correntista || conta.cic,
+  email: conta.email || null,
+  tipo: conta.tipo || null,
+})
+
+// Busca a CONTA vinculada a um e-mail (1 e-mail = 1 conta, sem duplicidade).
+const fetchContaByEmail = async (email) => {
+  if (!email) return { data: null, error: new Error('Sem e-mail na sessão') }
+  const { data, error } = await supabase
+    .from('CONTAS')
+    .select('id, cic, nome_correntista, email, tipo')
+    .ilike('email', email)
+    .limit(1)
+    .maybeSingle()
+  return { data, error }
+}
+
+export const signIn = async (email, password) => {
   try {
-    const { data, error } = await supabase
-      .from('CONTAS')
-      .select('*')
-      .eq('cic', cic)
-      .eq('pass', pass)
-      .single()
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
-    if (error || !data) {
-      return { data: null, error: { message: 'CIC ou senha inválidos' } }
+    if (authError || !authData?.user) {
+      return { data: null, error: { message: 'E-mail ou senha inválidos' } }
     }
 
-    // Salvar sessão no localStorage
-    const user = {
-      id: data.id,
-      cic: data.cic,
-      name: data.name || data.nome_correntista || data.cic,
-      email: data.email || null,
-      tipo: data.tipo || null,
+    const { data: conta, error: contaError } = await fetchContaByEmail(authData.user.email)
+    if (contaError || !conta) {
+      await supabase.auth.signOut()
+      return {
+        data: null,
+        error: { message: 'Nenhuma conta Capt vinculada a este e-mail. Fale com o administrador.' },
+      }
     }
 
+    const user = buildUserFromConta(conta)
     localStorage.setItem('user', JSON.stringify(user))
-    localStorage.setItem('sessionToken', btoa(JSON.stringify(user)))
 
     return { data: user, error: null }
   } catch (err) {
@@ -37,88 +66,61 @@ export const signIn = async (cic, pass) => {
   }
 }
 
-export const signUp = async (cic, pass) => {
+// Dispara o e-mail de redefinição de senha do Supabase Auth.
+export const resetPassword = async (email) => {
   try {
-    // Verificar se CIC já existe
-    const { data: existing } = await supabase
-      .from('CONTAS')
-      .select('id')
-      .eq('cic', cic)
-      .single()
-
-    if (existing) {
-      return { data: null, error: { message: 'CIC já registrado' } }
-    }
-
-    // Criar novo usuário
-    const { data, error } = await supabase
-      .from('CONTAS')
-      .insert([{ cic, pass }])
-      .select()
-      .single()
-
-    if (error) {
-      return { data: null, error }
-    }
-
-    // Fazer login automático
-    return signIn(cic, pass)
+    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    return { error }
   } catch (err) {
-    return { data: null, error: err }
+    return { error: err }
   }
 }
 
 export const signOut = async () => {
+  try {
+    await supabase.auth.signOut()
+  } catch (err) {
+    console.error('[signOut] erro:', err)
+  }
   localStorage.removeItem('user')
-  localStorage.removeItem('sessionToken')
+  localStorage.removeItem('activeContaId')
   return { error: null }
 }
 
 export const getCurrentUser = async () => {
   try {
-    const userStr = localStorage.getItem('user')
-    if (!userStr) {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const session = sessionData?.session
+
+    if (!session?.user?.email) {
+      localStorage.removeItem('user')
+      localStorage.removeItem('activeContaId')
       return { user: null, error: null }
     }
 
-    const user = JSON.parse(userStr)
+    // Reaproveita o cache local se pertencer ao mesmo e-mail já autenticado
+    // (preserva o switch de conta ativa do Master entre reloads da página).
+    const cachedStr = localStorage.getItem('user')
+    if (cachedStr) {
+      try {
+        const cached = JSON.parse(cachedStr)
+        if (cached?.email && String(cached.email).toLowerCase() === session.user.email.toLowerCase()) {
+          return { user: cached, error: null }
+        }
+      } catch {
+        // cache inválido — recarrega abaixo
+      }
+    }
+
+    const { data: conta, error } = await fetchContaByEmail(session.user.email)
+    if (error || !conta) {
+      return { user: null, error: error || new Error('Nenhuma conta Capt vinculada a este e-mail.') }
+    }
+
+    const user = buildUserFromConta(conta)
+    localStorage.setItem('user', JSON.stringify(user))
     return { user, error: null }
   } catch (err) {
     return { user: null, error: err }
   }
-}
-
-// Boletos
-export const getBoletos = async (userId) => {
-  const { data, error } = await supabase
-    .from('boletos')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-  return { data, error }
-}
-
-export const createBoleto = async (userId, boleto) => {
-  const { data, error } = await supabase
-    .from('boletos')
-    .insert([{ ...boleto, user_id: userId }])
-    .select()
-  return { data, error }
-}
-
-export const updateBoleto = async (id, updates) => {
-  const { data, error } = await supabase
-    .from('boletos')
-    .update(updates)
-    .eq('id', id)
-    .select()
-  return { data, error }
-}
-
-export const deleteBoleto = async (id) => {
-  const { error } = await supabase
-    .from('boletos')
-    .delete()
-    .eq('id', id)
-  return { error }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getCurrentUser } from './lib/supabase'
+import { getCurrentUser, supabase } from './lib/supabase'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import BoletosPage from './pages/BoletosPage'
@@ -8,6 +8,7 @@ import ContaCaptPage from './pages/ContaCaptPage'
 import ExtratoPage from './pages/ExtratoPage'
 import ContabilPage from './pages/ContabilPage'
 import RetornoPage from './pages/RetornoPage'
+import AcessosPage from './pages/AcessosPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -17,6 +18,16 @@ export default function App() {
 
   useEffect(() => {
     checkUser()
+
+    // Reage a expiração/renovação de sessão do Supabase Auth (ex.: token
+    // expirado sem refresh possível) mantendo a tela de login em sincronia.
+    const { data: subscription } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null)
+      }
+    })
+
+    return () => subscription?.subscription?.unsubscribe()
   }, [])
 
   const checkUser = async () => {
@@ -57,6 +68,7 @@ export default function App() {
       {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'retorno' && <RetornoPage />}
+      {currentPage === 'acessos' && isMaster && <AcessosPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>
