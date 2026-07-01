@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../../utils/duplicata'
 import { generateBorderoPDF } from '../../utils/bordero'
-import { getContaInfo, getBorderoData } from '../../services/boletoService'
+import { generateNotaFiscalPdfFromXML } from '../../utils/notaFiscal'
+import { getContaInfo, getBorderoData, getAnexosBoleto, getDownloadUrlAnexo, getBoletosComXMLAnexado } from '../../services/boletoService'
 import { supabase } from '../../lib/supabase'
 import BoletoDetailsModal from './BoletoDetailsModal'
 
@@ -72,6 +73,14 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   const [borderoPdfOpen, setBorderoPdfOpen] = useState(false)
   const [borderoPdfUrl, setBorderoPdfUrl] = useState(null)
   const [generatingBordero, setGeneratingBordero] = useState(false)
+
+  // Estado para preview de PDF da Nota Fiscal (DANFE/DANFSe gerada a partir do XML anexado)
+  const [notaFiscalPdfOpen, setNotaFiscalPdfOpen] = useState(false)
+  const [notaFiscalPdfUrl, setNotaFiscalPdfUrl] = useState(null)
+  const [generatingNotaFiscal, setGeneratingNotaFiscal] = useState(false)
+  const [notaFiscalTitulo, setNotaFiscalTitulo] = useState('Nota Fiscal')
+  // Set de boleto_id (string) que têm XML anexado — controla exibição do item no menu
+  const [xmlBoletoIds, setXmlBoletoIds] = useState(new Set())
 
   // Estado para ordenação (padrão: LANC decrescente; sem LANC fica no topo)
   const [sortColumn, setSortColumn] = useState('num_lancamento')
@@ -151,6 +160,22 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  // Descobre quais boletos têm XML anexado (nota fiscal), em uma única consulta,
+  // para exibir a opção "Nota Fiscal" apenas nesses registros no menu de ações.
+  useEffect(() => {
+    let cancelled = false
+    const ids = (boletos || []).map((b) => b.id).filter(Boolean)
+    if (ids.length === 0) {
+      setXmlBoletoIds(new Set())
+      return
+    }
+    getBoletosComXMLAnexado(ids).then(({ data }) => {
+      if (!cancelled) setXmlBoletoIds(data || new Set())
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boletos])
 
   // Função para ordenar
   const handleSort = (column) => {
@@ -395,6 +420,53 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
     }
   }
 
+  const handleGerarNotaFiscal = async (boleto) => {
+    console.log('[NotaFiscal] Clique no botão Nota Fiscal - iniciando...')
+    setOpenMenu(null)
+    setGeneratingNotaFiscal(true)
+    setNotaFiscalPdfOpen(true)
+    setNotaFiscalPdfUrl(null)
+    try {
+      // 1. Buscar anexos do boleto e filtrar o(s) XML
+      const { data: anexos, error: erroAnexos } = await getAnexosBoleto(boleto.id)
+      if (erroAnexos) throw erroAnexos
+
+      const anexoXML = (anexos || []).find((a) => (a.nome_arquivo || '').toLowerCase().endsWith('.xml'))
+      if (!anexoXML) {
+        throw new Error('Nenhum XML anexado a este boleto.')
+      }
+
+      // 2. Baixar o conteúdo do XML do Supabase Storage
+      const { data: url, error: erroUrl } = await getDownloadUrlAnexo(anexoXML.caminho_storage)
+      if (erroUrl || !url) throw (erroUrl || new Error('Não foi possível gerar link de download do XML.'))
+
+      const resp = await fetch(url)
+      if (!resp.ok) throw new Error('Erro ao baixar o XML anexado (HTTP ' + resp.status + ')')
+      const xmlText = await resp.text()
+
+      // 3. Obter dados da conta (perfil vinculado ao boleto), usada como fallback
+      //    para dados que porventura faltem no XML
+      let contaInfo = contaData
+      if (!contaInfo && boleto.conta_id) {
+        const { data } = await getContaInfo(boleto.conta_id)
+        contaInfo = data || {}
+      }
+
+      // 4. Detectar tipo (NFe/NFSe) e gerar o PDF (DANFE/DANFSe)
+      const { blob, tipo } = await generateNotaFiscalPdfFromXML(xmlText, contaInfo)
+      const pdfUrl = URL.createObjectURL(blob)
+      setNotaFiscalPdfUrl(pdfUrl)
+      setNotaFiscalTitulo(tipo === 'nfe' ? 'DANFE — Nota Fiscal de Produtos' : 'DANFSe — Nota Fiscal de Serviços')
+      console.log('[NotaFiscal] PDF gerado com sucesso, tipo:', tipo)
+    } catch (error) {
+      console.error('[NotaFiscal] ERRO:', error)
+      setNotaFiscalPdfOpen(false)
+      alert('Erro ao gerar Nota Fiscal: ' + error.message)
+    } finally {
+      setGeneratingNotaFiscal(false)
+    }
+  }
+
   if (boletos.length === 0) {
     return (
       <div className="p-8 text-center">
@@ -543,6 +615,14 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                         >
                           📋 Cessão de Direitos
                         </button>
+                        {xmlBoletoIds.has(String(boleto.id)) && (
+                          <button
+                            onClick={() => handleGerarNotaFiscal(boleto)}
+                            className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                          >
+                            🧾 Nota Fiscal
+                          </button>
+                        )}
                       <button
                         onClick={() => {
                           onEdit(boleto)
@@ -638,6 +718,50 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                     src={duplicataPdfUrl + '#navpanes=0&zoom=75'}
                     className="w-full h-[950px] border border-[#2a2a2a] rounded"
                     title="Duplicata"
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Preview da Nota Fiscal (DANFE/DANFSe) */}
+        {notaFiscalPdfOpen && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="sticky top-0 flex items-center justify-between p-3 border-b border-[#2a2a2a] bg-[#0a0a0a]">
+                <h2 className="text-white text-sm font-medium">{notaFiscalTitulo}</h2>
+                <div className="flex items-center gap-2">
+                  {notaFiscalPdfUrl && (
+                    <a
+                      href={notaFiscalPdfUrl}
+                      download="nota_fiscal.pdf"
+                      className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] hover:border-[#444] px-3 py-1 rounded transition"
+                    >
+                      ⬇ Baixar
+                    </a>
+                  )}
+                  <button
+                    onClick={() => setNotaFiscalPdfOpen(false)}
+                    className="text-[#666666] hover:text-white transition text-2xl"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                {generatingNotaFiscal || !notaFiscalPdfUrl ? (
+                  <div className="flex items-center justify-center h-[950px]">
+                    <p className="text-[#a3a3a3]">Gerando Nota Fiscal...</p>
+                  </div>
+                ) : (
+                  <iframe
+                    src={notaFiscalPdfUrl + '#navpanes=0&zoom=75'}
+                    className="w-full h-[950px] border border-[#2a2a2a] rounded"
+                    title="Nota Fiscal"
                   />
                 )}
               </div>

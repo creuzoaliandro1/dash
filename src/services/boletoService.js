@@ -2773,6 +2773,30 @@ export const deleteAnexoBoleto = async (anexoId, caminhoStorage) => {
   }
 }
 
+// Retorna o Set de boleto_id (string) que possuem ao menos um anexo XML
+// (nota fiscal) vinculado — usado para exibir/ocultar a opção "Nota Fiscal"
+// no menu de ações da tabela de boletos sem precisar consultar um por um.
+export const getBoletosComXMLAnexado = async (boletoIds) => {
+  try {
+    const ids = (boletoIds || []).filter(Boolean).map(String)
+    if (ids.length === 0) return { data: new Set(), error: null }
+
+    const { data, error } = await supabase
+      .from('capt_boletos_anexos')
+      .select('boleto_id, nome_arquivo')
+      .in('boleto_id', ids)
+      .ilike('nome_arquivo', '%.xml')
+
+    if (error) throw error
+
+    const comXML = new Set((data || []).map((r) => String(r.boleto_id)))
+    return { data: comXML, error: null }
+  } catch (err) {
+    console.error('[BoletoService] Erro ao buscar boletos com XML anexado:', err)
+    return { data: new Set(), error: err }
+  }
+}
+
 // Gerar URL de download para um anexo
 export const getDownloadUrlAnexo = async (caminhoStorage) => {
   try {
