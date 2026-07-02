@@ -11,6 +11,8 @@ export default function AcessosPage() {
   const [adminKey, setAdminKey] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState(null) // { ok, message }
+  const [bulkSubmitting, setBulkSubmitting] = useState(false)
+  const [bulkFeedback, setBulkFeedback] = useState(null) // { ok, message }
 
   useEffect(() => {
     let active = true
@@ -74,6 +76,38 @@ export default function AcessosPage() {
       setFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleBulkCreate = async () => {
+    setBulkFeedback(null)
+    if (!adminKey) {
+      setBulkFeedback({ ok: false, message: 'Informe a chave administrativa acima.' })
+      return
+    }
+
+    setBulkSubmitting(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-bulk-create-access', {
+        body: { adminKey },
+      })
+      if (error) {
+        setBulkFeedback({ ok: false, message: error.message || 'Erro ao provisionar acessos.' })
+      } else if (data?.error) {
+        setBulkFeedback({ ok: false, message: data.error })
+      } else {
+        const { created = [], skipped = [], errors = [] } = data || {}
+        const parts = [
+          `${created.length} acesso(s) criado(s) com a senha padrão 123456`,
+          `${skipped.length} conta(s) já tinham acesso (ignoradas)`,
+        ]
+        if (errors.length) parts.push(`${errors.length} erro(s): ${errors.map((e) => `${e.email} (${e.message})`).join('; ')}`)
+        setBulkFeedback({ ok: errors.length === 0, message: parts.join(' — ') })
+      }
+    } catch (err) {
+      setBulkFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
+    } finally {
+      setBulkSubmitting(false)
     }
   }
 
@@ -175,6 +209,36 @@ export default function AcessosPage() {
             {submitting ? 'Aplicando...' : 'Definir senha'}
           </button>
         </form>
+
+        <div className="mt-6 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-6">
+          <h2 className="text-sm font-semibold text-white mb-1">Provisionamento em massa</h2>
+          <p className="text-xs text-[#a3a3a3] mb-4">
+            Cria o acesso (senha padrão <span className="text-white">123456</span>) para toda conta de CONTAS que
+            tenha e-mail e ainda não tenha login. Contas que já têm acesso não são alteradas. No primeiro login,
+            o usuário é obrigado a trocar a senha antes de usar o sistema. Usa a mesma chave administrativa acima.
+          </p>
+
+          {bulkFeedback && (
+            <div
+              className={`p-3 rounded-md text-xs border mb-4 ${
+                bulkFeedback.ok
+                  ? 'bg-emerald-900/20 border-emerald-800 text-emerald-200'
+                  : 'bg-red-900/20 border-red-800 text-red-200'
+              }`}
+            >
+              {bulkFeedback.message}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleBulkCreate}
+            disabled={bulkSubmitting}
+            className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] text-white font-medium rounded-md hover:border-white disabled:opacity-50 transition text-sm"
+          >
+            {bulkSubmitting ? 'Provisionando...' : 'Criar acessos em massa (senha padrão 123456)'}
+          </button>
+        </div>
       </div>
     </div>
   )

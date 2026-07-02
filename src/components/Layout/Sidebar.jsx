@@ -86,6 +86,31 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
           <line x1="14" y1="18" x2="16" y2="18"></line>
         </svg>
       )
+    }, {
+      // Cadastro — visível apenas para usuários Master: CRUD da tabela CONTAS
+      id: 'cadastro',
+      label: 'Cadastro',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <line x1="19" y1="8" x2="19" y2="14"></line>
+          <line x1="16" y1="11" x2="22" y2="11"></line>
+        </svg>
+      )
+    }, {
+      // Conta — visível apenas para usuários Master: ambiente da Conta BMP (Banking as a Service)
+      id: 'conta-bmp',
+      label: 'Conta',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 10l9-6 9 6"></path>
+          <path d="M4 10v9h16v-9"></path>
+          <line x1="9" y1="14" x2="9" y2="19"></line>
+          <line x1="15" y1="14" x2="15" y2="19"></line>
+          <line x1="3" y1="21" x2="21" y2="21"></line>
+        </svg>
+      )
     }] : []),
   ]
 

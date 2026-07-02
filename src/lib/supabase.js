@@ -23,6 +23,10 @@ const buildUserFromConta = (conta) => ({
   name: conta.nome_correntista || conta.cic,
   email: conta.email || null,
   tipo: conta.tipo || null,
+  // Contas provisionadas com a senha padrão (123456) via "Acessos" nascem com
+  // must_change_password = true e ficam presas na tela de troca de senha
+  // (ChangePasswordPage) até o usuário definir uma senha própria.
+  mustChangePassword: !!conta.must_change_password,
 })
 
 // Busca a CONTA vinculada a um e-mail (1 e-mail = 1 conta, sem duplicidade).
@@ -30,7 +34,7 @@ const fetchContaByEmail = async (email) => {
   if (!email) return { data: null, error: new Error('Sem e-mail na sessão') }
   const { data, error } = await supabase
     .from('CONTAS')
-    .select('id, cic, nome_correntista, email, tipo')
+    .select('id, cic, nome_correntista, email, tipo, must_change_password')
     .ilike('email', email)
     .limit(1)
     .maybeSingle()
@@ -71,6 +75,36 @@ export const resetPassword = async (email) => {
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(email)
     return { error }
+  } catch (err) {
+    return { error: err }
+  }
+}
+
+// Usado pela troca obrigatória de senha no primeiro acesso (ChangePasswordPage):
+// define a nova senha no Supabase Auth e derruba a flag must_change_password
+// da CONTA correspondente, liberando o restante do app.
+export const setNewPassword = async (contaId, newPassword) => {
+  try {
+    const { error: authError } = await supabase.auth.updateUser({ password: newPassword })
+    if (authError) return { error: authError }
+
+    const { error: contaError } = await supabase
+      .from('CONTAS')
+      .update({ must_change_password: false })
+      .eq('id', contaId)
+    if (contaError) return { error: contaError }
+
+    const cachedStr = localStorage.getItem('user')
+    if (cachedStr) {
+      try {
+        const cached = JSON.parse(cachedStr)
+        localStorage.setItem('user', JSON.stringify({ ...cached, mustChangePassword: false }))
+      } catch {
+        // cache inválido — ignora, próximo getCurrentUser recarrega do banco
+      }
+    }
+
+    return { error: null }
   } catch (err) {
     return { error: err }
   }

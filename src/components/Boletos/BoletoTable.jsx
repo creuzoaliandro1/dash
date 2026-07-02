@@ -538,16 +538,16 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">
                   {boleto.data_emissao ? formatDate(boleto.data_emissao) : '—'}
                 </div>
-                <div style={{ flex: '0 0 105px' }} className="text-white font-medium text-right">
+                <div style={{ flex: '0 0 105px' }} className="text-[#a3a3a3] font-medium text-right">
                   {boleto.num_titulo || boleto.numero_documento || '—'}
                 </div>
-                <div style={{ flex: '0 0 65px' }} className="text-white font-mono text-right">
+                <div style={{ flex: '0 0 65px' }} className="text-[#a3a3a3] font-mono text-right">
                   {boleto.valor ? formatCurrency(boleto.valor) : '0,00'}
                 </div>
-                <div style={{ flex: '0 0 50px' }} className="text-white text-center">
+                <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">
                   {boleto.data_vencimento ? formatDate(boleto.data_vencimento) : '—'}
                 </div>
-                <div style={{ flex: '1' }} className="text-white truncate text-left">
+                <div style={{ flex: '1' }} className="text-[#a3a3a3] truncate text-left">
                   {boleto.sacado_nome || '—'}
                 </div>
                 <div style={{ flex: '0 0 110px' }} className="text-[#a3a3a3] font-mono text-center">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getCurrentUser, supabase } from './lib/supabase'
 import LoginPage from './pages/LoginPage'
+import ChangePasswordPage from './pages/ChangePasswordPage'
 import DashboardPage from './pages/DashboardPage'
 import BoletosPage from './pages/BoletosPage'
 import EfactorPage from './pages/EfactorPage'
@@ -9,6 +10,8 @@ import ExtratoPage from './pages/ExtratoPage'
 import ContabilPage from './pages/ContabilPage'
 import RetornoPage from './pages/RetornoPage'
 import AcessosPage from './pages/AcessosPage'
+import CadastroPage from './pages/CadastroPage'
+import ContaBmpPage from './pages/ContaBmpPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -56,6 +59,12 @@ export default function App() {
     return <LoginPage onLoginSuccess={() => checkUser()} />
   }
 
+  // Contas provisionadas com a senha padrão (123456) ficam presas aqui até
+  // definirem uma senha própria — nenhuma outra tela é acessível antes disso.
+  if (user.mustChangePassword) {
+    return <ChangePasswordPage user={user} onPasswordChanged={() => checkUser()} />
+  }
+
   // Operações (Conta Capt / E-Factor) são exclusivas de usuários Master
   const isMaster = user?.tipo === 'M'
 
@@ -69,6 +78,8 @@ export default function App() {
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'retorno' && <RetornoPage />}
       {currentPage === 'acessos' && isMaster && <AcessosPage />}
+      {currentPage === 'cadastro' && isMaster && <CadastroPage />}
+      {currentPage === 'conta-bmp' && isMaster && <ContaBmpPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>
