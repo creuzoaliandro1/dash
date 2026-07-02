@@ -1,6 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
+// supabase.functions.invoke() só expõe uma mensagem genérica ("Edge Function
+// returned a non-2xx status code") em `error.message` — o corpo JSON real
+// (com a mensagem específica que a função devolveu) fica em `error.context`
+// (a Response bruta).
+const extractInvokeError = async (error, fallback) => {
+  if (!error) return null
+  try {
+    if (error.context && typeof error.context.json === 'function') {
+      const body = await error.context.clone().json()
+      if (body?.error) return body.error
+    }
+  } catch {
+    // corpo não era JSON — ignora e usa o fallback
+  }
+  return error.message || fallback
+}
+
 // Colunas da tabela CONTAS exibidas/editáveis aqui (exclui id, pass — legado sem uso —,
 // updated_at e must_change_password, que são geridos internamente pelo app).
 const COLUMNS = [
@@ -60,11 +77,12 @@ export default function CadastroPage() {
   const [showNewModal, setShowNewModal] = useState(false)
   const [newNome, setNewNome] = useState('')
   const [newEmail, setNewEmail] = useState('')
-  const [newAdminKey, setNewAdminKey] = useState('')
   const [creating, setCreating] = useState(false)
   const [newFeedback, setNewFeedback] = useState(null)
 
   const inputRef = useRef(null)
+  // Guarda síncrona contra clique duplo (setCreating é assíncrono).
+  const creatingRef = useRef(false)
 
   const loadContas = async () => {
     setLoading(true)
@@ -176,10 +194,8 @@ export default function CadastroPage() {
       setNewFeedback({ ok: false, message: 'Informe o e-mail — ele é usado para criar o login.' })
       return
     }
-    if (!newAdminKey) {
-      setNewFeedback({ ok: false, message: 'Informe a chave administrativa (ADMIN_SETUP_KEY).' })
-      return
-    }
+    if (creatingRef.current) return
+    creatingRef.current = true
 
     setCreating(true)
     try {
@@ -203,15 +219,17 @@ export default function CadastroPage() {
       }
 
       // 2) Cria o login no Supabase Auth com a senha padrão 123456 (mesma função
-      //    usada na tela Acessos, protegida pela ADMIN_SETUP_KEY).
+      //    usada na tela Acessos — autorizada automaticamente porque quem chama
+      //    já está logado como Master, sem precisar digitar nenhuma chave).
       const { data: authData, error: authErr } = await supabase.functions.invoke('admin-set-password', {
-        body: { adminKey: newAdminKey, email: newEmail.trim(), password: '123456' },
+        body: { email: newEmail.trim(), password: '123456' },
       })
 
       if (authErr || authData?.error) {
+        const motivo = authErr ? await extractInvokeError(authErr, 'erro desconhecido') : authData.error
         setNewFeedback({
           ok: false,
-          message: `Conta criada em CONTAS, mas o login não pôde ser criado (${authErr?.message || authData?.error}). Complete pela tela Acessos.`,
+          message: `Conta criada em CONTAS, mas o login não pôde ser criado (${motivo}). Complete pela tela Acessos.`,
         })
       } else {
         // 3) Marca a conta para forçar troca de senha no primeiro login.
@@ -222,10 +240,10 @@ export default function CadastroPage() {
       await loadContas()
       setNewNome('')
       setNewEmail('')
-      setNewAdminKey('')
     } catch (err) {
       setNewFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
     } finally {
+      creatingRef.current = false
       setCreating(false)
     }
   }
@@ -381,19 +399,6 @@ export default function CadastroPage() {
                   disabled={creating}
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">Chave administrativa</label>
-                <input
-                  type="password"
-                  value={newAdminKey}
-                  onChange={(e) => setNewAdminKey(e.target.value)}
-                  placeholder="ADMIN_SETUP_KEY configurada no Supabase"
-                  autoComplete="off"
-                  className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] outline-none focus:border-white transition text-sm"
-                  disabled={creating}
-                />
-              </div>
-
               {newFeedback && (
                 <div
                   className={`p-3 rounded-md text-xs border ${

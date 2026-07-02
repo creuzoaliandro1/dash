@@ -12,6 +12,7 @@ import RetornoPage from './pages/RetornoPage'
 import AcessosPage from './pages/AcessosPage'
 import CadastroPage from './pages/CadastroPage'
 import ContaBmpPage from './pages/ContaBmpPage'
+import BoletosBmpPage from './pages/BoletosBmpPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -80,6 +81,7 @@ export default function App() {
       {currentPage === 'acessos' && isMaster && <AcessosPage />}
       {currentPage === 'cadastro' && isMaster && <CadastroPage />}
       {currentPage === 'conta-bmp' && isMaster && <ContaBmpPage />}
+      {currentPage === 'boletos-bmp' && isMaster && <BoletosBmpPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>

@@ -111,6 +111,19 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
           <line x1="3" y1="21" x2="21" y2="21"></line>
         </svg>
       )
+    }, {
+      // Boletos BMP — visível apenas para usuários Master: ambiente de Boletos via API BMP
+      id: 'boletos-bmp',
+      label: 'Boletos BMP',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 4h16v16H4z"></path>
+          <path d="M4 9h16"></path>
+          <path d="M8 4v5"></path>
+          <line x1="7" y1="14" x2="17" y2="14"></line>
+          <line x1="7" y1="17" x2="13" y2="17"></line>
+        </svg>
+      )
     }] : []),
   ]
 

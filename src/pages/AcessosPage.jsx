@@ -1,5 +1,23 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+
+// supabase.functions.invoke() só expõe uma mensagem genérica ("Edge Function
+// returned a non-2xx status code") em `error.message` — o corpo JSON real
+// (com a mensagem específica que a função devolveu) fica em `error.context`
+// (a Response bruta). Sem isso, qualquer erro no backend aparece igual pro
+// usuário, impossível de diagnosticar.
+const extractInvokeError = async (error, fallback) => {
+  if (!error) return null
+  try {
+    if (error.context && typeof error.context.json === 'function') {
+      const body = await error.context.clone().json()
+      if (body?.error) return body.error
+    }
+  } catch {
+    // corpo não era JSON — ignora e usa o fallback
+  }
+  return error.message || fallback
+}
 
 export default function AcessosPage() {
   const [contas, setContas] = useState([])
@@ -8,11 +26,18 @@ export default function AcessosPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [adminKey, setAdminKey] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState(null) // { ok, message }
   const [bulkSubmitting, setBulkSubmitting] = useState(false)
   const [bulkFeedback, setBulkFeedback] = useState(null) // { ok, message }
+  const [resetSubmitting, setResetSubmitting] = useState(false)
+  const [resetFeedback, setResetFeedback] = useState(null) // { ok, message }
+  // Guarda síncrona contra clique duplo — setSubmitting(true) é assíncrono
+  // (só reflete no `disabled` do botão no próximo render), então um clique
+  // rápido demais consegue disparar duas chamadas antes do botão desabilitar.
+  const submittingRef = useRef(false)
+  const bulkSubmittingRef = useRef(false)
+  const resetSubmittingRef = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -52,18 +77,16 @@ export default function AcessosPage() {
       setFeedback({ ok: false, message: 'As senhas não coincidem.' })
       return
     }
-    if (!adminKey) {
-      setFeedback({ ok: false, message: 'Informe a chave administrativa.' })
-      return
-    }
+    if (submittingRef.current) return
+    submittingRef.current = true
 
     setSubmitting(true)
     try {
       const { data, error } = await supabase.functions.invoke('admin-set-password', {
-        body: { adminKey, email, password },
+        body: { email, password },
       })
       if (error) {
-        setFeedback({ ok: false, message: error.message || 'Erro ao definir a senha.' })
+        setFeedback({ ok: false, message: await extractInvokeError(error, 'Erro ao definir a senha.') })
       } else if (data?.error) {
         setFeedback({ ok: false, message: data.error })
       } else {
@@ -75,24 +98,23 @@ export default function AcessosPage() {
     } catch (err) {
       setFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
 
   const handleBulkCreate = async () => {
     setBulkFeedback(null)
-    if (!adminKey) {
-      setBulkFeedback({ ok: false, message: 'Informe a chave administrativa acima.' })
-      return
-    }
+    if (bulkSubmittingRef.current) return
+    bulkSubmittingRef.current = true
 
     setBulkSubmitting(true)
     try {
       const { data, error } = await supabase.functions.invoke('admin-bulk-create-access', {
-        body: { adminKey },
+        body: {},
       })
       if (error) {
-        setBulkFeedback({ ok: false, message: error.message || 'Erro ao provisionar acessos.' })
+        setBulkFeedback({ ok: false, message: await extractInvokeError(error, 'Erro ao provisionar acessos.') })
       } else if (data?.error) {
         setBulkFeedback({ ok: false, message: data.error })
       } else {
@@ -107,7 +129,42 @@ export default function AcessosPage() {
     } catch (err) {
       setBulkFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
     } finally {
+      bulkSubmittingRef.current = false
       setBulkSubmitting(false)
+    }
+  }
+
+  const handleResetAll = async () => {
+    setResetFeedback(null)
+    if (resetSubmittingRef.current) return
+    if (!window.confirm('Isso vai redefinir a senha de TODAS as contas (inclusive as que já têm acesso) para 123456. Confirma?')) {
+      return
+    }
+    resetSubmittingRef.current = true
+
+    setResetSubmitting(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-bulk-create-access', {
+        body: { resetExisting: true },
+      })
+      if (error) {
+        setResetFeedback({ ok: false, message: await extractInvokeError(error, 'Erro ao resetar acessos.') })
+      } else if (data?.error) {
+        setResetFeedback({ ok: false, message: data.error })
+      } else {
+        const { created = [], reset = [], errors = [] } = data || {}
+        const parts = [
+          `${created.length} acesso(s) criado(s)`,
+          `${reset.length} senha(s) resetada(s) para 123456`,
+        ]
+        if (errors.length) parts.push(`${errors.length} erro(s): ${errors.map((e) => `${e.email} (${e.message})`).join('; ')}`)
+        setResetFeedback({ ok: errors.length === 0, message: parts.join(' — ') })
+      }
+    } catch (err) {
+      setResetFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
+    } finally {
+      resetSubmittingRef.current = false
+      setResetSubmitting(false)
     }
   }
 
@@ -174,21 +231,6 @@ export default function AcessosPage() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[#a3a3a3] mb-1.5">Chave administrativa</label>
-            <input
-              type="password"
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              placeholder="ADMIN_SETUP_KEY configurada no Supabase"
-              autoComplete="off"
-              className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white placeholder-[#666666] outline-none focus:border-white transition text-sm"
-            />
-            <p className="text-[11px] text-[#666666] mt-1">
-              O mesmo valor cadastrado como secret ADMIN_SETUP_KEY (Edge Functions → Secrets). Não é salva em nenhum lugar.
-            </p>
-          </div>
-
           {feedback && (
             <div
               className={`p-3 rounded-md text-xs border ${
@@ -215,7 +257,7 @@ export default function AcessosPage() {
           <p className="text-xs text-[#a3a3a3] mb-4">
             Cria o acesso (senha padrão <span className="text-white">123456</span>) para toda conta de CONTAS que
             tenha e-mail e ainda não tenha login. Contas que já têm acesso não são alteradas. No primeiro login,
-            o usuário é obrigado a trocar a senha antes de usar o sistema. Usa a mesma chave administrativa acima.
+            o usuário é obrigado a trocar a senha antes de usar o sistema.
           </p>
 
           {bulkFeedback && (
@@ -237,6 +279,36 @@ export default function AcessosPage() {
             className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] text-white font-medium rounded-md hover:border-white disabled:opacity-50 transition text-sm"
           >
             {bulkSubmitting ? 'Provisionando...' : 'Criar acessos em massa (senha padrão 123456)'}
+          </button>
+        </div>
+
+        <div className="mt-6 bg-[#0a0a0a] border border-red-900/40 rounded-lg p-6">
+          <h2 className="text-sm font-semibold text-white mb-1">Resetar todas as senhas</h2>
+          <p className="text-xs text-[#a3a3a3] mb-4">
+            Redefine a senha de <span className="text-white">todas</span> as contas com e-mail para{' '}
+            <span className="text-white">123456</span> — inclusive as que já têm acesso. Use só quando necessário
+            (ex: senhas desconhecidas/quebradas). No próximo login, todo mundo é obrigado a trocar a senha.
+          </p>
+
+          {resetFeedback && (
+            <div
+              className={`p-3 rounded-md text-xs border mb-4 ${
+                resetFeedback.ok
+                  ? 'bg-emerald-900/20 border-emerald-800 text-emerald-200'
+                  : 'bg-red-900/20 border-red-800 text-red-200'
+              }`}
+            >
+              {resetFeedback.message}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleResetAll}
+            disabled={resetSubmitting}
+            className="w-full px-3 py-2 bg-red-900/30 border border-red-800 text-red-200 font-medium rounded-md hover:bg-red-900/50 disabled:opacity-50 transition text-sm"
+          >
+            {resetSubmitting ? 'Resetando...' : 'Resetar TODAS as senhas para 123456'}
           </button>
         </div>
       </div>

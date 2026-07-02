@@ -43,6 +43,33 @@ const formatCurrency = (value) => {
   })
 }
 
+// Status (verde/amarelo/vermelho) de Antecipação, Registro (CONTA) e Assinatura (ZapSign)
+// de um boleto. Exportadas para serem reaproveitadas pelo filtro de checkboxes da
+// BoletosPage (Antecipa / Registro / Assina), garantindo que o filtro use exatamente
+// a mesma regra usada para colorir os pontos na tabela.
+export const getAntecipaStatus = (boleto) => {
+  const label = boleto._antecipaLabel ?? (
+    boleto.status_efactor === 'Enviado' || boleto.status_efactor === 'Antecipado' ? 'Aguardando' : 'Não'
+  )
+  if (label === 'Sim') return { color: 'green', title: 'Antecipado (confirmado em OPEITE)' }
+  if (label === 'Aguardando') return { color: 'yellow', title: 'Antecipação solicitada — aguardando OPEITE' }
+  return { color: 'red', title: 'Não antecipado' }
+}
+
+export const getContaStatus = (boleto) => {
+  const label = String(boleto._contaLabel ?? boleto.situacao ?? '').toLowerCase()
+  if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado em capt_registrado' }
+  if (label === 'remessa') return { color: 'yellow', title: 'CNAB400 enviado — aguardando registro BTG' }
+  return { color: 'red', title: 'Não registrado' }
+}
+
+export const getAssinaStatus = (boleto) => {
+  const st = String(boleto.zapsign_status || '').toLowerCase()
+  if (!st) return { color: 'red', title: 'Não enviado para assinatura' }
+  if (st === 'signed' || st === 'completed' || st === 'finalizado' || st === 'assinado') return { color: 'green', title: 'Assinado' }
+  return { color: 'yellow', title: 'Aguardando assinatura' }
+}
+
 export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: propsSelectedRows, onSelectedRowsChange, contaData, showGerado = true }) {
   console.log('[BoletoTable] Renderizando com', boletos?.length || 0, 'boletos')
 
@@ -101,29 +128,6 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
         className={`inline-block w-2.5 h-2.5 rounded-full ${colors[color] || 'bg-[#444444]'}`}
       />
     )
-  }
-
-  const getAntecipaStatus = (boleto) => {
-    const label = boleto._antecipaLabel ?? (
-      boleto.status_efactor === 'Enviado' || boleto.status_efactor === 'Antecipado' ? 'Aguardando' : 'Não'
-    )
-    if (label === 'Sim') return { color: 'green', title: 'Antecipado (confirmado em OPEITE)' }
-    if (label === 'Aguardando') return { color: 'yellow', title: 'Antecipação solicitada — aguardando OPEITE' }
-    return { color: 'red', title: 'Não antecipado' }
-  }
-
-  const getContaStatus = (boleto) => {
-    const label = String(boleto._contaLabel ?? boleto.situacao ?? '').toLowerCase()
-    if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado em capt_registrado' }
-    if (label === 'remessa') return { color: 'yellow', title: 'CNAB400 enviado — aguardando registro BTG' }
-    return { color: 'red', title: 'Não registrado' }
-  }
-
-  const getAssinaStatus = (boleto) => {
-    const st = String(boleto.zapsign_status || '').toLowerCase()
-    if (!st) return { color: 'red', title: 'Não enviado para assinatura' }
-    if (st === 'signed' || st === 'completed' || st === 'finalizado' || st === 'assinado') return { color: 'green', title: 'Assinado' }
-    return { color: 'yellow', title: 'Aguardando assinatura' }
   }
 
   const toggleRow = (index) => {
@@ -489,6 +493,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
           />
           <div className="flex-1 flex gap-1 text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
             <SortableHeader column="num_lancamento" label="LANC" flex="0 0 40px" align="text-right" />
+            <SortableHeader column="nosso_numero" label="Nosso Número" flex="0 0 100px" align="text-right" />
             {showGerado && (
               <SortableHeader column="created_at" label="Gerado" flex="0 0 50px" align="text-center" />
             )}
@@ -529,6 +534,9 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
               <div className="flex-1 flex gap-1 text-[11px] items-center">
                 <div style={{ flex: '0 0 40px' }} className="text-[#a3a3a3] text-right">
                   {boleto.num_lancamento || '—'}
+                </div>
+                <div style={{ flex: '0 0 100px' }} className="text-[#a3a3a3] font-mono text-right">
+                  {boleto.nosso_numero || '—'}
                 </div>
                 {showGerado && (
                   <div style={{ flex: '0 0 50px' }} className="text-[#a3a3a3] text-center">

@@ -106,6 +106,24 @@ export const getBoletos = async (contaId) => {
   }
 }
 
+// Busca linhas COMPLETAS (todas as colunas, select('*')) de capt_boletos para um
+// conjunto de ids — usado pelo relatório em Excel (Ações → Gerar Relatório → Excel),
+// já que getBoletos() acima só traz um subconjunto de colunas para a tabela/tela.
+export const getBoletosCompletos = async (ids) => {
+  try {
+    if (!ids || ids.length === 0) return { data: [], error: null }
+    const { data, error } = await supabase
+      .from('capt_boletos')
+      .select('*')
+      .in('id', ids)
+    if (error) throw error
+    return { data: data || [], error: null }
+  } catch (err) {
+    console.error('Erro ao buscar boletos completos:', err)
+    return { data: [], error: err }
+  }
+}
+
 // Buscar proximo nosso_numero da conta e incrementar CONTAS.nnumero
 // IMPORTANTE: Retorna APENAS O NÚMERO BASE (SEM DV)
 // O DV é calculado apenas na geração do CNAB400 (pos 82)

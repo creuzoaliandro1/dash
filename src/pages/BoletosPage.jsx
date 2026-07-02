@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import * as XLSX from 'xlsx'
 import BoletoFormModal from '../components/Boletos/BoletoFormModal'
-import BoletoTable from '../components/Boletos/BoletoTable'
+import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus } from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
@@ -41,6 +42,7 @@ export default function BoletosPage() {
   const [showZapsignModal, setShowZapsignModal] = useState(false)
   const [showAssinarSub, setShowAssinarSub] = useState(false)
   const [showCnab400Sub, setShowCnab400Sub] = useState(false)
+  const [showRelatorioSub, setShowRelatorioSub] = useState(false)
   const [assinarMode, setAssinarMode] = useState(null) // 'com' | 'sem'
   const [retornandoAntecipacao, setRetornandoAntecipacao] = useState(false)
   const [contaData, setContaData] = useState(null)
@@ -59,6 +61,10 @@ export default function BoletosPage() {
   const [dataAntecipadoFim, setDataAntecipadoFim] = useState('')
   // Filtro de STATUS por checkbox (inicia somente "Pendentes" marcado)
   const [statusChecks, setStatusChecks] = useState({ pago: false, cancelado: false, pendente: true })
+  // Filtro de flags por checkbox (Antecipa / Registro / Assina — todos iniciam marcados).
+  // Regra: checkbox marcado = não filtra por essa flag (mostra os "sim" e os "não");
+  // checkbox desmarcado = mostra somente os que NÃO têm aquela flag confirmada (estado "verde").
+  const [statusFlags, setStatusFlags] = useState({ antecipa: true, registro: true, assina: true })
   const [efactorActive, setEfactorActive] = useState(false)
   const [contaCaptActive, setContaCaptActive] = useState(false)
   const [captReloadKey, setCaptReloadKey] = useState(0)
@@ -454,6 +460,21 @@ export default function BoletosPage() {
       return statusChecks.pendente
     })
 
+    // Filtro por flags via checkboxes (Antecipa / Registro / Assina)
+    // Cada flag é "confirmada" (verde) ou não (amarelo/vermelho) — mesma regra usada
+    // para colorir os pontos na tabela (getAntecipaStatus/getContaStatus/getAssinaStatus).
+    // Checkbox marcado: não filtra por essa flag (mostra confirmados e não confirmados).
+    // Checkbox desmarcado: mostra somente os NÃO confirmados.
+    filtered = filtered.filter(boleto => {
+      const antecipado = getAntecipaStatus(boleto).color === 'green'
+      const registrado = getContaStatus(boleto).color === 'green'
+      const assinado = getAssinaStatus(boleto).color === 'green'
+      if (!statusFlags.antecipa && antecipado) return false
+      if (!statusFlags.registro && registrado) return false
+      if (!statusFlags.assina && assinado) return false
+      return true
+    })
+
     // Filter by data de vencimento
     if (dataVencimentoInicio) {
       filtered = filtered.filter(boleto => boleto.data_vencimento && boleto.data_vencimento >= dataVencimentoInicio)
@@ -778,11 +799,12 @@ export default function BoletosPage() {
     }
   }
 
-  const handleGerarRelatorio = () => {
+  const handleGerarRelatorioPDF = () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
       return
     }
+    setShowRelatorioSub(false)
     setOpenActionsMenu(false)
 
     const filteredBoletos = getFilteredBoletos()
@@ -808,13 +830,11 @@ export default function BoletosPage() {
 
     const rows = selecionados.map(b => `
       <tr>
-        <td>${b.num_lancamento || '—'}</td>
-        <td>${formatDate(b.data_emissao)}</td>
-        <td>${b.num_titulo || b.numero_documento || '—'}</td>
         <td style="text-align:right">${formatValor(b.valor)}</td>
         <td>${formatDate(b.data_vencimento)}</td>
         <td>${b.sacado_nome || '—'}</td>
         <td>${b.sacado_cic || '—'}</td>
+        <td>${b.num_titulo || b.numero_documento || '—'}</td>
       </tr>
     `).join('')
 
@@ -858,13 +878,11 @@ export default function BoletosPage() {
   <table>
     <thead>
       <tr>
-        <th>LANC</th>
-        <th>EMISSÃO</th>
-        <th>DOCUMENTO</th>
         <th class="right">VALOR</th>
         <th>VENCIMENTO</th>
-        <th>NOME</th>
+        <th>SACADO</th>
         <th>CIC</th>
+        <th>NÚMERO DO TÍTULO</th>
       </tr>
     </thead>
     <tbody>
@@ -884,6 +902,56 @@ export default function BoletosPage() {
     win.onload = () => {
       win.print()
     }
+  }
+
+  // Gera uma planilha .xlsx com os boletos selecionados — inclui TODOS os
+  // registros selecionados (mesmo os que não têm linha em capt_boletos, como
+  // os vindos só de capt_registrado ou do Efactor/OPEITE), apresentando apenas
+  // os campos Valor, Vencimento, Sacado, CIC e Número do Título.
+  const handleGerarRelatorioExcel = () => {
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    setShowRelatorioSub(false)
+    setOpenActionsMenu(false)
+
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
+
+    if (selecionados.length === 0) {
+      alert('Nenhum registro selecionado.')
+      return
+    }
+
+    const formatDate = (dateStr) => {
+      if (!dateStr) return ''
+      const d = new Date(dateStr + 'T00:00:00')
+      if (isNaN(d.getTime())) return dateStr
+      return d.toLocaleDateString('pt-BR')
+    }
+
+    const linhas = selecionados.map(b => ({
+      'Valor': parseFloat(b.valor) || 0,
+      'Vencimento': formatDate(b.data_vencimento),
+      'Sacado': b.sacado_nome || '',
+      'CIC': b.sacado_cic || '',
+      'Número do Título': b.num_titulo || b.numero_documento || '',
+    }))
+
+    const ws = XLSX.utils.json_to_sheet(linhas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Boletos')
+
+    const now = new Date()
+    const dd = String(now.getDate()).padStart(2, '0')
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const yyyy = now.getFullYear()
+    const hh = String(now.getHours()).padStart(2, '0')
+    const min = String(now.getMinutes()).padStart(2, '0')
+    XLSX.writeFile(wb, `relatorio_boletos_${dd}${mm}${yyyy}_${hh}${min}.xlsx`)
   }
 
   const handleDeleteSingleBoleto = async (boleto) => {
@@ -1627,11 +1695,28 @@ export default function BoletosPage() {
                     📋 Cessão de Direitos
                   </button>
                   <button
-                    onClick={handleGerarRelatorio}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                    onClick={() => setShowRelatorioSub(!showRelatorioSub)}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] flex items-center justify-between"
                   >
-                    📊 Gerar Relatório
+                    <span>📊 Gerar Relatório</span>
+                    <span className="text-[#666666]">{showRelatorioSub ? '▾' : '▸'}</span>
                   </button>
+                  {showRelatorioSub && (
+                    <div className="bg-[#141414] border-b border-[#2a2a2a]">
+                      <button
+                        onClick={handleGerarRelatorioPDF}
+                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                      >
+                        📄 PDF
+                      </button>
+                      <button
+                        onClick={handleGerarRelatorioExcel}
+                        className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
+                      >
+                        📊 Excel
+                      </button>
+                    </div>
+                  )}
                   <button
                     onClick={handleDeleteSelectedBoletos}
                     className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1748,6 +1833,37 @@ export default function BoletosPage() {
                     </label>
                   </div>
 
+                  {/* Flags: Antecipa / Registro / Assina */}
+                  <div className="pt-3 mt-3 border-t border-[#2a2a2a] flex gap-4">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusFlags.antecipa}
+                        onChange={(e) => setStatusFlags({ ...statusFlags, antecipa: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Antecipa</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusFlags.registro}
+                        onChange={(e) => setStatusFlags({ ...statusFlags, registro: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Registro</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusFlags.assina}
+                        onChange={(e) => setStatusFlags({ ...statusFlags, assina: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Assina</span>
+                    </label>
+                  </div>
+
                   {/* Limpar filtros */}
                   <button
                     onClick={() => {
@@ -1755,6 +1871,7 @@ export default function BoletosPage() {
                       setDataRegistroInicio(''); setDataRegistroFim('')
                       setDataAntecipadoInicio(''); setDataAntecipadoFim('')
                       setStatusChecks({ pago: false, cancelado: false, pendente: true })
+                      setStatusFlags({ antecipa: true, registro: true, assina: true })
                     }}
                     className="mt-3 w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
                   >
