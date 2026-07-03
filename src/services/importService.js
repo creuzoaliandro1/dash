@@ -406,10 +406,23 @@ function parseNFSe(xmlDoc) {
                       getElementText(xmlDoc, 'dhProc') ||
                       getElementText(xmlDoc, 'dhEmi') || new Date().toISOString()
 
-    let valor = getElementText(xmlDoc, 'ValorServicos') ||
-                getElementText(xmlDoc, 'vLiq') ||
-                getElementText(xmlDoc, 'vBC') ||
-                getElementText(xmlDoc, 'vServ') || '0'
+    // ISS retido pelo tomador: quando <IssRetido> = 1, o valor bruto dos
+    // serviços (ValorServicos) não é o que efetivamente será cobrado/recebido
+    // — o correto é o valor líquido já descontado o ISS retido, informado em
+    // <ValorLiquidoNfse> (padrão Ginfes/ABRASF, ex.: NFSe de Fortaleza-CE).
+    const issRetido = (getElementText(xmlDoc, 'IssRetido') || '').trim()
+    const valorLiquidoNfse = getElementText(xmlDoc, 'ValorLiquidoNfse') || ''
+
+    let valor
+    if (issRetido === '1' && valorLiquidoNfse) {
+      valor = valorLiquidoNfse
+      console.log('[NFSe Parser] IssRetido = 1 -> usando ValorLiquidoNfse:', valorLiquidoNfse)
+    } else {
+      valor = getElementText(xmlDoc, 'ValorServicos') ||
+              getElementText(xmlDoc, 'vLiq') ||
+              getElementText(xmlDoc, 'vBC') ||
+              getElementText(xmlDoc, 'vServ') || '0'
+    }
 
     // Extrair descrição - prioridade: xDescServ (NFSe) → Discriminacao → xInfComp → Complemento → infCpl
     let descricao = getElementText(xmlDoc, 'xDescServ') ||
