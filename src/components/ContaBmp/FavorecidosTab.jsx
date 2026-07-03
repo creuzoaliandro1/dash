@@ -56,8 +56,8 @@ function NovoFavorecidoForm() {
 
   return (
     <Card title="Novo favorecido" description="Cadastra um favorecido para futuras transferências.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Nome">
             <input className={inputCls} value={form.nome} onChange={set('nome')} disabled={submitting} />
           </Field>
@@ -151,11 +151,11 @@ function AtualizarFavorecidoForm() {
 
   return (
     <Card title="Atualizar favorecido" description="Campos em branco não são alterados.">
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-2">
         <Field label="Código do favorecido">
           <input className={inputCls} value={form.codigoFavorecido} onChange={set('codigoFavorecido')} disabled={submitting} />
         </Field>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Nome">
             <input className={inputCls} value={form.nome} onChange={set('nome')} disabled={submitting} />
           </Field>
@@ -193,7 +193,7 @@ function AtualizarFavorecidoForm() {
 
 export default function FavorecidosTab() {
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-3 w-full">
       <NovoFavorecidoForm />
       <AtualizarFavorecidoForm />
     </div>

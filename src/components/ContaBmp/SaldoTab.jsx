@@ -40,10 +40,10 @@ export default function SaldoTab() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <Card title="Consultar saldo" description="Informe agência + conta (com dígito), ou diretamente a contaPgto.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Field label="Agência">
               <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={loading} />
             </Field>
@@ -66,20 +66,20 @@ export default function SaldoTab() {
         </form>
 
         {saldo && (
-          <div className="mt-5 grid grid-cols-2 md:grid-cols-3 gap-3">
-            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+          <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
               <p className="text-[11px] text-[#a3a3a3] mb-1">Saldo</p>
               <p className="text-white text-sm font-medium">{formatMoeda(saldo.vlrSaldo)}</p>
             </div>
-            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
               <p className="text-[11px] text-[#a3a3a3] mb-1">Bloqueado</p>
               <p className="text-white text-sm font-medium">{formatMoeda(saldo.vlrBloqueado)}</p>
             </div>
-            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
               <p className="text-[11px] text-[#a3a3a3] mb-1">Agendado</p>
               <p className="text-white text-sm font-medium">{formatMoeda(saldo.vlrAgendado)}</p>
             </div>
-            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3 col-span-2 md:col-span-3">
+            <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2 col-span-2 md:col-span-3">
               <p className="text-[11px] text-[#a3a3a3] mb-1">Última atualização</p>
               <p className="text-white text-sm font-medium">{formatDataHora(saldo.dtUltAtualizacao)}</p>
             </div>

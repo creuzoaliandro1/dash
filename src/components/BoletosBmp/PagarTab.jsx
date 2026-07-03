@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { Field, Feedback, Card, PrimaryButton, inputCls, extractError, formatMoeda } from './shared'
+import { Field, Feedback, Card, PrimaryButton, DateInput, inputCls, extractError, formatMoeda } from './shared'
 
 const novaIdempotencyKey = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
@@ -89,10 +89,10 @@ export default function PagarTab() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="w-full">
       <Card title="Pagar boleto" description="Informe a linha digitável ou o código de barras, e os dados da conta pagadora.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <Field label="Linha digitável">
               <input className={inputCls} value={linhaDigitavel} onChange={(e) => setLinhaDigitavel(e.target.value)} disabled={loading} />
             </Field>
@@ -101,7 +101,7 @@ export default function PagarTab() {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Field label="Agência (pagador)">
               <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={loading} />
             </Field>
@@ -116,7 +116,7 @@ export default function PagarTab() {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Field label="Tipo de processamento">
               <input className={inputCls} value={tipoProcessamento} onChange={(e) => setTipoProcessamento(e.target.value)} disabled={loading} />
             </Field>
@@ -124,7 +124,7 @@ export default function PagarTab() {
               <input className={inputCls} value={valorTitulo} onChange={(e) => setValorTitulo(e.target.value)} placeholder="0,00" disabled={loading} />
             </Field>
             <Field label="Data de vencimento">
-              <input type="date" className={inputCls} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} disabled={loading} />
+              <DateInput value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} disabled={loading} />
             </Field>
             <Field label="Valor do pagamento">
               <input className={inputCls} value={valorPagamento} onChange={(e) => setValorPagamento(e.target.value)} placeholder="0,00" disabled={loading} />
@@ -145,27 +145,27 @@ export default function PagarTab() {
         </form>
 
         {resultado && (
-          <div className="mt-5 space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+          <div className="mt-2 space-y-2">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
                 <p className="text-[11px] text-[#a3a3a3] mb-1">Valor pago</p>
                 <p className="text-white text-sm font-medium">{formatMoeda(resultado.valorTransacao)}</p>
               </div>
-              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
                 <p className="text-[11px] text-[#a3a3a3] mb-1">Custo da transação</p>
                 <p className="text-white text-sm font-medium">{formatMoeda(resultado.custoTransacao)}</p>
               </div>
-              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
                 <p className="text-[11px] text-[#a3a3a3] mb-1">Código do movimento</p>
                 <p className="text-white text-sm font-medium break-all">{resultado.codigoMovimento ?? '—'}</p>
               </div>
-              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3 col-span-2 md:col-span-3">
+              <div className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2 col-span-2 md:col-span-3">
                 <p className="text-[11px] text-[#a3a3a3] mb-1">Código de transação</p>
                 <p className="text-white text-sm font-medium break-all">{resultado.codigoTransacao ?? '—'}</p>
               </div>
             </div>
 
-            <details className="bg-[#111111] border border-[#2a2a2a] rounded-md p-3">
+            <details className="bg-[#111111] border border-[#2a2a2a] rounded-md p-2">
               <summary className="text-xs text-[#a3a3a3] cursor-pointer select-none">Resposta completa (JSON)</summary>
               <pre className="mt-2 text-[11px] text-[#d4d4d4] whitespace-pre-wrap break-all">
                 {JSON.stringify(resultado.raw ?? resultado, null, 2)}

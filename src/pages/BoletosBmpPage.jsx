@@ -1,28 +1,20 @@
 import { useState } from 'react'
 import RegistrarTab from '../components/BoletosBmp/RegistrarTab'
 import PagarTab from '../components/BoletosBmp/PagarTab'
-import ConsultarRegistroTab from '../components/BoletosBmp/ConsultarRegistroTab'
 import ConsultarRegistradosTab from '../components/BoletosBmp/ConsultarRegistradosTab'
-import CancelarTab from '../components/BoletosBmp/CancelarTab'
-import ConsultarCancelamentoTab from '../components/BoletosBmp/ConsultarCancelamentoTab'
-import AtualizarTab from '../components/BoletosBmp/AtualizarTab'
-import AlteracoesTab from '../components/BoletosBmp/AlteracoesTab'
 import OutrosBancosTab from '../components/BoletosBmp/OutrosBancosTab'
 import CedenteTab from '../components/BoletosBmp/CedenteTab'
-import ImprimirTab from '../components/BoletosBmp/ImprimirTab'
+import ProtestoTab from '../components/BoletosBmp/ProtestoTab'
+import CnabTab from '../components/BoletosBmp/CnabTab'
 
 const TABS = [
   ['registrar', 'Registrar'],
   ['pagar', 'Pagar'],
-  ['consultar-registro', 'Consultar Registro'],
   ['consultar-registrados', 'Registrados'],
-  ['cancelar', 'Cancelar'],
-  ['consultar-cancelamento', 'Consultar Cancelamento'],
-  ['atualizar', 'Atualizar'],
-  ['alteracoes', 'Alterações'],
   ['outros-bancos', 'Outros Bancos'],
   ['cedente', 'Cedente'],
-  ['imprimir', 'Imprimir'],
+  ['protesto', 'Protesto'],
+  ['cnab', 'CNAB'],
 ]
 
 export default function BoletosBmpPage() {
@@ -33,8 +25,9 @@ export default function BoletosBmpPage() {
       <div className="mb-5">
         <h1 className="text-lg font-semibold text-white mb-1">Boletos BMP</h1>
         <p className="text-sm text-[#a3a3a3]">
-          Ambiente de Boletos BMP (Banking as a Service) — registro, pagamento, consultas, cancelamento,
-          atualização, alterações, cedentes e impressão.
+          Ambiente de Boletos BMP (Banking as a Service) — registro, pagamento, consultas, cedentes e outros bancos.
+          Cancelamento, consulta de registro/cancelamento, atualização, alterações e impressão ficam disponíveis
+          pelo menu de ações (⋯) de cada boleto na aba Registrados.
         </p>
       </div>
 
@@ -55,15 +48,11 @@ export default function BoletosBmpPage() {
       <div>
         {tab === 'registrar' && <RegistrarTab />}
         {tab === 'pagar' && <PagarTab />}
-        {tab === 'consultar-registro' && <ConsultarRegistroTab />}
         {tab === 'consultar-registrados' && <ConsultarRegistradosTab />}
-        {tab === 'cancelar' && <CancelarTab />}
-        {tab === 'consultar-cancelamento' && <ConsultarCancelamentoTab />}
-        {tab === 'atualizar' && <AtualizarTab />}
-        {tab === 'alteracoes' && <AlteracoesTab />}
         {tab === 'outros-bancos' && <OutrosBancosTab />}
         {tab === 'cedente' && <CedenteTab />}
-        {tab === 'imprimir' && <ImprimirTab />}
+        {tab === 'protesto' && <ProtestoTab />}
+        {tab === 'cnab' && <CnabTab />}
       </div>
     </div>
   )

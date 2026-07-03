@@ -61,8 +61,8 @@ function SolicitarEncerramentoForm() {
 
   return (
     <Card title="Solicitar encerramento" description="Solicita o encerramento de uma conta, informando o motivo.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Agência">
             <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={submitting} />
           </Field>
@@ -143,8 +143,8 @@ function ConsultarEncerramentoForm() {
 
   return (
     <Card title="Consultar encerramento" description="Verifica a situação de uma solicitação de encerramento já enviada.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex gap-3 items-end">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="flex gap-2 items-end">
           <div className="flex-1">
             <Field label="Código da solicitação">
               <input className={inputCls} value={codigoSolicitacao} onChange={(e) => setCodigoSolicitacao(e.target.value)} disabled={loading} />
@@ -208,8 +208,8 @@ function CancelarEncerramentoForm() {
 
   return (
     <Card title="Cancelar encerramento" description="Cancela uma solicitação de encerramento em andamento para a conta informada.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Agência">
             <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={submitting} />
           </Field>
@@ -233,7 +233,7 @@ function CancelarEncerramentoForm() {
 
 export default function EncerramentoTab() {
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-3 w-full">
       <SolicitarEncerramentoForm />
       <ConsultarEncerramentoForm />
       <CancelarEncerramentoForm />

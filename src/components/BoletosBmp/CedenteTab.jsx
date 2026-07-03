@@ -65,8 +65,8 @@ function ConsultarCedenteCard() {
 
   return (
     <Card title="Consultar cedente" description="Consulta os dados do cedente vinculado a uma conta e as carteiras associadas.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <Field label="Agência">
             <input className={inputCls} value={form.agencia} onChange={set('agencia')} disabled={loading} />
           </Field>
@@ -102,8 +102,8 @@ function ConsultarCedenteCard() {
       </form>
 
       {resultado && (
-        <div className="mt-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-xs">
+        <div className="mt-2 space-y-2">
+          <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="p-3 bg-[#111111] border border-[#2a2a2a] rounded-md">
               <div className="text-[#a3a3a3] mb-1">Código do cedente</div>
               <div className="text-white">{resultado?.codigo ?? '—'}</div>
@@ -186,8 +186,8 @@ function IncluirCedenteCard() {
 
   return (
     <Card title="Incluir cedente" description="Cadastra um novo cedente vinculado a uma conta do BMP.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
           <Field label="Conta">
             <input className={inputCls} value={conta} onChange={(e) => setConta(e.target.value)} disabled={loading} />
           </Field>
@@ -279,8 +279,8 @@ function VincularCarteiraCard() {
 
   return (
     <Card title="Vincular carteira" description="Vincula uma carteira de cobrança a um cedente já cadastrado.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
           <Field label="Número do cedente">
             <input className={inputCls} value={form.numeroCedente} onChange={set('numeroCedente')} disabled={loading} />
           </Field>
@@ -289,7 +289,7 @@ function VincularCarteiraCard() {
           </Field>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Código da carteira">
             <input className={inputCls} value={form.codigoCarteira} onChange={set('codigoCarteira')} disabled={loading} />
           </Field>
@@ -327,7 +327,7 @@ function VincularCarteiraCard() {
       </form>
 
       {resultado && (
-        <div className="mt-5 p-3 rounded-md text-xs border bg-[#111111] border-[#2a2a2a] text-[#d4d4d4]">
+        <div className="mt-2 p-3 rounded-md text-xs border bg-[#111111] border-[#2a2a2a] text-[#d4d4d4]">
           Código da empresa CNAB: <span className="text-white">{resultado?.codigoEmpresaCNAB ?? '—'}</span>
         </div>
       )}
@@ -337,7 +337,7 @@ function VincularCarteiraCard() {
 
 export default function CedenteTab() {
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-2 w-full">
       <ConsultarCedenteCard />
       <IncluirCedenteCard />
       <VincularCarteiraCard />

@@ -4,6 +4,9 @@ Prezados,
 
 Segue nosso credenciamento:
 
+## Client ID
+`dbs.api.ext.capt`
+
 ## Chave Pública
 [FALTA — ver nota abaixo]
 

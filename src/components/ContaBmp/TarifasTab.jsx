@@ -43,10 +43,10 @@ export default function TarifasTab() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="w-full">
       <Card title="Consultar tarifas" description="Informe agência + conta (com dígito), ou diretamente a contaPgto.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Field label="Agência">
               <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={loading} />
             </Field>
@@ -69,7 +69,7 @@ export default function TarifasTab() {
         </form>
 
         {tarifas && tarifas.length > 0 && (
-          <div className="mt-5 overflow-x-auto border border-[#2a2a2a] rounded-md">
+          <div className="mt-2 overflow-x-auto border border-[#2a2a2a] rounded-md">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">

@@ -56,10 +56,10 @@ export default function ExtratoTab() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <Card title="Consultar extrato" description="Informe o período (dia inicial/final, mês e ano) e a conta.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <Field label="Dia inicial">
               <input type="number" className={inputCls} value={diaInicial} onChange={(e) => setDiaInicial(e.target.value)} disabled={loading} />
             </Field>
@@ -94,7 +94,7 @@ export default function ExtratoTab() {
         </form>
 
         {movimentos && movimentos.length > 0 && (
-          <div className="mt-5 overflow-x-auto border border-[#2a2a2a] rounded-md">
+          <div className="mt-2 overflow-x-auto border border-[#2a2a2a] rounded-md">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">

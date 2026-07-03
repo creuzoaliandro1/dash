@@ -145,10 +145,10 @@ function CriarContaForm() {
 
   return (
     <Card title="Criar conta" description="Cadastra uma nova conta digital via API Conta do BMP.">
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-3">
         <div>
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Dados da conta</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             <Field label="Número do banco">
               <input className={inputCls} value={form.numeroBanco} onChange={set('numeroBanco')} disabled={submitting} />
             </Field>
@@ -183,7 +183,7 @@ function CriarContaForm() {
 
         <div>
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Correntista</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             <Field label="Documento federal (CPF/CNPJ)">
               <input className={inputCls} value={form.documentoFederal} onChange={set('documentoFederal')} disabled={submitting} />
             </Field>
@@ -204,7 +204,7 @@ function CriarContaForm() {
 
         <div>
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Contato</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             <Field label="E-mail">
               <input type="email" className={inputCls} value={form.email} onChange={set('email')} disabled={submitting} />
             </Field>
@@ -219,7 +219,7 @@ function CriarContaForm() {
 
         <div>
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Endereço</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             <Field label="CEP">
               <input className={inputCls} value={form.cep} onChange={set('cep')} disabled={submitting} />
             </Field>
@@ -247,7 +247,7 @@ function CriarContaForm() {
         {form.tipoPessoa === '1' && (
           <div>
             <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Dados PF</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               <Field label="Data de nascimento">
                 <input type="date" className={inputCls} value={form.dtNasc} onChange={set('dtNasc')} disabled={submitting} />
               </Field>
@@ -276,7 +276,7 @@ function CriarContaForm() {
         {form.tipoPessoa === '2' && (
           <div>
             <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Dados PJ</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               <Field label="Nome fantasia">
                 <input className={inputCls} value={form.nomeFantasia} onChange={set('nomeFantasia')} disabled={submitting} />
               </Field>
@@ -353,8 +353,8 @@ function ConsultarContaForm() {
 
   return (
     <Card title="Consultar conta por documento" description="Busca as contas vinculadas a um CPF/CNPJ.">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex gap-3 items-end">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="flex gap-2 items-end">
           <div className="flex-1">
             <Field label="Documento federal (CPF/CNPJ)">
               <input
@@ -411,7 +411,7 @@ function ConsultarContaForm() {
 
 export default function CadastroTab() {
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-3 w-full">
       <CriarContaForm />
       <ConsultarContaForm />
     </div>

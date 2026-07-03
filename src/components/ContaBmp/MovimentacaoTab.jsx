@@ -47,10 +47,10 @@ export default function MovimentacaoTab() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <Card title="Consultar movimentação" description="Informe o período e, opcionalmente, os tipos de operação (um por linha).">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
             <Field label="Data inicial">
               <input type="date" className={inputCls} value={dtInicial} onChange={(e) => setDtInicial(e.target.value)} disabled={loading} />
             </Field>
@@ -77,7 +77,7 @@ export default function MovimentacaoTab() {
         </form>
 
         {movimentos && movimentos.length > 0 && (
-          <div className="mt-5 overflow-x-auto border border-[#2a2a2a] rounded-md">
+          <div className="mt-2 overflow-x-auto border border-[#2a2a2a] rounded-md">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">

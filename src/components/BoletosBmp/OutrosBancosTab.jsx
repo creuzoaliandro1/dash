@@ -41,10 +41,10 @@ export default function OutrosBancosTab() {
   const dadosTitulo = resultado?.dadosTitulo ?? null
 
   return (
-    <div className="max-w-3xl">
+    <div className="w-full">
       <Card title="Boletos de outros bancos" description="Consulta um boleto emitido por outro banco (não BMP) a partir da linha digitável ou do código de barras.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <Field label="Linha digitável">
               <input className={inputCls} value={linhaDigitavel} onChange={(e) => setLinhaDigitavel(e.target.value)} disabled={loading} placeholder="00000.00000 00000.000000 00000.000000 0 00000000000000" />
             </Field>
@@ -61,8 +61,8 @@ export default function OutrosBancosTab() {
         </form>
 
         {resultado && (
-          <div className="mt-5 space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+          <div className="mt-2 space-y-2">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
               <div className="p-3 bg-[#111111] border border-[#2a2a2a] rounded-md">
                 <div className="text-[#a3a3a3] mb-1">Valor total do título</div>
                 <div className="text-white">{formatMoeda(resultado?.vlrTitTotal)}</div>

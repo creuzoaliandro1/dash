@@ -38,10 +38,10 @@ export default function ComprovantesTab() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <Card title="Consultar comprovante" description="Informe o código da transação e/ou do movimento.">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <Field label="Código da transação">
               <input className={inputCls} value={codigoTransacao} onChange={(e) => setCodigoTransacao(e.target.value)} disabled={loading} />
             </Field>
@@ -58,7 +58,7 @@ export default function ComprovantesTab() {
         </form>
 
         {comprovante && (
-          <pre className="mt-5 p-3 bg-[#111111] border border-[#2a2a2a] rounded-md text-[#d4d4d4] text-xs overflow-auto max-h-[420px]">
+          <pre className="mt-2 p-3 bg-[#111111] border border-[#2a2a2a] rounded-md text-[#d4d4d4] text-xs overflow-auto max-h-[420px]">
             {JSON.stringify(comprovante, null, 2)}
           </pre>
         )}
