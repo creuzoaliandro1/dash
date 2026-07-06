@@ -40,7 +40,10 @@ function TestarConexao() {
     setTesting(true)
     setResultado(null)
     try {
-      const { data, error } = await supabase.functions.invoke('bmp-auth', { body: {} })
+      // Usa um scope mínimo (api.ext) só para validar a conexão/autenticação — não usar mais
+      // BMP_SCOPES (que ainda tem a lista completa de ~26 scopes) para isso, pois passa dos
+      // 300 caracteres aceitos pelo BMP e sempre retorna invalid_scope.
+      const { data, error } = await supabase.functions.invoke('bmp-auth', { body: { scope: 'api.ext' } })
       const erroBody = await extractInvokeErrorBody(error, data)
       if (erroBody) {
         setResultado({

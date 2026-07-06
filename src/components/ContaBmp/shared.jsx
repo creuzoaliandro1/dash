@@ -71,6 +71,14 @@ export function SecondaryButton({ children, ...props }) {
 // Extrai uma mensagem de erro amigável de uma resposta supabase.functions.invoke,
 // cobrindo tanto o erro de transporte (error) quanto o erro de negócio
 // (data?.sucesso === false / data?.mensagem), igual ao padrão de AcessosPage.jsx.
+//
+// Nota (03/07/2026): antes disso, error.message vinha sempre com o texto
+// genérico "Edge Function returned a non-2xx status code" do supabase-js,
+// escondendo a causa real (o que o BMP respondeu). Isso foi corrigido em
+// src/lib/supabase.js, que intercepta supabase.functions.invoke e já
+// substitui error.message pelo body real (mensagem/error) antes de chegar
+// aqui — por isso esta função continua síncrona, sem precisar mudar as
+// dezenas de call sites espalhados pelo app.
 export function extractError(data, error, fallback) {
   if (error) return error.message || fallback
   if (data?.sucesso === false) return data.mensagem || fallback

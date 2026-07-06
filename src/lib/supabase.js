@@ -6,6 +6,63 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // ============================================================
+// Fix (03/07/2026): quando uma Edge Function responde com status != 2xx,
+// supabase-js só expõe a mensagem genérica "Edge Function returned a
+// non-2xx status code" em error.message — o corpo JSON real (com
+// data.mensagem/data.error, incluindo o que o próprio BMP respondeu) fica
+// em error.context (um Response), que nenhuma das dezenas de telas BMP
+// (ContaBmp/*, BoletosBmp/*) lia. Isso fazia toda função BMP falhar mostrar
+// só esse texto genérico, sem dar pra diagnosticar o erro real do BMP nem
+// preencher a planilha de testes.
+//
+// Em vez de tornar toda função extractError(...) espalhada pelo app async
+// (o que exigiria revisar ~70 call sites, vários deles dentro de
+// Array.filter — que não suporta callback assíncrono), a correção é feita
+// uma única vez aqui: intercepta supabase.functions.invoke e, se vier um
+// erro com corpo JSON, já substitui error.message pela mensagem real antes
+// de devolver — todo o resto do app continua funcionando sem mudanças.
+// supabase.functions é um GETTER (definido no protótipo do SupabaseClient) que
+// devolve uma instância NOVA de FunctionsClient a cada acesso — por isso não dá
+// pra remendar `supabase.functions.invoke` diretamente (o objeto remendado é
+// descartado na hora). A correção precisa sobrescrever o próprio getter numa
+// propriedade own da instância `supabase`, remendando o `.invoke` de cada
+// client novo que ele devolver.
+const functionsProtoDescriptor = (() => {
+  let proto = Object.getPrototypeOf(supabase)
+  while (proto) {
+    const d = Object.getOwnPropertyDescriptor(proto, 'functions')
+    if (d) return d
+    proto = Object.getPrototypeOf(proto)
+  }
+  return null
+})()
+
+if (functionsProtoDescriptor?.get) {
+  Object.defineProperty(supabase, 'functions', {
+    configurable: true,
+    get() {
+      const client = functionsProtoDescriptor.get.call(this)
+      const originalInvoke = client.invoke.bind(client)
+      client.invoke = async (...args) => {
+        const result = await originalInvoke(...args)
+        if (result?.error?.context && typeof result.error.context.json === 'function') {
+          try {
+            const body = await result.error.context.clone().json()
+            result.error.body = body
+            const mensagem = body?.mensagem || body?.error
+            if (mensagem) result.error.message = mensagem
+          } catch {
+            // corpo do erro não era JSON — mantém a mensagem genérica do supabase-js
+          }
+        }
+        return result
+      }
+      return client
+    },
+  })
+}
+
+// ============================================================
 // Auth — Supabase Auth vinculado à tabela CONTAS pelo e-mail.
 // Cada linha de CONTAS tem um e-mail único (sem duplicidade); o usuário
 // autenticado no Supabase Auth é resolvido para "sua" conta por esse e-mail.
