@@ -1,0 +1,5 @@
+{
+  "name": "bmp-outbound-proxy",
+  "private": true,
+  "type": "commonjs"
+}
