@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroTab from '../components/ContaBmp/CadastroTab'
+import OnboardingTab from '../components/ContaBmp/OnboardingTab'
 import SaldoTab from '../components/ContaBmp/SaldoTab'
 import ExtratoTab from '../components/ContaBmp/ExtratoTab'
 import ComprovantesTab from '../components/ContaBmp/ComprovantesTab'
@@ -111,6 +112,7 @@ function TestarConexao() {
 
 const TABS = [
   ['cadastro', 'Cadastro'],
+  ['onboarding', 'Onboarding'],
   ['saldo', 'Saldo'],
   ['extrato', 'Extrato'],
   ['comprovantes', 'Comprovantes'],
@@ -153,6 +155,7 @@ export default function ContaBmpPage() {
 
       <div>
         {tab === 'cadastro' && <CadastroTab />}
+        {tab === 'onboarding' && <OnboardingTab />}
         {tab === 'saldo' && <SaldoTab />}
         {tab === 'extrato' && <ExtratoTab />}
         {tab === 'comprovantes' && <ComprovantesTab />}

@@ -15,19 +15,57 @@ const MODELO_CONTA_OPTIONS = [
   { value: '3', label: 'Vinculada (3)' },
 ]
 
+// Valores conforme enum BMPSPB.Infra.Enums.TipoGeracaoConta da doc do BMP.
+// Observação da doc: número da conta é obrigatório em Manual (0) e NÃO deve
+// ser informado em Sequencial (1) — o BMP gera o número automaticamente.
+// 06/07/2026: BMP respondeu "Tipo de geração de conta não autorizado" quando
+// o campo não era enviado (caía no padrão Manual/0) — parceiro Capt parece só
+// estar autorizado para geração Sequencial, por isso o default abaixo é '1'.
+const TIPO_GERACAO_CONTA_OPTIONS = [
+  { value: '1', label: 'Sequencial (1) — BMP gera o número' },
+  { value: '0', label: 'Manual (0) — informo o número' },
+]
+
+// Valores conforme enum BMPSPB.Infra.Enums.EstadoCivil da doc do BMP.
+const ESTADO_CIVIL_OPTIONS = [
+  { value: '1', label: 'Solteiro (1)' },
+  { value: '2', label: 'Casado (2)' },
+  { value: '3', label: 'Desquitado (3)' },
+  { value: '4', label: 'Divorciado (4)' },
+  { value: '5', label: 'Separado (5)' },
+  { value: '6', label: 'Viúvo (6)' },
+  { value: '7', label: 'Outros (7)' },
+  { value: '8', label: 'Não Informado (8)' },
+  { value: '9', label: 'Vínculo Conjugal (9)' },
+]
+
+// Valores conforme enum BMPSPB.Infra.Enums.TipoDocumentoEmpresa da doc do BMP.
+const TIPO_EMPRESA_OPTIONS = [
+  { value: '1', label: 'MEI (1)' },
+  { value: '2', label: 'Empresário Individual (2)' },
+  { value: '3', label: 'Sociedade Limitada Unipessoal (3)' },
+  { value: '4', label: 'Sociedade Empresária Limitada (4)' },
+  { value: '5', label: 'Sociedade Simples (5)' },
+  { value: '6', label: 'Sociedade Anônima (6)' },
+  { value: '7', label: 'Sociedade Cooperativa (7)' },
+  { value: '8', label: 'Sociedade de Associação Privada (8)' },
+  { value: '9', label: 'Condomínio Edifício (9)' },
+]
+
 const initialForm = {
   numeroBanco: '',
   numeroAgencia: '',
   numeroConta: '',
   digitoConta: '',
   descricao: '',
+  tipoGeracaoNumeroConta: '1',
   tipoConta: '3',
   modeloConta: '1',
   // Correntista
   documentoFederal: '',
   nome: '',
   tipoPessoa: '1',
-  situacao: '',
+  situacao: '1', // 1=Ativado, 2=Desativado (BMP espera um integer, não string vazia)
   // Contato
   email: '',
   telefoneCelular1: '',
@@ -68,8 +106,13 @@ function CriarContaForm() {
     setFeedback(null)
     setResultado(null)
 
-    if (!form.numeroBanco || !form.numeroAgencia || !form.numeroConta) {
-      setFeedback({ ok: false, message: 'Informe numeroBanco, numeroAgencia e numeroConta.' })
+    const geracaoManual = form.tipoGeracaoNumeroConta === '0'
+    if (!form.numeroBanco || !form.numeroAgencia) {
+      setFeedback({ ok: false, message: 'Informe numeroBanco e numeroAgencia.' })
+      return
+    }
+    if (geracaoManual && !form.numeroConta) {
+      setFeedback({ ok: false, message: 'Informe o número da conta (obrigatório quando a geração é Manual).' })
       return
     }
     if (!form.documentoFederal || !form.nome) {
@@ -82,16 +125,19 @@ function CriarContaForm() {
       const body = {
         numeroBanco: form.numeroBanco,
         numeroAgencia: form.numeroAgencia,
-        numeroConta: form.numeroConta,
+        // Sequencial (1): não envia numeroConta — o BMP gera o número.
+        // Manual (0): envia o numeroConta digitado.
+        numeroConta: geracaoManual ? form.numeroConta : null,
         digitoConta: form.digitoConta,
         descricao: form.descricao,
+        tipoGeracaoNumeroConta: Number(form.tipoGeracaoNumeroConta),
         tipoConta: Number(form.tipoConta),
         modeloConta: Number(form.modeloConta),
         dadosCorrentista: {
           documentoFederal: form.documentoFederal,
           nome: form.nome,
           tipoPessoa: Number(form.tipoPessoa),
-          situacao: form.situacao,
+          situacao: Number(form.situacao),
         },
         dadosContato: {
           email: form.email,
@@ -114,7 +160,7 @@ function CriarContaForm() {
           dtNasc: form.dtNasc,
           sexo: form.sexo,
           nacionalidade: form.nacionalidade,
-          estadoCivil: Number(form.estadoCivil) || 0,
+          estadoCivil: form.estadoCivil ? Number(form.estadoCivil) : null,
           profissao: form.profissao,
           renda: Number(form.renda) || 0,
         }
@@ -124,7 +170,7 @@ function CriarContaForm() {
           dtAberturaEmpresa: form.dtAberturaEmpresa,
           capitalSocial: Number(form.capitalSocial) || 0,
           faturamentoAnual: Number(form.faturamentoAnual) || 0,
-          tipoEmpresa: Number(form.tipoEmpresa) || 0,
+          tipoEmpresa: form.tipoEmpresa ? Number(form.tipoEmpresa) : null,
         }
       }
 
@@ -155,8 +201,21 @@ function CriarContaForm() {
             <Field label="Número da agência">
               <input className={inputCls} value={form.numeroAgencia} onChange={set('numeroAgencia')} disabled={submitting} />
             </Field>
+            <Field label="Tipo de geração de conta">
+              <select className={selectCls} value={form.tipoGeracaoNumeroConta} onChange={set('tipoGeracaoNumeroConta')} disabled={submitting}>
+                {TIPO_GERACAO_CONTA_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </Field>
             <Field label="Número da conta">
-              <input className={inputCls} value={form.numeroConta} onChange={set('numeroConta')} disabled={submitting} />
+              <input
+                className={inputCls}
+                value={form.numeroConta}
+                onChange={set('numeroConta')}
+                disabled={submitting || form.tipoGeracaoNumeroConta === '1'}
+                placeholder={form.tipoGeracaoNumeroConta === '1' ? 'Gerado automaticamente pelo BMP' : ''}
+              />
             </Field>
             <Field label="Dígito da conta">
               <input className={inputCls} value={form.digitoConta} onChange={set('digitoConta')} disabled={submitting} />
@@ -197,7 +256,10 @@ function CriarContaForm() {
               </select>
             </Field>
             <Field label="Situação">
-              <input className={inputCls} value={form.situacao} onChange={set('situacao')} disabled={submitting} />
+              <select className={selectCls} value={form.situacao} onChange={set('situacao')} disabled={submitting}>
+                <option value="1">Ativado (1)</option>
+                <option value="2">Desativado (2)</option>
+              </select>
             </Field>
           </div>
         </div>
@@ -261,7 +323,12 @@ function CriarContaForm() {
                 <input className={inputCls} value={form.nacionalidade} onChange={set('nacionalidade')} disabled={submitting} />
               </Field>
               <Field label="Estado civil">
-                <input type="number" className={inputCls} value={form.estadoCivil} onChange={set('estadoCivil')} disabled={submitting} />
+                <select className={selectCls} value={form.estadoCivil} onChange={set('estadoCivil')} disabled={submitting}>
+                  <option value="">—</option>
+                  {ESTADO_CIVIL_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
               </Field>
               <Field label="Profissão">
                 <input className={inputCls} value={form.profissao} onChange={set('profissao')} disabled={submitting} />
@@ -290,7 +357,12 @@ function CriarContaForm() {
                 <input type="number" className={inputCls} value={form.faturamentoAnual} onChange={set('faturamentoAnual')} disabled={submitting} />
               </Field>
               <Field label="Tipo de empresa">
-                <input type="number" className={inputCls} value={form.tipoEmpresa} onChange={set('tipoEmpresa')} disabled={submitting} />
+                <select className={selectCls} value={form.tipoEmpresa} onChange={set('tipoEmpresa')} disabled={submitting}>
+                  <option value="">—</option>
+                  {TIPO_EMPRESA_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
               </Field>
             </div>
           </div>
