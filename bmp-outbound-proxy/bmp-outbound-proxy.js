@@ -36,6 +36,7 @@
 
 const http = require('http')
 const net = require('net')
+const dns = require('dns')
 
 const PORT = Number(process.env.PROXY_PORT) || 8443
 const USER = process.env.PROXY_USER
@@ -69,7 +70,10 @@ const server = http.createServer((req, res) => {
 })
 
 server.on('connect', (req, clientSocket, head) => {
+  console.log(`[bmp-outbound-proxy] CONNECT recebido: url="${req.url}" de ${clientSocket.remoteAddress}, headers=${JSON.stringify(req.headers)}`)
+
   if (!checkAuth(req)) {
+    console.log('[bmp-outbound-proxy] falhou autenticação, recusando')
     clientSocket.write('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="bmp-proxy"\r\n\r\n')
     return clientSocket.end()
   }
@@ -77,19 +81,36 @@ server.on('connect', (req, clientSocket, head) => {
   // req.url no método CONNECT vem como "host:porta"
   const [hostname, portStr] = req.url.split(':')
   const port = Number(portStr) || 443
+  console.log(`[bmp-outbound-proxy] autenticado, conectando em ${hostname}:${port}...`)
+
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (err) console.log(`[bmp-outbound-proxy] falha ao resolver DNS de ${hostname}:`, String(err))
+    else console.log(`[bmp-outbound-proxy] ${hostname} resolve para:`, JSON.stringify(addresses))
+  })
 
   const serverSocket = net.connect(port, hostname, () => {
+    console.log(`[bmp-outbound-proxy] conectado em ${hostname}:${port}, iniciando túnel`)
     clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
     serverSocket.write(head)
     serverSocket.pipe(clientSocket)
     clientSocket.pipe(serverSocket)
   })
 
+  serverSocket.setTimeout(20000, () => {
+    console.log(`[bmp-outbound-proxy] TIMEOUT conectando em ${hostname}:${port} (20s sem resposta)`)
+    serverSocket.destroy()
+    clientSocket.end()
+  })
+
   serverSocket.on('error', (err) => {
     console.error('[bmp-outbound-proxy] erro ao conectar no destino', hostname, port, String(err))
     clientSocket.end()
   })
-  clientSocket.on('error', () => serverSocket.end())
+  clientSocket.on('error', (err) => {
+    console.error('[bmp-outbound-proxy] erro no socket do cliente:', String(err))
+    serverSocket.end()
+  })
+  clientSocket.on('close', () => console.log(`[bmp-outbound-proxy] cliente fechou a conexão (${hostname}:${port})`))
 })
 
 server.listen(PORT, () => {

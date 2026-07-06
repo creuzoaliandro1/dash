@@ -57,7 +57,10 @@ const emptyFormData = {
   SACADO_ENDERECO: '', SACADO_NUMERO: '', SACADO_COMPLEMENTO: '', SACADO_BAIRRO: '',
   SACADO_CIDADE: '', SACADO_UF: '', SACADO_EMAIL: '', SACADO_TELEFONE: '',
   AVALISTA_TIPO: '', AVALISTA: '', AVALISTA_CIC: '',
-  JUROS_TIPO: '3', JUROS_DATA: '', JUROS_VALOR: '',
+  // Padrão do boleto avulso: juros de 1% ao mês a partir do dia seguinte ao
+  // vencimento (JUROS_DATA é preenchido automaticamente quando VENCIMENTO muda —
+  // ver handleChange). JUROS_VALOR = 6 representa 6% (taxa mensal).
+  JUROS_TIPO: '2', JUROS_DATA: '', JUROS_VALOR: 6,
   MULTA_TIPO: '3', MULTA_DATA: '', MULTA_VALOR: '',
   DESCONTO_TIPO: '0', DESCONTO_DATA: '', DESCONTO_VALOR: '',
   DESCONTO2_TIPO: '0', DESCONTO2_DATA: '', DESCONTO2_VALOR: '',
@@ -83,7 +86,53 @@ const ESPECIES = [
 ]
 
 const inputCls = 'w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white focus:bg-[#1a1a1a] outline-none transition'
+const inputDisabledCls = 'w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-[#666666] text-sm outline-none cursor-not-allowed'
 const labelCls = 'block text-xs font-medium text-[#a3a3a3] mb-1.5'
+
+// Campos que "deve pedir obrigatóriamente" no boleto avulso (Novo). AVALISTA e
+// AVALISTA_CIC são tratados à parte: só viram obrigatórios se AVALISTA_TIPO
+// não for "Isento" (0) — não faz sentido exigir nome/CIC de um avalista isento.
+const REQUIRED_FIELDS = [
+  ['EMISSAO', 'Emissão'],
+  ['VENCIMENTO', 'Vencimento'],
+  ['VALOR', 'Valor'],
+  ['NUM_TITULO', 'Núm. Título'],
+  ['SACADO_NOME', 'Nome (sacado)'],
+  ['SACADO_CIC', 'CIC/CNPJ (sacado)'],
+  ['SACADO_ENDERECO', 'Endereço'],
+  ['SACADO_NUMERO', 'Número do endereço'],
+  ['SACADO_BAIRRO', 'Bairro'],
+  ['SACADO_CEP', 'CEP'],
+  ['SACADO_CIDADE', 'Cidade'],
+  ['SACADO_UF', 'UF'],
+  ['SACADO_TIPO_PESSOA', 'Tipo Pessoa'],
+  ['SACADO_EMAIL', 'E-mail'],
+  ['SACADO_TELEFONE', 'Telefone'],
+  ['AVALISTA_TIPO', 'Tipo Sacado Avalista'],
+  ['JUROS_TIPO', 'Tipo de Juros'],
+]
+
+const isEmpty = (v) => v === '' || v === null || v === undefined
+
+const validate = (data) => {
+  const missing = []
+  for (const [key, label] of REQUIRED_FIELDS) {
+    if (isEmpty(data[key])) missing.push(label)
+  }
+  if (String(data.AVALISTA_TIPO) !== '0') {
+    if (isEmpty(data.AVALISTA)) missing.push('Nome Sacador Avalista')
+    if (isEmpty(data.AVALISTA_CIC)) missing.push('Identificador CIC (avalista)')
+  }
+  return missing
+}
+
+// Soma dias a uma data 'YYYY-MM-DD' (formato do <input type="date">).
+const addDays = (dateStr, days) => {
+  if (!dateStr) return ''
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
 
 export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
   const [formData, setFormData] = useState(
@@ -91,10 +140,19 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
   )
   // Arquivos selecionados para um boleto NOVO (ainda sem id). Enviados ao salvar.
   const [pendingFiles, setPendingFiles] = useState([])
+  const [errors, setErrors] = useState([])
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    setFormData(prev => {
+      const next = { ...prev, [name]: value }
+      // Data Início dos juros = um dia após o Vencimento, preenchida
+      // automaticamente assim que o Vencimento é informado.
+      if (name === 'VENCIMENTO' && value) {
+        next.JUROS_DATA = addDays(value, 1)
+      }
+      return next
+    })
   }
 
   const handleAddPendingFiles = (e) => {
@@ -117,6 +175,12 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    const missing = validate(formData)
+    if (missing.length > 0) {
+      setErrors(missing)
+      return
+    }
+    setErrors([])
     onSave(formData, boleto ? [] : pendingFiles)
   }
 
@@ -138,16 +202,23 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {errors.length > 0 && (
+            <div className="p-4 bg-red-950/40 border border-red-900 rounded-lg">
+              <p className="text-red-400 text-sm font-medium mb-1">Preencha os campos obrigatórios antes de continuar:</p>
+              <p className="text-red-300 text-xs">{errors.join(' • ')}</p>
+            </div>
+          )}
+
           {/* Seção: Datas */}
           <div>
             <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Datas</h3>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className={labelCls}>EMISSÃO</label>
+                <label className={labelCls}>EMISSÃO <span className="text-red-500">*</span></label>
                 <input type="date" name="EMISSAO" value={formData.EMISSAO} onChange={handleChange} className={inputCls} />
               </div>
               <div>
-                <label className={labelCls}>VENCIMENTO</label>
+                <label className={labelCls}>VENCIMENTO <span className="text-red-500">*</span></label>
                 <input type="date" name="VENCIMENTO" value={formData.VENCIMENTO} onChange={handleChange} className={inputCls} />
               </div>
               <div>
@@ -162,16 +233,16 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
             <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Documento e Valores</h3>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className={labelCls}>NÚM. TÍTULO</label>
+                <label className={labelCls}>NÚM. TÍTULO <span className="text-red-500">*</span></label>
                 <input type="text" name="NUM_TITULO" value={formData.NUM_TITULO} onChange={handleChange} placeholder="DOC-123456" className={inputCls} />
               </div>
               <div>
-                <label className={labelCls}>VALOR</label>
+                <label className={labelCls}>VALOR <span className="text-red-500">*</span></label>
                 <input type="number" name="VALOR" value={formData.VALOR} onChange={handleChange} placeholder="0.00" step="0.01" className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>NOSSO Nº</label>
-                <input type="text" name="NOSSO_NUMERO" value={formData.NOSSO_NUMERO} onChange={handleChange} placeholder="Gerado ao salvar" className={inputCls} />
+                <input type="text" name="NOSSO_NUMERO" value={formData.NOSSO_NUMERO} disabled readOnly placeholder="Gerado automaticamente ao salvar" className={inputDisabledCls} title="Gerado automaticamente pelo sistema — não editável" />
               </div>
               <div>
                 <label className={labelCls}>ESPÉCIE DO TÍTULO</label>
@@ -202,45 +273,45 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
               {/* Linha 1: Nome + CIC/CNPJ */}
               <div className="flex gap-4">
                 <div className="flex-[4] min-w-0">
-                  <label className={labelCls}>NOME</label>
+                  <label className={labelCls}>NOME <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_NOME" value={formData.SACADO_NOME} onChange={handleChange} placeholder="Agro Plantar Ltda" className={inputCls} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>CIC / CNPJ</label>
+                  <label className={labelCls}>CIC / CNPJ <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_CIC" value={formData.SACADO_CIC} onChange={handleChange} placeholder="89.012.345/0001-34" className={inputCls} />
                 </div>
               </div>
               {/* Linha 2: Endereço + NÚM + Bairro + CEP + Cidade + UF */}
               <div className="flex gap-4">
                 <div className="flex-[2] min-w-0">
-                  <label className={labelCls}>ENDEREÇO</label>
+                  <label className={labelCls}>ENDEREÇO <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_ENDERECO" value={formData.SACADO_ENDERECO} onChange={handleChange} placeholder="Rua..." className={inputCls} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>NÚM.</label>
+                  <label className={labelCls}>NÚM. <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_NUMERO" value={formData.SACADO_NUMERO} onChange={handleChange} placeholder="123" className={inputCls} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>BAIRRO</label>
+                  <label className={labelCls}>BAIRRO <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_BAIRRO" value={formData.SACADO_BAIRRO} onChange={handleChange} placeholder="Centro" className={inputCls} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>CEP</label>
+                  <label className={labelCls}>CEP <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_CEP" value={formData.SACADO_CEP} onChange={handleChange} placeholder="00000-000" className={inputCls} />
                 </div>
                 <div className="flex-[0.7] min-w-0">
-                  <label className={labelCls}>CIDADE</label>
+                  <label className={labelCls}>CIDADE <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_CIDADE" value={formData.SACADO_CIDADE} onChange={handleChange} placeholder="São Paulo" className={inputCls} />
                 </div>
                 <div className="flex-[0.3] min-w-0">
-                  <label className={labelCls}>UF</label>
+                  <label className={labelCls}>UF <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_UF" value={formData.SACADO_UF} onChange={handleChange} placeholder="SP" maxLength="2" className={inputCls} />
                 </div>
               </div>
               {/* Linha 3: Tipo Pessoa + Complemento + Email + Telefone */}
               <div className="flex gap-4">
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>TIPO PESSOA</label>
+                  <label className={labelCls}>TIPO PESSOA <span className="text-red-500">*</span></label>
                   <select name="SACADO_TIPO_PESSOA" value={formData.SACADO_TIPO_PESSOA} onChange={handleChange} className={inputCls}>
                     <option value="">—</option>
                     <option value={1}>Física</option>
@@ -252,11 +323,11 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
                   <input type="text" name="SACADO_COMPLEMENTO" value={formData.SACADO_COMPLEMENTO} onChange={handleChange} placeholder="Sala 2" className={inputCls} />
                 </div>
                 <div className="flex-[1.5] min-w-0">
-                  <label className={labelCls}>EMAIL</label>
+                  <label className={labelCls}>EMAIL <span className="text-red-500">*</span></label>
                   <input type="email" name="SACADO_EMAIL" value={formData.SACADO_EMAIL} onChange={handleChange} placeholder="cliente@email.com" className={inputCls} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <label className={labelCls}>TELEFONE</label>
+                  <label className={labelCls}>TELEFONE <span className="text-red-500">*</span></label>
                   <input type="text" name="SACADO_TELEFONE" value={formData.SACADO_TELEFONE} onChange={handleChange} placeholder="(11) 90000-0000" className={inputCls} />
                 </div>
               </div>
@@ -268,7 +339,7 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
             <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Sacador Avalista</h3>
             <div className="grid grid-cols-4 gap-4">
               <div>
-                <label className={labelCls}>TIPO</label>
+                <label className={labelCls}>TIPO <span className="text-red-500">*</span></label>
                 <select name="AVALISTA_TIPO" value={formData.AVALISTA_TIPO} onChange={handleChange} className={inputCls}>
                   <option value="">—</option>
                   <option value={0}>Isento</option>
@@ -279,14 +350,21 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
                 </select>
               </div>
               <div className="col-span-2">
-                <label className={labelCls}>NOME</label>
+                <label className={labelCls}>
+                  NOME {String(formData.AVALISTA_TIPO) !== '0' && <span className="text-red-500">*</span>}
+                </label>
                 <input type="text" name="AVALISTA" value={formData.AVALISTA} onChange={handleChange} placeholder="Nome do avalista" className={inputCls} />
               </div>
               <div>
-                <label className={labelCls}>IDENTIFICADOR (CIC/CNPJ)</label>
+                <label className={labelCls}>
+                  IDENTIFICADOR (CIC/CNPJ) {String(formData.AVALISTA_TIPO) !== '0' && <span className="text-red-500">*</span>}
+                </label>
                 <input type="text" name="AVALISTA_CIC" value={formData.AVALISTA_CIC} onChange={handleChange} placeholder="CPF ou CNPJ" className={inputCls} />
               </div>
             </div>
+            {String(formData.AVALISTA_TIPO) !== '0' && (
+              <p className="text-[#666666] text-xs mt-2">Nome e identificador são obrigatórios quando o tipo não é "Isento".</p>
+            )}
           </div>
 
           {/* Seção: Juros */}
@@ -294,7 +372,7 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
             <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Juros</h3>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className={labelCls}>TIPO</label>
+                <label className={labelCls}>TIPO <span className="text-red-500">*</span></label>
                 <select name="JUROS_TIPO" value={formData.JUROS_TIPO} onChange={handleChange} className={inputCls}>
                   <option value="3">Isento</option>
                   <option value="1">Valor por dia (R$)</option>
@@ -304,10 +382,12 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
               <div>
                 <label className={labelCls}>DATA INÍCIO</label>
                 <input type="date" name="JUROS_DATA" value={formData.JUROS_DATA} onChange={handleChange} className={inputCls} />
+                <p className="text-[#666666] text-xs mt-1">Preenchida automaticamente (1 dia após o vencimento)</p>
               </div>
               <div>
                 <label className={labelCls}>VALOR / %</label>
                 <input type="number" name="JUROS_VALOR" value={formData.JUROS_VALOR} onChange={handleChange} placeholder="0.00" step="0.01" className={inputCls} />
+                <p className="text-[#666666] text-xs mt-1">Padrão: 6% (taxa mensal)</p>
               </div>
             </div>
           </div>
