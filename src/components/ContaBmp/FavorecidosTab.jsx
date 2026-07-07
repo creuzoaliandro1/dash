@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Field, Feedback, Card, PrimaryButton, inputCls, selectCls, extractError } from './shared'
 
+// Enum tipoConta do endpoint /api/Favorecido (doc BMP 53-cadastro-de-favorecido):
+// 1 Corrente | 2 Poupança | 3 Pagamento | 4 Salário.
 const TIPO_CONTA_OPTIONS = [
-  { value: '3', label: 'Corrente (3)' },
+  { value: '1', label: 'Corrente (1)' },
   { value: '2', label: 'Poupança (2)' },
-  { value: '-1', label: 'Pagamento (-1)' },
+  { value: '3', label: 'Pagamento (3)' },
   { value: '4', label: 'Salário (4)' },
 ]
 
@@ -17,7 +19,7 @@ function NovoFavorecidoForm() {
     agencia: '',
     conta: '',
     contaDigito: '',
-    tipoConta: '3',
+    tipoConta: '1',
   })
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState(null)
@@ -37,8 +39,18 @@ function NovoFavorecidoForm() {
 
     setSubmitting(true)
     try {
+      // A doc do BMP (53-cadastro-de-favorecido) mostra os dados da conta duplicados:
+      // uma vez nos campos de nível raiz e de novo dentro de contaDto — mandamos os
+      // dois pra cobrir qualquer um dos dois que o BMP use pra validar.
+      const contaDto = {
+        agencia: form.agencia || undefined,
+        conta: form.conta || undefined,
+        contaDigito: form.contaDigito || undefined,
+        contaPgto: form.conta ? `${form.conta}${form.contaDigito || ''}` : undefined,
+        tipoConta: Number(form.tipoConta),
+      }
       const { data, error } = await supabase.functions.invoke('bmp-favorecido-criar', {
-        body: { ...form, tipoConta: Number(form.tipoConta) },
+        body: { ...form, tipoConta: Number(form.tipoConta), contaDto },
       })
       const errMsg = extractError(data, error, 'Erro ao cadastrar o favorecido.')
       if (errMsg) {
