@@ -253,17 +253,17 @@ function ContaFields({ prefixLabel, agencia, setAgencia, agenciaDigito, setAgenc
       <p className="text-xs font-medium text-[#a3a3a3]">{prefixLabel}</p>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         <Field label="Agência">
-          <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={disabled} />
+          <input className={inputCls} value={agencia} onChange={(e) => setAgencia(e.target.value)} disabled={disabled} maxLength={4} />
         </Field>
         <Field label="Dígito da agência">
-          <input className={inputCls} value={agenciaDigito} onChange={(e) => setAgenciaDigito(e.target.value)} disabled={disabled} />
+          <input className={inputCls} value={agenciaDigito} onChange={(e) => setAgenciaDigito(e.target.value)} disabled={disabled} maxLength={1} />
         </Field>
         <div />
         <Field label="Conta">
-          <input className={inputCls} value={conta} onChange={(e) => setConta(e.target.value)} disabled={disabled} />
+          <input className={inputCls} value={conta} onChange={(e) => setConta(e.target.value)} disabled={disabled} maxLength={12} />
         </Field>
         <Field label="Dígito da conta">
-          <input className={inputCls} value={contaDigito} onChange={(e) => setContaDigito(e.target.value)} disabled={disabled} />
+          <input className={inputCls} value={contaDigito} onChange={(e) => setContaDigito(e.target.value)} disabled={disabled} maxLength={1} />
         </Field>
         <div />
         <Field label="Tipo de conta">
@@ -318,7 +318,7 @@ function TransferenciaEntreContasCard() {
       setFeedback({ ok: false, message: 'Informe as contas de origem e destino.' })
       return
     }
-    const valor = Number(String(vlrTransacao).replace(',', '.'))
+    const valor = Math.round(Number(String(vlrTransacao).replace(',', '.')) * 100) / 100
     if (!valor || valor <= 0) {
       setFeedback({ ok: false, message: 'Informe um valor de transferência válido, maior que 0.' })
       return
@@ -401,7 +401,7 @@ function TransferenciaEntreContasCard() {
             <input className={inputCls} value={finlddCli} onChange={(e) => setFinlddCli(e.target.value)} disabled={submitting} />
           </Field>
           <Field label="Código operação (cliente)">
-            <input className={inputCls} value={codOperacaoCli} onChange={(e) => setCodOperacaoCli(e.target.value)} disabled={submitting} />
+            <input className={inputCls} value={codOperacaoCli} onChange={(e) => setCodOperacaoCli(e.target.value)} disabled={submitting} maxLength={50} />
           </Field>
           <Field label="Descrição">
             <input className={inputCls} value={descCliente} onChange={(e) => setDescCliente(e.target.value)} disabled={submitting} maxLength={50} />
@@ -473,7 +473,7 @@ function TransferenciaTedCard() {
       setFeedback({ ok: false, message: 'Informe os dados do favorecido (nome, documento, banco e conta).' })
       return
     }
-    const valor = Number(String(vlrTransacao).replace(',', '.'))
+    const valor = Math.round(Number(String(vlrTransacao).replace(',', '.')) * 100) / 100
     if (!valor || valor <= 0) {
       setFeedback({ ok: false, message: 'Informe um valor de transferência válido, maior que 0.' })
       return
@@ -559,17 +559,17 @@ function TransferenciaTedCard() {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             <Field label="Agência">
-              <input className={inputCls} value={favAgencia} onChange={(e) => setFavAgencia(e.target.value)} disabled={submitting} />
+              <input className={inputCls} value={favAgencia} onChange={(e) => setFavAgencia(e.target.value)} disabled={submitting} maxLength={4} />
             </Field>
             <Field label="Dígito da agência">
-              <input className={inputCls} value={favAgenciaDigito} onChange={(e) => setFavAgenciaDigito(e.target.value)} disabled={submitting} />
+              <input className={inputCls} value={favAgenciaDigito} onChange={(e) => setFavAgenciaDigito(e.target.value)} disabled={submitting} maxLength={1} />
             </Field>
             <div />
             <Field label="Conta">
-              <input className={inputCls} value={favConta} onChange={(e) => setFavConta(e.target.value)} disabled={submitting} />
+              <input className={inputCls} value={favConta} onChange={(e) => setFavConta(e.target.value)} disabled={submitting} maxLength={12} />
             </Field>
             <Field label="Dígito da conta">
-              <input className={inputCls} value={favContaDigito} onChange={(e) => setFavContaDigito(e.target.value)} disabled={submitting} />
+              <input className={inputCls} value={favContaDigito} onChange={(e) => setFavContaDigito(e.target.value)} disabled={submitting} maxLength={1} />
             </Field>
             <div />
             <Field label="Tipo de conta">
@@ -604,7 +604,7 @@ function TransferenciaTedCard() {
             </select>
           </Field>
           <Field label="Código operação (cliente)">
-            <input className={inputCls} value={codOperacaoCli} onChange={(e) => setCodOperacaoCli(e.target.value)} disabled={submitting} />
+            <input className={inputCls} value={codOperacaoCli} onChange={(e) => setCodOperacaoCli(e.target.value)} disabled={submitting} maxLength={50} />
           </Field>
         </div>
         <Field label="Descrição">

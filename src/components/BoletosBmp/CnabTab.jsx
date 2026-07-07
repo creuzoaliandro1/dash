@@ -155,10 +155,9 @@ function EnviarCnab400Card() {
 
 // ---------- 35. Consulta de Pagamento e Registro de Boleto + 36. Download Arquivo 200 ----------
 function ConsultarArquivosCard() {
-  const [codigoImportaArquivo, setCodigoImportaArquivo] = useState('')
   const [numeroCedente, setNumeroCedente] = useState('')
-  const [dataInicio, setDataInicio] = useState('')
-  const [dataFim, setDataFim] = useState('')
+  const [numeroCarteira, setNumeroCarteira] = useState('')
+  const [incluindoJaBaixados, setIncluindoJaBaixados] = useState(false)
   const [loading, setLoading] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [itens, setItens] = useState([])
@@ -172,7 +171,11 @@ function ConsultarArquivosCard() {
     setLoading(true)
     try {
       const { data, error } = await supabase.functions.invoke('bmp-cnab-consultar-arquivos', {
-        body: { codigoImportaArquivo: codigoImportaArquivo || undefined, numeroCedente: numeroCedente || undefined, dataInicio: dataInicio || undefined, dataFim: dataFim || undefined },
+        body: {
+          numeroCedente: numeroCedente || undefined,
+          numeroCarteira: numeroCarteira || undefined,
+          incluindoJaBaixados,
+        },
       })
       const errMsg = extractError(data, error, 'Erro ao consultar arquivos.')
       if (errMsg) {
@@ -190,12 +193,20 @@ function ConsultarArquivosCard() {
   }
 
   const handleDownload = async (item) => {
-    const codigo = item?.codigoImportaArquivo ?? codigoImportaArquivo
-    if (!codigo) return
-    setBaixando(codigo)
+    const nome = item?.nomeArquivo
+    if (!nome) return
+    setBaixando(nome)
     setFeedback(null)
     try {
-      const { data, error } = await supabase.functions.invoke('bmp-cnab-download-200', { body: { codigoImportaArquivo: codigo } })
+      const { data, error } = await supabase.functions.invoke('bmp-cnab-download-200', {
+        body: {
+          numeroCedente: numeroCedente || undefined,
+          numeroCarteira: numeroCarteira || undefined,
+          origem: item?.origem,
+          tipoCNAB: item?.tipoCNAB,
+          nomeArquivo: nome,
+        },
+      })
       const errMsg = extractError(data, error, 'Erro ao baixar arquivo de retorno 200.')
       if (errMsg) {
         setFeedback({ ok: false, message: errMsg })
@@ -210,20 +221,20 @@ function ConsultarArquivosCard() {
   }
 
   return (
-    <Card title="Consultar arquivos CNAB / baixar retorno 200" description="Consulta o status de processamento dos arquivos CNAB 400 enviados e permite baixar o arquivo de retorno 200.">
+    <Card title="Consultar arquivos CNAB / baixar retorno 200" description="Consulta o status de processamento dos arquivos CNAB 400 enviados (origens 2001–2004: registro, pagamento, alteração, cancelamento) e permite baixar o arquivo de retorno 200.">
       <form onSubmit={handleSubmit} className="space-y-2">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <Field label="Código importação">
-            <input className={inputCls} value={codigoImportaArquivo} onChange={(e) => setCodigoImportaArquivo(e.target.value)} disabled={loading} />
-          </Field>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           <Field label="Número do cedente">
             <input className={inputCls} value={numeroCedente} onChange={(e) => setNumeroCedente(e.target.value)} disabled={loading} />
           </Field>
-          <Field label="Data início">
-            <DateInput value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} disabled={loading} />
+          <Field label="Número da carteira">
+            <input className={inputCls} value={numeroCarteira} onChange={(e) => setNumeroCarteira(e.target.value)} disabled={loading} />
           </Field>
-          <Field label="Data fim">
-            <DateInput value={dataFim} onChange={(e) => setDataFim(e.target.value)} disabled={loading} />
+          <Field label="Incluir já baixados">
+            <label className="flex items-center gap-2 h-full text-xs text-[#d4d4d4]">
+              <input type="checkbox" checked={incluindoJaBaixados} onChange={(e) => setIncluindoJaBaixados(e.target.checked)} disabled={loading} />
+              Incluir arquivos já baixados
+            </label>
           </Field>
         </div>
 
@@ -239,23 +250,21 @@ function ConsultarArquivosCard() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">
-                <th className="text-left px-3 py-2">Código importação</th>
                 <th className="text-left px-3 py-2">Nome do arquivo</th>
-                <th className="text-left px-3 py-2">Situação</th>
-                <th className="text-left px-3 py-2">Data</th>
+                <th className="text-left px-3 py-2">Origem</th>
+                <th className="text-left px-3 py-2">Tipo CNAB</th>
                 <th className="text-right px-3 py-2">Ações</th>
               </tr>
             </thead>
             <tbody>
               {itens.map((item, i) => (
-                <tr key={(item?.codigoImportaArquivo ?? i) + '-' + i} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
-                  <td className="px-3 py-2 break-all">{item?.codigoImportaArquivo ?? '—'}</td>
+                <tr key={(item?.nomeArquivo ?? i) + '-' + i} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
                   <td className="px-3 py-2 break-all">{item?.nomeArquivo ?? '—'}</td>
-                  <td className="px-3 py-2">{item?.situacao ?? item?.status ?? '—'}</td>
-                  <td className="px-3 py-2">{formatData(item?.dataEnvio ?? item?.dtEnvio)}</td>
+                  <td className="px-3 py-2">{item?.origem ?? '—'}</td>
+                  <td className="px-3 py-2">{item?.tipoCNAB === 1 ? 'CNAB 240' : item?.tipoCNAB === 2 ? 'CNAB 400' : (item?.tipoCNAB ?? '—')}</td>
                   <td className="px-3 py-2 text-right">
-                    <SecondaryButton type="button" onClick={() => handleDownload(item)} disabled={baixando === (item?.codigoImportaArquivo)}>
-                      {baixando === item?.codigoImportaArquivo ? 'Baixando...' : 'Baixar 200'}
+                    <SecondaryButton type="button" onClick={() => handleDownload(item)} disabled={baixando === item?.nomeArquivo}>
+                      {baixando === item?.nomeArquivo ? 'Baixando...' : 'Baixar 200'}
                     </SecondaryButton>
                   </td>
                 </tr>
@@ -343,9 +352,10 @@ function ImportarCnab240Card() {
 
 // ---------- 37. CNAB 240 (listar) + 39. Download de Arquivo CNAB 240 ----------
 function Listar240Card() {
-  const [codigoImportaArquivo, setCodigoImportaArquivo] = useState('')
-  const [dataInicio, setDataInicio] = useState('')
-  const [dataFim, setDataFim] = useState('')
+  const [conta, setConta] = useState({ agencia: '', agenciaDigito: '', conta: '', contaDigito: '' })
+  const [tipoRetorno, setTipoRetorno] = useState('-1')
+  const [dtInicio, setDtInicio] = useState('')
+  const [dtFim, setDtFim] = useState('')
   const [loading, setLoading] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [itens, setItens] = useState([])
@@ -361,7 +371,15 @@ function Listar240Card() {
     setLoading(true)
     try {
       const { data, error } = await supabase.functions.invoke('bmp-cnab-240-listar', {
-        body: { codigoImportaArquivo: codigoImportaArquivo || undefined, dataInicio: dataInicio || undefined, dataFim: dataFim || undefined },
+        body: {
+          tipoRetorno: tipoRetorno !== '' ? Number(tipoRetorno) : undefined,
+          agencia: conta.agencia || undefined,
+          agenciaDigito: conta.agenciaDigito || undefined,
+          conta: conta.conta || undefined,
+          contaDigito: conta.contaDigito || undefined,
+          dtInicio: dtInicio || undefined,
+          dtFim: dtFim || undefined,
+        },
       })
       const errMsg = extractError(data, error, 'Erro ao listar arquivos CNAB 240.')
       if (errMsg) {
@@ -380,12 +398,20 @@ function Listar240Card() {
   }
 
   const handleDownload = async (item) => {
-    const codigo = item?.codigoImportaArquivo ?? codigoImportaArquivo
-    if (!codigo) return
-    setBaixando(codigo)
+    const nome = item?.nome
+    if (!nome) return
+    setBaixando(nome)
     setFeedback(null)
     try {
-      const { data, error } = await supabase.functions.invoke('bmp-cnab-240-download', { body: { codigoImportaArquivo: codigo } })
+      const { data, error } = await supabase.functions.invoke('bmp-cnab-240-download', {
+        body: {
+          agencia: conta.agencia || undefined,
+          agenciaDigito: conta.agenciaDigito || undefined,
+          conta: conta.conta || undefined,
+          contaDigito: conta.contaDigito || undefined,
+          nomeArquivo: nome,
+        },
+      })
       const errMsg = extractError(data, error, 'Erro ao baixar arquivo CNAB 240.')
       if (errMsg) {
         setFeedback({ ok: false, message: errMsg })
@@ -400,17 +426,22 @@ function Listar240Card() {
   }
 
   return (
-    <Card title="Listar / baixar arquivos CNAB 240" description="Lista os arquivos CNAB 240 importados e permite baixar o arquivo de retorno.">
+    <Card title="Listar / baixar arquivos CNAB 240" description="Lista os arquivos de retorno CNAB 240 de uma conta e permite baixar o arquivo de retorno correspondente.">
       <form onSubmit={handleSubmit} className="space-y-2">
+        <ContaFields conta={conta} setConta={setConta} disabled={loading} />
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          <Field label="Código importação">
-            <input className={inputCls} value={codigoImportaArquivo} onChange={(e) => setCodigoImportaArquivo(e.target.value)} disabled={loading} />
+          <Field label="Tipo retorno">
+            <select className={inputCls} value={tipoRetorno} onChange={(e) => setTipoRetorno(e.target.value)} disabled={loading}>
+              <option value="-1">Todos</option>
+              <option value="2">Remessa</option>
+              <option value="3">Diário</option>
+            </select>
           </Field>
           <Field label="Data início">
-            <DateInput value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} disabled={loading} />
+            <DateInput value={dtInicio} onChange={(e) => setDtInicio(e.target.value)} disabled={loading} />
           </Field>
           <Field label="Data fim">
-            <DateInput value={dataFim} onChange={(e) => setDataFim(e.target.value)} disabled={loading} />
+            <DateInput value={dtFim} onChange={(e) => setDtFim(e.target.value)} disabled={loading} />
           </Field>
         </div>
 
@@ -426,25 +457,139 @@ function Listar240Card() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">
-                <th className="text-left px-3 py-2">Código importação</th>
-                <th className="text-left px-3 py-2">Nome do arquivo</th>
+                <th className="text-left px-3 py-2">Nome</th>
                 <th className="text-left px-3 py-2">Situação</th>
-                <th className="text-left px-3 py-2">Data</th>
+                <th className="text-left px-3 py-2">Tipo retorno</th>
+                <th className="text-left px-3 py-2">Data inclusão</th>
                 <th className="text-right px-3 py-2">Ações</th>
               </tr>
             </thead>
             <tbody>
               {itens.map((item, i) => (
-                <tr key={(item?.codigoImportaArquivo ?? i) + '-' + i} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
-                  <td className="px-3 py-2 break-all">{item?.codigoImportaArquivo ?? '—'}</td>
-                  <td className="px-3 py-2 break-all">{item?.nomeArquivo ?? '—'}</td>
-                  <td className="px-3 py-2">{item?.situacao ?? item?.status ?? '—'}</td>
-                  <td className="px-3 py-2">{formatData(item?.dataEnvio ?? item?.dtEnvio)}</td>
+                <tr key={(item?.codigo ?? i) + '-' + i} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
+                  <td className="px-3 py-2 break-all">{item?.nome ?? '—'}</td>
+                  <td className="px-3 py-2">{item?.situacao === 1 ? 'Gerado' : item?.situacao === 0 ? 'Pendente' : (item?.situacao ?? '—')}</td>
+                  <td className="px-3 py-2">{item?.tipoRetorno ?? '—'}</td>
+                  <td className="px-3 py-2">{formatData(item?.dtInclusao)}</td>
                   <td className="px-3 py-2 text-right">
-                    <SecondaryButton type="button" onClick={() => handleDownload(item)} disabled={baixando === item?.codigoImportaArquivo}>
-                      {baixando === item?.codigoImportaArquivo ? 'Baixando...' : 'Baixar'}
+                    <SecondaryButton type="button" onClick={() => handleDownload(item)} disabled={baixando === item?.nome}>
+                      {baixando === item?.nome ? 'Baixando...' : 'Baixar'}
                     </SecondaryButton>
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <RawJson data={resposta?.raw} />
+    </Card>
+  )
+}
+
+// ---------- 40. Logs de Arquivos (CNAB 240) ----------
+function LogsArquivosCard() {
+  const [conta, setConta] = useState({ agencia: '', agenciaDigito: '', conta: '', contaDigito: '' })
+  const [nomeArquivo, setNomeArquivo] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [feedback, setFeedback] = useState(null)
+  const [itens, setItens] = useState([])
+  const [resposta, setResposta] = useState(null)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setFeedback(null)
+    setItens([])
+    setResposta(null)
+
+    setLoading(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('bmp-cnab-logs', {
+        body: {
+          agencia: conta.agencia || undefined,
+          agenciaDigito: conta.agenciaDigito || undefined,
+          conta: conta.conta || undefined,
+          contaDigito: conta.contaDigito || undefined,
+          nomeArquivo: nomeArquivo || undefined,
+        },
+      })
+      const errMsg = extractError(data, error, 'Erro ao consultar logs de arquivos CNAB.')
+      if (errMsg) {
+        setFeedback({ ok: false, message: errMsg })
+      } else {
+        setResposta(data)
+        const lista = data?.itens ?? []
+        setItens(lista)
+        if (lista.length === 0) setFeedback({ ok: true, message: 'Nenhum log encontrado para os filtros informados.' })
+      }
+    } catch (err) {
+      setFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const situacaoLabel = {
+    0: 'Pendente de Importação',
+    1: 'Importando',
+    2: 'Importado',
+    3: 'Processado',
+    4: 'Importado - Aguardando Processamento',
+    96: 'Excluído',
+    97: 'Não Processado',
+    98: 'Erro Negócio',
+    99: 'Erro Sistema',
+  }
+
+  const eventoLabel = {
+    1: 'Recebido',
+    2: 'Validado',
+    3: 'Importado',
+    4: 'Retorno Remessa Gerado',
+    5: 'Retorno Remessa Baixado',
+    6: 'Processado',
+    7: 'Retorno Diário Gerado',
+    8: 'Retorno Diário Baixado',
+  }
+
+  return (
+    <Card title="Logs de arquivos CNAB 240" description="Lista os eventos (recebido, validado, importado, processado, etc.) de um arquivo de remessa CNAB 240 por etapa.">
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <ContaFields conta={conta} setConta={setConta} disabled={loading} />
+        <Field label="Nome do arquivo (com ou sem extensão)">
+          <input className={inputCls} value={nomeArquivo} onChange={(e) => setNomeArquivo(e.target.value)} disabled={loading} placeholder="ex: CP1202000096" />
+        </Field>
+
+        <Feedback feedback={feedback} />
+
+        <PrimaryButton type="submit" disabled={loading}>
+          {loading ? 'Consultando...' : 'Consultar logs'}
+        </PrimaryButton>
+      </form>
+
+      {itens.length > 0 && (
+        <div className="mt-2 overflow-x-auto border border-[#2a2a2a] rounded-md">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#141414] text-[#666666] uppercase tracking-wider">
+                <th className="text-left px-3 py-2">Arquivo remessa</th>
+                <th className="text-left px-3 py-2">Arquivo retorno</th>
+                <th className="text-left px-3 py-2">Evento</th>
+                <th className="text-left px-3 py-2">Situação</th>
+                <th className="text-left px-3 py-2">Operador</th>
+                <th className="text-left px-3 py-2">Data evento</th>
+              </tr>
+            </thead>
+            <tbody>
+              {itens.map((item, i) => (
+                <tr key={i} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
+                  <td className="px-3 py-2 break-all">{item?.arquivoRemessa ?? '—'}</td>
+                  <td className="px-3 py-2 break-all">{item?.arquivoRetorno ?? '—'}</td>
+                  <td className="px-3 py-2">{eventoLabel[item?.tipoEvento] ?? item?.tipoEvento ?? '—'}</td>
+                  <td className="px-3 py-2">{situacaoLabel[item?.situacaoArquivo] ?? item?.situacaoArquivo ?? '—'}</td>
+                  <td className="px-3 py-2">{item?.operador ?? '—'}</td>
+                  <td className="px-3 py-2">{formatData(item?.dtEvento)}</td>
                 </tr>
               ))}
             </tbody>
@@ -464,6 +609,7 @@ export default function CnabTab() {
       <ConsultarArquivosCard />
       <ImportarCnab240Card />
       <Listar240Card />
+      <LogsArquivosCard />
     </div>
   )
 }

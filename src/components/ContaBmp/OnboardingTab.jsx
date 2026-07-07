@@ -276,7 +276,7 @@ function SolicitarForm({ onSolicitado }) {
     setSubmitting(true)
     try {
       const body = {
-        contaCaptId: form.contaCaptId || null,
+        contaCaptId: form.contaCaptId !== '' && Number.isFinite(Number(form.contaCaptId)) ? Number(form.contaCaptId) : null,
         documentoFederal: form.documentoFederal,
         nome: form.nome,
         tipoPessoa: Number(form.tipoPessoa),
@@ -416,8 +416,15 @@ function SolicitarForm({ onSolicitado }) {
         <div>
           <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2">Titular</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            <Field label="ID conta Capt (opcional, uso interno)">
-              <input className={inputCls} value={form.contaCaptId} onChange={set('contaCaptId')} disabled={submitting} />
+            <Field label="ID conta Capt (opcional, uso interno — precisa ser número)">
+              <input
+                type="number"
+                className={inputCls}
+                value={form.contaCaptId}
+                onChange={set('contaCaptId')}
+                disabled={submitting}
+                placeholder="ex: 123 (deixe em branco se não souber)"
+              />
             </Field>
             <Field label="Documento federal (CPF/CNPJ)">
               <input className={inputCls} value={form.documentoFederal} onChange={set('documentoFederal')} disabled={submitting} />
@@ -631,6 +638,11 @@ function SolicitarForm({ onSolicitado }) {
           <div className="p-3 rounded-md text-xs border bg-[#111111] border-[#2a2a2a] text-[#d4d4d4] space-y-1">
             <p><span className="text-[#a3a3a3]">Código da solicitação:</span> {resultado.codigoSolicitacao ?? '(não retornado pelo BMP — ver raw abaixo)'}</p>
             <p><span className="text-[#a3a3a3]">ID interno:</span> {resultado.solicitacaoId ?? '—'}</p>
+            {resultado.persistError && (
+              <p className="text-red-400">
+                <span className="text-[#a3a3a3]">Erro ao salvar localmente:</span> {resultado.persistError}
+              </p>
+            )}
             <pre className="mt-1 whitespace-pre-wrap break-words bg-black/30 p-2 rounded text-[11px]">{JSON.stringify(resultado.raw, null, 2)}</pre>
           </div>
         )}
