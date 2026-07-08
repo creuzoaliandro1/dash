@@ -398,7 +398,7 @@ function SolicitarForm({ onSolicitado }) {
       } else {
         setFeedback({ ok: true, message: 'Solicitação enviada com sucesso.' })
         setResultado(data)
-        if (data?.codigoSolicitacao && onSolicitado) onSolicitado(data.codigoSolicitacao)
+        if (data?.codigoSolicitacao && onSolicitado) onSolicitado(data.codigoSolicitacao, form.documentoFederal)
       }
     } catch (err) {
       setFeedback({ ok: false, message: err.message || 'Erro ao conectar.' })
@@ -657,7 +657,7 @@ function SolicitarForm({ onSolicitado }) {
 
 const TIPO_ENTIDADE_DEFAULT = '1'
 
-function DocumentosForm({ codigoSolicitacao, setCodigoSolicitacao }) {
+function DocumentosForm({ codigoSolicitacao, setCodigoSolicitacao, documentoFederalSugerido }) {
   const [tipoEntidade, setTipoEntidade] = useState(TIPO_ENTIDADE_DEFAULT)
   const [tipoDocumento, setTipoDocumento] = useState('1')
   const [documentoFederal, setDocumentoFederal] = useState('')
@@ -665,6 +665,16 @@ function DocumentosForm({ codigoSolicitacao, setCodigoSolicitacao }) {
   const [finalizarJunto, setFinalizarJunto] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState(null)
+
+  // Corrigido em 07/07/2026: o campo "documento federal (dono do arquivo)" não
+  // era sincronizado com a solicitação selecionada/gerada, então ficava com o
+  // CPF digitado numa tentativa anterior — causou envios de documento com o
+  // CPF errado (ex.: CPF da conta 2 enviado pra solicitação da conta 4).
+  // Agora sempre que o código de solicitação muda (por ter sido gerado na
+  // etapa 1 ou selecionado na lista), o CPF sugerido é aplicado automaticamente.
+  useEffect(() => {
+    if (documentoFederalSugerido) setDocumentoFederal(documentoFederalSugerido)
+  }, [codigoSolicitacao, documentoFederalSugerido])
 
   const fileToBase64 = (file) =>
     new Promise((resolve, reject) => {
@@ -866,7 +876,7 @@ function SolicitacoesList({ onSelecionar }) {
                 <tr
                   key={r.id}
                   className="border-t border-[#1a1a1a] text-[#d4d4d4] hover:bg-[#141414] cursor-pointer"
-                  onClick={() => r.codigo_solicitacao && onSelecionar(r.codigo_solicitacao)}
+                  onClick={() => r.codigo_solicitacao && onSelecionar(r.codigo_solicitacao, r.documento_federal)}
                 >
                   <td className="px-3 py-2">{r.nome}</td>
                   <td className="px-3 py-2">{r.documento_federal}</td>
@@ -886,13 +896,23 @@ function SolicitacoesList({ onSelecionar }) {
 
 export default function OnboardingTab() {
   const [codigoSolicitacao, setCodigoSolicitacao] = useState('')
+  const [documentoFederalAtivo, setDocumentoFederalAtivo] = useState('')
+
+  const selecionarSolicitacao = (codigo, documentoFederal) => {
+    setCodigoSolicitacao(codigo)
+    setDocumentoFederalAtivo(documentoFederal || '')
+  }
 
   return (
     <div className="space-y-3 w-full">
-      <SolicitarForm onSolicitado={setCodigoSolicitacao} />
-      <DocumentosForm codigoSolicitacao={codigoSolicitacao} setCodigoSolicitacao={setCodigoSolicitacao} />
+      <SolicitarForm onSolicitado={selecionarSolicitacao} />
+      <DocumentosForm
+        codigoSolicitacao={codigoSolicitacao}
+        setCodigoSolicitacao={setCodigoSolicitacao}
+        documentoFederalSugerido={documentoFederalAtivo}
+      />
       <FinalizarCancelarForm codigoSolicitacao={codigoSolicitacao} setCodigoSolicitacao={setCodigoSolicitacao} />
-      <SolicitacoesList onSelecionar={setCodigoSolicitacao} />
+      <SolicitacoesList onSelecionar={selecionarSolicitacao} />
     </div>
   )
 }
