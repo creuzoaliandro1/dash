@@ -14,6 +14,42 @@ import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
 
+// Barra de progresso do CNAB400 isolada: timer proprio que calcula a % pelo
+// TEMPO DECORRIDO (1% + 3% por segundo, ate 95%). Por ser um componente pequeno,
+// o tick nao depende do re-render pesado do BoletosPage; e por ser baseado em
+// tempo, se auto-corrige mesmo que algum tick seja perdido num bloqueio breve.
+const CnabProgressBar = ({ label, status }) => {
+  const [pct, setPct] = useState(1)
+  const startRef = useRef(Date.now())
+  useEffect(() => {
+    if (status !== 'running') return
+    const calc = () => {
+      const seg = Math.floor((Date.now() - startRef.current) / 1000)
+      setPct(Math.min(95, 1 + seg * 3))
+    }
+    calc()
+    const id = setInterval(calc, 250)
+    return () => clearInterval(id)
+  }, [status])
+  const shown = status === 'done' ? 100 : pct
+  return (
+    <div className="space-y-2">
+      <div className="w-full h-2.5 bg-[#111111] border border-[#2a2a2a] rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ease-out ${
+            status === 'error' ? 'bg-red-500' : 'bg-white'
+          }`}
+          style={{ width: `${shown}%` }}
+        />
+      </div>
+      <div className="flex justify-between items-center gap-3">
+        <span className="text-[#a3a3a3] text-xs">{label}</span>
+        <span className="text-[#666666] text-xs font-mono">{Math.round(shown)}%</span>
+      </div>
+    </div>
+  )
+}
+
 export default function BoletosPage() {
   const [showModal, setShowModal] = useState(false)
   const [boletos, setBoletos] = useState([])
@@ -31,61 +67,41 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [cnab400Regenerar, setCnab400Regenerar] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
-  const [cnab400Progress, setCnab400Progress] = useState(null) // { pct, label, status: 'running'|'done'|'error' }
+  const [cnab400Progress, setCnab400Progress] = useState(null) // { label, status: 'running'|'done'|'error' }
   const cnab400RunningRef = useRef(false)
-  const cnab400TimerRef = useRef(null)
   const pintarFrameCnab = () =>
     new Promise((r) =>
       typeof requestAnimationFrame === 'function'
         ? requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))
         : setTimeout(r, 0)
     )
-  const pararTickerCnab = () => {
-    if (cnab400TimerRef.current) {
-      clearInterval(cnab400TimerRef.current)
-      cnab400TimerRef.current = null
-    }
-  }
-  // Abre o popup e liga um "ticker": a cada 1s sem avanco de etapa, soma 3% ao
-  // percentual (ate 95%), pra barra nunca parecer travada. As etapas reais
-  // empurram o valor pra frente via pisos (Math.max), nunca pra tras.
+  // Abre o popup. O avanco da barra (1% + 3%/s) fica no CnabProgressBar (timer
+  // proprio baseado em tempo decorrido) — assim o re-render pesado do
+  // BoletosPage nao trava a contagem.
   const iniciarBarraCnab = async (label) => {
     if (cnab400RunningRef.current) {
       setCnab400Progress((p) => (p ? { ...p, label } : p))
       return
     }
     cnab400RunningRef.current = true
-    setCnab400Progress({ pct: 1, label, status: 'running' })
-    pararTickerCnab()
-    cnab400TimerRef.current = setInterval(() => {
-      setCnab400Progress((p) =>
-        p && p.status === 'running' ? { ...p, pct: Math.min(95, p.pct + 3) } : p
-      )
-    }, 1000)
+    setCnab400Progress({ label, status: 'running' })
     await pintarFrameCnab()
   }
-  // Atualiza o rotulo e, opcionalmente, um piso de percentual para a etapa.
-  const rotularBarraCnab = (label, pisoPct) =>
-    setCnab400Progress((p) =>
-      p ? { ...p, label, pct: pisoPct != null ? Math.max(p.pct, pisoPct) : p.pct } : p
-    )
+  const rotularBarraCnab = (label) =>
+    setCnab400Progress((p) => (p ? { ...p, label } : p))
   const concluirBarraCnab = (label) => {
     cnab400RunningRef.current = false
-    pararTickerCnab()
-    setCnab400Progress({ pct: 100, label, status: 'done' })
-    setTimeout(() => setCnab400Progress(null), 800)
+    setCnab400Progress({ label, status: 'done' })
+    setTimeout(() => setCnab400Progress(null), 900)
   }
   const erroBarraCnab = (label) => {
     cnab400RunningRef.current = false
-    pararTickerCnab()
-    setCnab400Progress((p) => ({ pct: (p && p.pct) || 100, label, status: 'error' }))
+    setCnab400Progress({ label, status: 'error' })
   }
   const fecharBarraCnab = () => {
     cnab400RunningRef.current = false
-    pararTickerCnab()
     setCnab400Progress(null)
   }
-  useEffect(() => () => pararTickerCnab(), [])
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -2220,20 +2236,7 @@ export default function BoletosPage() {
               </h3>
             </div>
 
-            <div className="space-y-2">
-              <div className="w-full h-2.5 bg-[#111111] border border-[#2a2a2a] rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-700 ease-out ${
-                    cnab400Progress.status === 'error' ? 'bg-red-500' : 'bg-white'
-                  }`}
-                  style={{ width: `${cnab400Progress.pct != null ? cnab400Progress.pct : 1}%` }}
-                />
-              </div>
-              <div className="flex justify-between items-center gap-3">
-                <span className="text-[#a3a3a3] text-xs">{cnab400Progress.label}</span>
-                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct != null ? cnab400Progress.pct : 1)}%</span>
-              </div>
-            </div>
+            <CnabProgressBar label={cnab400Progress.label} status={cnab400Progress.status} />
 
             {cnab400Progress.status === 'error' && (
               <div className="flex justify-end pt-1">
