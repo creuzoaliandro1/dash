@@ -31,51 +31,61 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [cnab400Regenerar, setCnab400Regenerar] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
-  const [cnab400Progress, setCnab400Progress] = useState(null) // { scale, transition, label, status: 'running'|'done'|'error' }
+  const [cnab400Progress, setCnab400Progress] = useState(null) // { pct, label, status: 'running'|'done'|'error' }
   const cnab400RunningRef = useRef(false)
-  const CNAB_CREEP = 'transform 8s cubic-bezier(0.05, 0.8, 0.1, 1)'
+  const cnab400TimerRef = useRef(null)
   const pintarFrameCnab = () =>
     new Promise((r) =>
       typeof requestAnimationFrame === 'function'
         ? requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))
         : setTimeout(r, 0)
     )
-  // Abre o popup e dispara o avanco CONTINUO da barra ate ~90% via animacao de
-  // transform (roda no compositor, entao segue mesmo com a thread travada pela
-  // geracao sincrona do .REM). Se ja estiver rodando, so troca o rotulo.
+  const pararTickerCnab = () => {
+    if (cnab400TimerRef.current) {
+      clearInterval(cnab400TimerRef.current)
+      cnab400TimerRef.current = null
+    }
+  }
+  // Abre o popup e liga um "ticker": a cada 1s sem avanco de etapa, soma 3% ao
+  // percentual (ate 95%), pra barra nunca parecer travada. As etapas reais
+  // empurram o valor pra frente via pisos (Math.max), nunca pra tras.
   const iniciarBarraCnab = async (label) => {
     if (cnab400RunningRef.current) {
       setCnab400Progress((p) => (p ? { ...p, label } : p))
       return
     }
     cnab400RunningRef.current = true
-    // Frame 1: pinta a barra em ~3% (sem transicao).
-    setCnab400Progress({ scale: 0.03, transition: 'none', label, status: 'running' })
-    await pintarFrameCnab()
-    // Frame 2: dispara a transicao ate ~90%.
-    setCnab400Progress((p) =>
-      p && p.status === 'running' ? { ...p, scale: 0.9, transition: CNAB_CREEP } : p
-    )
-    // Frame 3: garante que o navegador COMMITOU o estilo e INICIOU a animacao
-    // no compositor antes de a thread travar gerando o .REM. Sem isto a barra
-    // fica presa em 3% ate o fim.
+    setCnab400Progress({ pct: 4, label, status: 'running' })
+    pararTickerCnab()
+    cnab400TimerRef.current = setInterval(() => {
+      setCnab400Progress((p) =>
+        p && p.status === 'running' ? { ...p, pct: Math.min(95, p.pct + 3) } : p
+      )
+    }, 1000)
     await pintarFrameCnab()
   }
-  const rotularBarraCnab = (label) =>
-    setCnab400Progress((p) => (p ? { ...p, label } : p))
+  // Atualiza o rotulo e, opcionalmente, um piso de percentual para a etapa.
+  const rotularBarraCnab = (label, pisoPct) =>
+    setCnab400Progress((p) =>
+      p ? { ...p, label, pct: pisoPct != null ? Math.max(p.pct, pisoPct) : p.pct } : p
+    )
   const concluirBarraCnab = (label) => {
     cnab400RunningRef.current = false
-    setCnab400Progress({ scale: 1, transition: 'transform 0.4s ease-out', label, status: 'done' })
+    pararTickerCnab()
+    setCnab400Progress({ pct: 100, label, status: 'done' })
     setTimeout(() => setCnab400Progress(null), 800)
   }
   const erroBarraCnab = (label) => {
     cnab400RunningRef.current = false
-    setCnab400Progress((p) => ({ scale: (p && p.scale) || 0.9, transition: 'none', label, status: 'error' }))
+    pararTickerCnab()
+    setCnab400Progress((p) => ({ pct: (p && p.pct) || 100, label, status: 'error' }))
   }
   const fecharBarraCnab = () => {
     cnab400RunningRef.current = false
+    pararTickerCnab()
     setCnab400Progress(null)
   }
+  useEffect(() => () => pararTickerCnab(), [])
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -762,7 +772,7 @@ export default function BoletosPage() {
             const activeId = getActiveContaId()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
 
-            rotularBarraCnab('Calculando numeracao da remessa...')
+            rotularBarraCnab('Calculando numeracao da remessa...', 20)
 
             // nextSeq: usa o contador cnab400 se for numero valido (>= 1);
             // se estiver corrompido (null, string de filename, NaN), conta as remessas ja geradas
@@ -777,7 +787,7 @@ export default function BoletosPage() {
                 console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
             }
 
-            rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
+            rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`, 45)
             const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
 
             // Incrementar contador da remessa na conta
@@ -792,7 +802,7 @@ export default function BoletosPage() {
       const sequence = String(nextSeq).padStart(7, '0')
       const filename = `CB${day}${month}${sequence}.REM`
 
-      rotularBarraCnab('Gerando arquivo .REM para download...')
+      rotularBarraCnab('Gerando arquivo .REM para download...', 70)
       // Download the file
       const url = URL.createObjectURL(cnab400Blob)
       const link = document.createElement('a')
@@ -2213,18 +2223,16 @@ export default function BoletosPage() {
             <div className="space-y-2">
               <div className="w-full h-2.5 bg-[#111111] border border-[#2a2a2a] rounded-full overflow-hidden">
                 <div
-                  className={`h-full w-full rounded-full ${
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
                     cnab400Progress.status === 'error' ? 'bg-red-500' : 'bg-white'
                   }`}
-                  style={{
-                    transform: `scaleX(${cnab400Progress.scale != null ? cnab400Progress.scale : 0.03})`,
-                    transformOrigin: 'left',
-                    transition: cnab400Progress.transition || 'none',
-                    willChange: 'transform',
-                  }}
+                  style={{ width: `${cnab400Progress.pct != null ? cnab400Progress.pct : 4}%` }}
                 />
               </div>
-              <span className="text-[#a3a3a3] text-xs block">{cnab400Progress.label}</span>
+              <div className="flex justify-between items-center gap-3">
+                <span className="text-[#a3a3a3] text-xs">{cnab400Progress.label}</span>
+                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct != null ? cnab400Progress.pct : 4)}%</span>
+              </div>
             </div>
 
             {cnab400Progress.status === 'error' && (
