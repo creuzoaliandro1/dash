@@ -55,7 +55,7 @@ export default function BoletosPage() {
       return
     }
     cnab400RunningRef.current = true
-    setCnab400Progress({ pct: 4, label, status: 'running' })
+    setCnab400Progress({ pct: 1, label, status: 'running' })
     pararTickerCnab()
     cnab400TimerRef.current = setInterval(() => {
       setCnab400Progress((p) =>
@@ -772,7 +772,7 @@ export default function BoletosPage() {
             const activeId = getActiveContaId()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
 
-            rotularBarraCnab('Calculando numeracao da remessa...', 20)
+            rotularBarraCnab('Calculando numeracao da remessa...')
 
             // nextSeq: usa o contador cnab400 se for numero valido (>= 1);
             // se estiver corrompido (null, string de filename, NaN), conta as remessas ja geradas
@@ -787,18 +787,8 @@ export default function BoletosPage() {
                 console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
             }
 
-            rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`, 45)
-            const cnab400Blob = await generateCNAB400RemittanceFile(
-              boletosParaRemessa,
-              contaParaRemessa,
-              nextSeq,
-              tipoOperacao,
-              (frac) =>
-                rotularBarraCnab(
-                  `Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`,
-                  45 + Math.round(frac * 45)
-                )
-            )
+            rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
+            const cnab400Blob = await generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
 
             // Incrementar contador da remessa na conta
             if (contaParaRemessa) {
@@ -812,7 +802,7 @@ export default function BoletosPage() {
       const sequence = String(nextSeq).padStart(7, '0')
       const filename = `CB${day}${month}${sequence}.REM`
 
-      rotularBarraCnab('Gerando arquivo .REM para download...', 70)
+      rotularBarraCnab('Gerando arquivo .REM para download...')
       // Download the file
       const url = URL.createObjectURL(cnab400Blob)
       const link = document.createElement('a')
@@ -2236,12 +2226,12 @@ export default function BoletosPage() {
                   className={`h-full rounded-full transition-all duration-700 ease-out ${
                     cnab400Progress.status === 'error' ? 'bg-red-500' : 'bg-white'
                   }`}
-                  style={{ width: `${cnab400Progress.pct != null ? cnab400Progress.pct : 4}%` }}
+                  style={{ width: `${cnab400Progress.pct != null ? cnab400Progress.pct : 1}%` }}
                 />
               </div>
               <div className="flex justify-between items-center gap-3">
                 <span className="text-[#a3a3a3] text-xs">{cnab400Progress.label}</span>
-                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct != null ? cnab400Progress.pct : 4)}%</span>
+                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct != null ? cnab400Progress.pct : 1)}%</span>
               </div>
             </div>
 
