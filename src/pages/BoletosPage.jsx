@@ -31,6 +31,7 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [cnab400Regenerar, setCnab400Regenerar] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
+  const [cnab400Progress, setCnab400Progress] = useState(null) // { pct, label, status: 'running'|'done'|'error' }
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -696,12 +697,24 @@ export default function BoletosPage() {
 
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
     setGeneratingCNAB400(true)
+    // Popup de progresso: aparece assim que a geracao comeca e mostra o
+    // estagio da formacao do arquivo .REM. Fecha sozinho quando o arquivo
+    // fica disponivel para salvar (download disparado).
+    const setEtapaCnab = (pct, label, status = 'running') =>
+      setCnab400Progress({ pct, label, status })
+    const pausarCnab = (ms = 45) => new Promise((r) => setTimeout(r, ms))
+    let arquivoDisponivel = false
+    setEtapaCnab(8, 'Preparando dados da conta...')
+    await pausarCnab()
     try {
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
       // Usar contaData ja carregado (ou recarregar se necessario)
             const activeId = getActiveContaId()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
+
+            setEtapaCnab(28, 'Calculando numeracao da remessa...')
+            await pausarCnab()
 
             // nextSeq: usa o contador cnab400 se for numero valido (>= 1);
             // se estiver corrompido (null, string de filename, NaN), conta as remessas ja geradas
@@ -716,6 +729,8 @@ export default function BoletosPage() {
                 console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
             }
 
+            setEtapaCnab(50, `Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
+            await pausarCnab()
             const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
 
             // Incrementar contador da remessa na conta
@@ -730,6 +745,8 @@ export default function BoletosPage() {
       const sequence = String(nextSeq).padStart(7, '0')
       const filename = `CB${day}${month}${sequence}.REM`
 
+      setEtapaCnab(75, 'Gerando arquivo .REM para download...')
+      await pausarCnab()
       // Download the file
       const url = URL.createObjectURL(cnab400Blob)
       const link = document.createElement('a')
@@ -739,6 +756,12 @@ export default function BoletosPage() {
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
+
+      // Arquivo ja disponivel para salvar -> conclui e fecha SO o popup.
+      // As etapas seguintes (Storage/registro no banco) seguem em background.
+      arquivoDisponivel = true
+      setEtapaCnab(100, `Arquivo "${filename}" pronto para salvar ✓`, 'done')
+      setTimeout(() => setCnab400Progress(null), 1000)
 
       // Salvar o arquivo .REM gerado no Supabase Storage, para consulta/reenvio
       // posterior caso o download local se perca (opcional - não bloqueia o fluxo)
@@ -787,13 +810,18 @@ export default function BoletosPage() {
         }
       }
 
-      alert(`Remessa CNAB400 "${filename}" gerada com sucesso!`)
       setSelectedRows(new Set())
       await loadContaData()
       await loadBoletos()
     } catch (error) {
       console.error('[CNAB400] Erro ao gerar remessa:', error)
-      alert('Erro ao gerar remessa CNAB400: ' + error.message)
+      if (arquivoDisponivel) {
+        // O arquivo .REM ja foi gerado/baixado; a falha foi so em etapa de
+        // background (storage/registro). Nao reabre o popup como erro.
+        setCnab400Progress(null)
+      } else {
+        setCnab400Progress({ pct: 100, label: 'Erro ao gerar remessa: ' + error.message, status: 'error' })
+      }
     } finally {
       setGeneratingCNAB400(false)
     }
@@ -2112,6 +2140,56 @@ export default function BoletosPage() {
                 Gerar novo
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popup de progresso da geracao do arquivo CNAB400 (.REM) */}
+      {cnab400Progress && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[80] p-4">
+          <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-w-md w-full p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              {cnab400Progress.status === 'error' ? (
+                <span className="text-red-400 text-xl leading-none">⚠️</span>
+              ) : cnab400Progress.status === 'done' ? (
+                <span className="text-green-400 text-xl leading-none">✓</span>
+              ) : (
+                <span className="inline-block w-5 h-5 border-2 border-[#2a2a2a] border-t-white rounded-full animate-spin" />
+              )}
+              <h3 className="text-white font-semibold text-base">
+                {cnab400Progress.status === 'error'
+                  ? 'Falha na geracao do CNAB400'
+                  : cnab400Progress.status === 'done'
+                  ? 'Remessa concluida'
+                  : 'Gerando arquivo de registro (.REM)'}
+              </h3>
+            </div>
+
+            <div className="space-y-2">
+              <div className="w-full h-2.5 bg-[#111111] border border-[#2a2a2a] rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ease-out ${
+                    cnab400Progress.status === 'error' ? 'bg-red-500' : 'bg-white'
+                  }`}
+                  style={{ width: `${cnab400Progress.pct}%` }}
+                />
+              </div>
+              <div className="flex justify-between items-center gap-3">
+                <span className="text-[#a3a3a3] text-xs">{cnab400Progress.label}</span>
+                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct)}%</span>
+              </div>
+            </div>
+
+            {cnab400Progress.status === 'error' && (
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={() => setCnab400Progress(null)}
+                  className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
+                >
+                  Fechar
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
