@@ -31,7 +31,45 @@ export default function BoletosPage() {
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
   const [cnab400Regenerar, setCnab400Regenerar] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
-  const [cnab400Progress, setCnab400Progress] = useState(null) // { pct, label, status: 'running'|'done'|'error' }
+  const [cnab400Progress, setCnab400Progress] = useState(null) // { scale, transition, label, status: 'running'|'done'|'error' }
+  const cnab400RunningRef = useRef(false)
+  const CNAB_CREEP = 'transform 8s cubic-bezier(0.05, 0.8, 0.1, 1)'
+  const pintarFrameCnab = () =>
+    new Promise((r) =>
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))
+        : setTimeout(r, 0)
+    )
+  // Abre o popup e dispara o avanco CONTINUO da barra ate ~90% via animacao de
+  // transform (roda no compositor, entao segue mesmo com a thread travada pela
+  // geracao sincrona do .REM). Se ja estiver rodando, so troca o rotulo.
+  const iniciarBarraCnab = async (label) => {
+    if (cnab400RunningRef.current) {
+      setCnab400Progress((p) => (p ? { ...p, label } : p))
+      return
+    }
+    cnab400RunningRef.current = true
+    setCnab400Progress({ scale: 0.03, transition: 'none', label, status: 'running' })
+    await pintarFrameCnab()
+    setCnab400Progress((p) =>
+      p && p.status === 'running' ? { ...p, scale: 0.9, transition: CNAB_CREEP } : p
+    )
+  }
+  const rotularBarraCnab = (label) =>
+    setCnab400Progress((p) => (p ? { ...p, label } : p))
+  const concluirBarraCnab = (label) => {
+    cnab400RunningRef.current = false
+    setCnab400Progress({ scale: 1, transition: 'transform 0.4s ease-out', label, status: 'done' })
+    setTimeout(() => setCnab400Progress(null), 800)
+  }
+  const erroBarraCnab = (label) => {
+    cnab400RunningRef.current = false
+    setCnab400Progress((p) => ({ scale: (p && p.scale) || 0.9, transition: 'none', label, status: 'error' }))
+  }
+  const fecharBarraCnab = () => {
+    cnab400RunningRef.current = false
+    setCnab400Progress(null)
+  }
   const [processandoAntecipacao, setProcessandoAntecipacao] = useState(false)
   const [importingOpeite, setImportingOpeite] = useState(false)
   // Modal de importação Efactor (com opção de importar para outro cedente)
@@ -577,15 +615,7 @@ export default function BoletosPage() {
 
     // Abre o popup de progresso JA no clique (antes das verificacoes no banco),
     // para dar feedback imediato. As etapas seguintes atualizam a barra.
-    setCnab400Progress({ pct: 4, label: 'Verificando boletos selecionados...', status: 'running' })
-    // Forca o navegador a pintar o popup AGORA, antes de qualquer consulta ao
-    // banco ou geracao do arquivo (que seguram/travam a thread). Sem este
-    // yield o React so pinta o popup depois do trabalho pesado terminar.
-    await new Promise((r) =>
-      typeof requestAnimationFrame === 'function'
-        ? requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))
-        : setTimeout(r, 0)
-    )
+    await iniciarBarraCnab('Verificando boletos selecionados...')
 
     const activeId = getActiveContaId()
     const filteredBoletos = getFilteredBoletos()
@@ -604,13 +634,13 @@ export default function BoletosPage() {
       const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
 
       if (importErr || !importResult) {
-        setCnab400Progress(null)
+        fecharBarraCnab()
         alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
         return
       }
 
       if (importResult.errors > 0) {
-        setCnab400Progress(null)
+        fecharBarraCnab()
         const continuar = window.confirm(
           `${importResult.errors} registro(s) não puderam ser importados para capt_boletos.\n` +
           `${importResult.imported} importados, ${importResult.skipped} já existiam.\n\n` +
@@ -629,7 +659,7 @@ export default function BoletosPage() {
     }
 
     if (boletosParaRemessa.length === 0) {
-      setCnab400Progress(null)
+      fecharBarraCnab()
       alert('Nenhum boleto disponível para gerar remessa.')
       return
     }
@@ -642,7 +672,7 @@ export default function BoletosPage() {
     try {
       const jaGerados = await checkBoletosJaGerados(boletosParaRemessa)
       if (jaGerados.length > 0) {
-        setCnab400Progress(null)
+        fecharBarraCnab()
         setCnab400Regenerar({ titulos: jaGerados, tipoOperacao, boletosParaRemessa })
         return
       }
@@ -659,7 +689,7 @@ export default function BoletosPage() {
     try {
       const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
       if (jaRegistrados.length > 0) {
-        setCnab400Progress(null)
+        fecharBarraCnab()
         setCnab400Confirm({ titulos: jaRegistrados, tipoOperacao, boletosParaRemessa })
         return
       }
@@ -714,25 +744,11 @@ export default function BoletosPage() {
 
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
     setGeneratingCNAB400(true)
-    // Popup de progresso: aparece assim que a geracao comeca e mostra o
-    // estagio da formacao do arquivo .REM. Fecha sozinho quando o arquivo
-    // fica disponivel para salvar (download disparado).
-    const setEtapaCnab = (pct, label, status = 'running') =>
-      setCnab400Progress({ pct, label, status })
-    const pausarCnab = () =>
-      new Promise((resolve) => {
-        // rAF duplo garante que o navegador REALMENTE pintou o frame antes
-        // de seguir. Essencial antes da geracao sincrona do .REM, que trava
-        // a thread principal — sem isso o popup so aparece no fim.
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))
-        } else {
-          setTimeout(resolve, 45)
-        }
-      })
+    // Barra de progresso continua (transform/compositor): segue avancando ate
+    // ~90% mesmo enquanto a thread fica travada gerando o .REM. Se ja estiver
+    // aberta (fluxo comum vindo do clique), apenas troca o rotulo.
     let arquivoDisponivel = false
-    setEtapaCnab(8, 'Preparando dados da conta...')
-    await pausarCnab()
+    await iniciarBarraCnab('Preparando dados da conta...')
     try {
       console.log('[CNAB400] Gerando remessa para', boletosParaRemessa.length, 'boletos selecionados')
 
@@ -740,8 +756,7 @@ export default function BoletosPage() {
             const activeId = getActiveContaId()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
 
-            setEtapaCnab(28, 'Calculando numeracao da remessa...')
-            await pausarCnab()
+            rotularBarraCnab('Calculando numeracao da remessa...')
 
             // nextSeq: usa o contador cnab400 se for numero valido (>= 1);
             // se estiver corrompido (null, string de filename, NaN), conta as remessas ja geradas
@@ -756,8 +771,7 @@ export default function BoletosPage() {
                 console.log(`[CNAB400] cnab400 invalido ('${cnab400Raw}'), usando contagem de REMESSAS: ${count} -> nextSeq=${nextSeq}`)
             }
 
-            setEtapaCnab(50, `Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
-            await pausarCnab()
+            rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
             const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
 
             // Incrementar contador da remessa na conta
@@ -772,8 +786,7 @@ export default function BoletosPage() {
       const sequence = String(nextSeq).padStart(7, '0')
       const filename = `CB${day}${month}${sequence}.REM`
 
-      setEtapaCnab(75, 'Gerando arquivo .REM para download...')
-      await pausarCnab()
+      rotularBarraCnab('Gerando arquivo .REM para download...')
       // Download the file
       const url = URL.createObjectURL(cnab400Blob)
       const link = document.createElement('a')
@@ -787,8 +800,7 @@ export default function BoletosPage() {
       // Arquivo ja disponivel para salvar -> conclui e fecha SO o popup.
       // As etapas seguintes (Storage/registro no banco) seguem em background.
       arquivoDisponivel = true
-      setEtapaCnab(100, `Arquivo "${filename}" pronto para salvar ✓`, 'done')
-      setTimeout(() => setCnab400Progress(null), 1000)
+      concluirBarraCnab(`Arquivo "${filename}" pronto para salvar ✓`)
 
       // Salvar o arquivo .REM gerado no Supabase Storage, para consulta/reenvio
       // posterior caso o download local se perca (opcional - não bloqueia o fluxo)
@@ -845,9 +857,9 @@ export default function BoletosPage() {
       if (arquivoDisponivel) {
         // O arquivo .REM ja foi gerado/baixado; a falha foi so em etapa de
         // background (storage/registro). Nao reabre o popup como erro.
-        setCnab400Progress(null)
+        fecharBarraCnab()
       } else {
-        setCnab400Progress({ pct: 100, label: 'Erro ao gerar remessa: ' + error.message, status: 'error' })
+        erroBarraCnab('Erro ao gerar remessa: ' + error.message)
       }
     } finally {
       setGeneratingCNAB400(false)
@@ -2195,22 +2207,23 @@ export default function BoletosPage() {
             <div className="space-y-2">
               <div className="w-full h-2.5 bg-[#111111] border border-[#2a2a2a] rounded-full overflow-hidden">
                 <div
-                  className={`h-full rounded-full transition-all duration-300 ease-out ${
+                  className={`h-full w-full rounded-full ${
                     cnab400Progress.status === 'error' ? 'bg-red-500' : 'bg-white'
                   }`}
-                  style={{ width: `${cnab400Progress.pct}%` }}
+                  style={{
+                    transform: `scaleX(${cnab400Progress.scale != null ? cnab400Progress.scale : 0.03})`,
+                    transformOrigin: 'left',
+                    transition: cnab400Progress.transition || 'none',
+                  }}
                 />
               </div>
-              <div className="flex justify-between items-center gap-3">
-                <span className="text-[#a3a3a3] text-xs">{cnab400Progress.label}</span>
-                <span className="text-[#666666] text-xs font-mono">{Math.round(cnab400Progress.pct)}%</span>
-              </div>
+              <span className="text-[#a3a3a3] text-xs block">{cnab400Progress.label}</span>
             </div>
 
             {cnab400Progress.status === 'error' && (
               <div className="flex justify-end pt-1">
                 <button
-                  onClick={() => setCnab400Progress(null)}
+                  onClick={() => fecharBarraCnab()}
                   className="px-5 py-2 text-sm text-white border border-[#2a2a2a] rounded hover:bg-[#111111] transition"
                 >
                   Fechar
