@@ -49,11 +49,17 @@ export default function BoletosPage() {
       return
     }
     cnab400RunningRef.current = true
+    // Frame 1: pinta a barra em ~3% (sem transicao).
     setCnab400Progress({ scale: 0.03, transition: 'none', label, status: 'running' })
     await pintarFrameCnab()
+    // Frame 2: dispara a transicao ate ~90%.
     setCnab400Progress((p) =>
       p && p.status === 'running' ? { ...p, scale: 0.9, transition: CNAB_CREEP } : p
     )
+    // Frame 3: garante que o navegador COMMITOU o estilo e INICIOU a animacao
+    // no compositor antes de a thread travar gerando o .REM. Sem isto a barra
+    // fica presa em 3% ate o fim.
+    await pintarFrameCnab()
   }
   const rotularBarraCnab = (label) =>
     setCnab400Progress((p) => (p ? { ...p, label } : p))
@@ -2214,6 +2220,7 @@ export default function BoletosPage() {
                     transform: `scaleX(${cnab400Progress.scale != null ? cnab400Progress.scale : 0.03})`,
                     transformOrigin: 'left',
                     transition: cnab400Progress.transition || 'none',
+                    willChange: 'transform',
                   }}
                 />
               </div>
