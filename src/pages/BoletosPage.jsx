@@ -644,7 +644,6 @@ export default function BoletosPage() {
     }
     setShowCnab400Sub(false)
     setOpenActionsMenu(false)
-    window.__cnab = { t0: performance.now() }
 
     // Abre o popup de progresso JA no clique (antes das verificacoes no banco),
     // para dar feedback imediato. As etapas seguintes atualizam a barra.
@@ -703,9 +702,7 @@ export default function BoletosPage() {
     // (situacao='Remessa'). Se sim, perguntar se deseja gerar nova numeração
     // ou manter os dados anteriores.
     try {
-      const _tGer = performance.now()
       const jaGerados = await checkBoletosJaGerados(boletosParaRemessa)
-      if (window.__cnab) window.__cnab.gerados = performance.now() - _tGer
       if (jaGerados.length > 0) {
         fecharBarraCnab()
         setCnab400Regenerar({ titulos: jaGerados, tipoOperacao, boletosParaRemessa })
@@ -722,9 +719,7 @@ export default function BoletosPage() {
   // efetivamente gerar o arquivo CNAB400 (etapa comum a todos os fluxos).
   const checkRegistradosEGerar = async (boletosParaRemessa, tipoOperacao) => {
     try {
-      const _tScan = performance.now()
       const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
-      if (window.__cnab) window.__cnab.scan = performance.now() - _tScan
       if (jaRegistrados.length > 0) {
         fecharBarraCnab()
         setCnab400Confirm({ titulos: jaRegistrados, tipoOperacao, boletosParaRemessa })
@@ -791,9 +786,7 @@ export default function BoletosPage() {
 
       // Usar contaData ja carregado (ou recarregar se necessario)
             const activeId = getActiveContaId()
-            const _tConta = performance.now()
             const contaParaRemessa = contaData || (await getContaInfo(activeId)).data
-            if (window.__cnab) window.__cnab.conta = performance.now() - _tConta
 
             rotularBarraCnab('Calculando numeracao da remessa...')
 
@@ -811,9 +804,7 @@ export default function BoletosPage() {
             }
 
             rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`)
-            const _tGen = performance.now()
             const cnab400Blob = await generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
-            if (window.__cnab) window.__cnab.gen = performance.now() - _tGen
 
             // Incrementar contador da remessa na conta
             if (contaParaRemessa) {
@@ -841,18 +832,6 @@ export default function BoletosPage() {
       // Arquivo ja disponivel para salvar -> conclui e fecha SO o popup.
       // As etapas seguintes (Storage/registro no banco) seguem em background.
       arquivoDisponivel = true
-      if (window.__cnab) {
-        const tot = Math.round(performance.now() - window.__cnab.t0)
-        alert(
-          "DIAGNOSTICO CNAB400 (temporario):\n" +
-          "Total: " + tot + "ms\n" +
-          "Qtd boletos: " + boletosParaRemessa.length + "\n" +
-          "checkJaGerados: " + Math.round(window.__cnab.gerados || 0) + "ms\n" +
-          "Varredura registrados: " + Math.round(window.__cnab.scan || 0) + "ms\n" +
-          "Busca conta: " + Math.round(window.__cnab.conta || 0) + "ms\n" +
-          "Geracao arquivo: " + Math.round(window.__cnab.gen || 0) + "ms"
-        )
-      }
       concluirBarraCnab(`Arquivo "${filename}" pronto para salvar ✓`)
 
       // Salvar o arquivo .REM gerado no Supabase Storage, para consulta/reenvio
