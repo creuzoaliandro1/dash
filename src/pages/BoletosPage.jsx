@@ -578,6 +578,14 @@ export default function BoletosPage() {
     // Abre o popup de progresso JA no clique (antes das verificacoes no banco),
     // para dar feedback imediato. As etapas seguintes atualizam a barra.
     setCnab400Progress({ pct: 4, label: 'Verificando boletos selecionados...', status: 'running' })
+    // Forca o navegador a pintar o popup AGORA, antes de qualquer consulta ao
+    // banco ou geracao do arquivo (que seguram/travam a thread). Sem este
+    // yield o React so pinta o popup depois do trabalho pesado terminar.
+    await new Promise((r) =>
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))
+        : setTimeout(r, 0)
+    )
 
     const activeId = getActiveContaId()
     const filteredBoletos = getFilteredBoletos()
@@ -711,7 +719,17 @@ export default function BoletosPage() {
     // fica disponivel para salvar (download disparado).
     const setEtapaCnab = (pct, label, status = 'running') =>
       setCnab400Progress({ pct, label, status })
-    const pausarCnab = (ms = 45) => new Promise((r) => setTimeout(r, ms))
+    const pausarCnab = () =>
+      new Promise((resolve) => {
+        // rAF duplo garante que o navegador REALMENTE pintou o frame antes
+        // de seguir. Essencial antes da geracao sincrona do .REM, que trava
+        // a thread principal — sem isso o popup so aparece no fim.
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))
+        } else {
+          setTimeout(resolve, 45)
+        }
+      })
     let arquivoDisponivel = false
     setEtapaCnab(8, 'Preparando dados da conta...')
     await pausarCnab()
