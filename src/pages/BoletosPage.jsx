@@ -788,7 +788,17 @@ export default function BoletosPage() {
             }
 
             rotularBarraCnab(`Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`, 45)
-            const cnab400Blob = generateCNAB400RemittanceFile(boletosParaRemessa, contaParaRemessa, nextSeq, tipoOperacao)
+            const cnab400Blob = await generateCNAB400RemittanceFile(
+              boletosParaRemessa,
+              contaParaRemessa,
+              nextSeq,
+              tipoOperacao,
+              (frac) =>
+                rotularBarraCnab(
+                  `Formatando ${boletosParaRemessa.length} registro(s) no layout CNAB400...`,
+                  45 + Math.round(frac * 45)
+                )
+            )
 
             // Incrementar contador da remessa na conta
             if (contaParaRemessa) {

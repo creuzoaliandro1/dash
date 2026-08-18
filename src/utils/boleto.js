@@ -349,7 +349,7 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq, tipoOperacao = '01') => {
+export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress) => {
     console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
@@ -375,13 +375,24 @@ export const generateCNAB400RemittanceFile = (boletos, conta, nextSeq, tipoOpera
     lines.push(buildHeader(contaInfo, seq, tipoOperacao))
     lineSeq++
 
-    // Detalhe (2 linhas por boleto)
+    // Detalhe (2 linhas por boleto). Libera a thread principal periodicamente
+    // para a barra de progresso da UI atualizar e reportar progresso REAL —
+    // senao a geracao sincrona trava a tela inteira ate terminar.
+    const totalBoletos = boletos.length
+    const loteYield = Math.max(20, Math.ceil(totalBoletos / 40))
+    let idxBoleto = 0
     for (const boleto of boletos) {
           lines.push(buildDetalhe1(boleto, contaInfo, lineSeq, tipoOperacao))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
+          idxBoleto++
+          if (idxBoleto % loteYield === 0) {
+                if (typeof onProgress === 'function') onProgress(idxBoleto / totalBoletos)
+                await new Promise((r) => setTimeout(r, 0))
+          }
     }
+    if (typeof onProgress === 'function') onProgress(1)
 
     // Trailer
     const totalLines = lineSeq // header + detalhes ja contados + trailer = lineSeq
