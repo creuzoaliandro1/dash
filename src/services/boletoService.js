@@ -1868,7 +1868,12 @@ export const getBoletosImportadosUnificados = async (contaData) => {
     // Monta um registro mesclado a partir das 3 fontes (qualquer uma pode faltar).
     // Exibição prioriza REGISTRADO > OPEITE > CAPT; ações usam o registro CAPT (se houver).
     const buildMerged = (R, O, C) => {
-      const primary = R || O || C       // fonte dos campos de exibição (prioridade)
+      // Um capt_registrado CANCELADO não representa mais um título ativo no banco:
+      // não pode ditar exibição/status nem mascarar um capt_boletos/OPEITE que
+      // precisa ser gerado (registrado) novamente. Tratamos como se não houvesse
+      // registrado, deixando o boleto ativo reaparecer com CONTA="Não".
+      const Rreg = (R && String(R._situacaoReg || '').toLowerCase() === 'cancelado') ? null : R
+      const primary = Rreg || O || C     // fonte dos campos de exibição (prioridade)
       const base = C || primary          // base p/ identidade e ações (capt é editável)
       const merged = { ...base }
 
@@ -1890,10 +1895,10 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       merged.zapsign_status = C ? C.zapsign_status : null
       merged.zapsign_sign_url = C ? C.zapsign_sign_url : null
       // CONTA: "registrado" se presente em capt_registrado
-      merged.situacao = R ? 'registrado' : (C ? C.situacao : (primary.situacao || ''))
+      merged.situacao = Rreg ? 'registrado' : (C ? C.situacao : (primary.situacao || ''))
 
       // Origem primária (para badge/guards) e disponibilidade do registro CAPT
-      merged._ORIGEM = R ? 'REGISTRADO' : (O ? 'OPEITE' : 'CAPT')
+      merged._ORIGEM = Rreg ? 'REGISTRADO' : (O ? 'OPEITE' : 'CAPT')
       merged._hasCapt = !!C
       merged._fontes = [R && 'REGISTRADO', O && 'OPEITE', C && 'CAPT'].filter(Boolean)
 
@@ -1907,7 +1912,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
 
       // Registrado: verde se em capt_registrado, amarelo se CNAB400 foi gerado (situacao='Remessa'),
       // vermelho caso contrário.
-      merged._contaLabel = R
+      merged._contaLabel = Rreg
         ? 'Sim'
         : (captSituacao === 'remessa' ? 'Remessa' : 'Não')
 
@@ -1919,14 +1924,14 @@ export const getBoletosImportadosUnificados = async (contaData) => {
           ? 'Aguardando'
           : 'Não')
 
-      merged._statusLabel = (R && O) ? 'Vencer' : 'Pendente'
+      merged._statusLabel = (Rreg && O) ? 'Vencer' : 'Pendente'
 
       // Identidade: usa id do capt se existir; senão id estável da fonte prioritária
       if (C) {
         merged.id = C.id
         merged.conta_id = C.conta_id
-      } else if (R) {
-        merged.id = R.id // `reg_<id>`
+      } else if (Rreg) {
+        merged.id = Rreg.id // `reg_<id>`
       } else if (O) {
         merged.id = `ope_${O.num_lancamento || O._key}`
       }

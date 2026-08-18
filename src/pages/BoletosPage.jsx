@@ -575,6 +575,10 @@ export default function BoletosPage() {
     setShowCnab400Sub(false)
     setOpenActionsMenu(false)
 
+    // Abre o popup de progresso JA no clique (antes das verificacoes no banco),
+    // para dar feedback imediato. As etapas seguintes atualizam a barra.
+    setCnab400Progress({ pct: 4, label: 'Verificando boletos selecionados...', status: 'running' })
+
     const activeId = getActiveContaId()
     const filteredBoletos = getFilteredBoletos()
     const selecionados = Array.from(selectedRows)
@@ -592,11 +596,13 @@ export default function BoletosPage() {
       const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
 
       if (importErr || !importResult) {
+        setCnab400Progress(null)
         alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
         return
       }
 
       if (importResult.errors > 0) {
+        setCnab400Progress(null)
         const continuar = window.confirm(
           `${importResult.errors} registro(s) não puderam ser importados para capt_boletos.\n` +
           `${importResult.imported} importados, ${importResult.skipped} já existiam.\n\n` +
@@ -615,6 +621,7 @@ export default function BoletosPage() {
     }
 
     if (boletosParaRemessa.length === 0) {
+      setCnab400Progress(null)
       alert('Nenhum boleto disponível para gerar remessa.')
       return
     }
@@ -627,6 +634,7 @@ export default function BoletosPage() {
     try {
       const jaGerados = await checkBoletosJaGerados(boletosParaRemessa)
       if (jaGerados.length > 0) {
+        setCnab400Progress(null)
         setCnab400Regenerar({ titulos: jaGerados, tipoOperacao, boletosParaRemessa })
         return
       }
@@ -643,6 +651,7 @@ export default function BoletosPage() {
     try {
       const jaRegistrados = await checkBoletosJaRegistrados(boletosParaRemessa)
       if (jaRegistrados.length > 0) {
+        setCnab400Progress(null)
         setCnab400Confirm({ titulos: jaRegistrados, tipoOperacao, boletosParaRemessa })
         return
       }
