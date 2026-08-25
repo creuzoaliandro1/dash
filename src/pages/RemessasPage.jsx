@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { getRemessas, getDownloadUrlRemessa, getAllContas } from '../services/boletoService'
+import { createAndDownloadZip } from '../utils/zipUtils'
 
 const formatDataHora = (v) => {
   if (!v) return '—'
@@ -22,6 +23,10 @@ export default function RemessasPage() {
   const [dataFim, setDataFim] = useState('')
   const [page, setPage] = useState(1)
   const [baixando, setBaixando] = useState(null)
+  const [selectedRows, setSelectedRows] = useState(new Set())
+  const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  const [zipping, setZipping] = useState(false)
+  const [zipProgress, setZipProgress] = useState(null)
   const pageSize = 50
 
   useEffect(() => { load() }, [])
@@ -67,6 +72,28 @@ export default function RemessasPage() {
   const totalPages = Math.max(1, Math.ceil(filtradas.length / pageSize))
   const pagina = filtradas.slice((page - 1) * pageSize, page * pageSize)
 
+  const todasFiltradasSelecionadas = filtradas.length > 0 && filtradas.every((r) => selectedRows.has(r.ID))
+
+  const toggleRow = (id) => {
+    setSelectedRows((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+
+  const toggleTodas = () => {
+    setSelectedRows((prev) => {
+      const n = new Set(prev)
+      if (filtradas.every((r) => n.has(r.ID))) {
+        filtradas.forEach((r) => n.delete(r.ID))
+      } else {
+        filtradas.forEach((r) => n.add(r.ID))
+      }
+      return n
+    })
+  }
+
   const handleDownload = async (r) => {
     if (!r.CAMINHO_STORAGE) {
       alert('Esta remessa não tem arquivo salvo no storage.')
@@ -90,7 +117,78 @@ export default function RemessasPage() {
     }
   }
 
+  const handleBaixarZip = async () => {
+    setOpenActionsMenu(false)
+    const alvos = remessas.filter((r) => selectedRows.has(r.ID) && r.CAMINHO_STORAGE)
+    if (alvos.length === 0) {
+      alert('Selecione ao menos uma remessa que tenha arquivo no storage.')
+      return
+    }
+    if (alvos.length > 100 && !window.confirm(`Você selecionou ${alvos.length} remessas. Gerar o ZIP pode demorar. Continuar?`)) {
+      return
+    }
+    setZipping(true)
+    setZipProgress({ done: 0, total: alvos.length })
+    try {
+      const usados = new Map()
+      const nomeUnico = (r) => {
+        let nome = r.ARQUIVO_REMESSA || `remessa_${r.ID}.REM`
+        if (usados.has(nome)) {
+          usados.set(nome, usados.get(nome) + 1)
+          const dot = nome.lastIndexOf('.')
+          nome = dot > 0 ? `${nome.slice(0, dot)}_${r.ID}${nome.slice(dot)}` : `${nome}_${r.ID}`
+        } else {
+          usados.set(nome, 1)
+        }
+        return nome
+      }
+      const arquivos = []
+      let idx = 0
+      let done = 0
+      const CONC = 5
+      const worker = async () => {
+        while (idx < alvos.length) {
+          const r = alvos[idx++]
+          try {
+            const { data: url } = await getDownloadUrlRemessa(r.CAMINHO_STORAGE)
+            if (url) {
+              const resp = await fetch(url)
+              const blob = await resp.blob()
+              arquivos.push({ filename: nomeUnico(r), blob })
+            }
+          } catch (e) {
+            console.warn('[ZIP remessa] falha ao baixar', r.ARQUIVO_REMESSA, e)
+          }
+          done++
+          setZipProgress({ done, total: alvos.length })
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONC, alvos.length) }, worker))
+
+      if (arquivos.length === 0) {
+        alert('Não foi possível baixar nenhum arquivo das remessas selecionadas.')
+        return
+      }
+      const now = new Date()
+      const stamp = `${String(now.getDate()).padStart(2, '0')}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getFullYear()).slice(-2)}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
+      await createAndDownloadZip(arquivos, `remessas_${stamp}.zip`)
+      if (arquivos.length < alvos.length) {
+        alert(`ZIP gerado com ${arquivos.length} de ${alvos.length} arquivos (alguns não puderam ser baixados).`)
+      }
+    } catch (e) {
+      console.error('[RemessasPage] erro ao gerar ZIP:', e)
+      alert('Erro ao gerar ZIP: ' + (e?.message || e))
+    } finally {
+      setZipping(false)
+      setZipProgress(null)
+    }
+  }
+
   const handleLimpar = () => { setSearchTerm(''); setDataIni(''); setDataFim('') }
+
+  const acoesLabel = zipping
+    ? `Gerando ZIP...${zipProgress ? ` (${zipProgress.done}/${zipProgress.total})` : ''}`
+    : `Ações${selectedRows.size ? ` (${selectedRows.size})` : ''}`
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
@@ -98,7 +196,7 @@ export default function RemessasPage() {
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-2xl font-bold text-white">Remessas</h1>
-          <p className="text-sm text-[#666666] mt-1">Arquivos de remessa CNAB400 (.REM) gerados — download disponível</p>
+          <p className="text-sm text-[#666666] mt-1">Arquivos de remessa CNAB400 (.REM) gerados — download individual ou em .zip</p>
         </div>
         <button
           onClick={load}
@@ -138,12 +236,38 @@ export default function RemessasPage() {
           {(searchTerm || dataIni || dataFim) && (
             <button onClick={handleLimpar} className="px-3 py-2 text-xs text-[#a3a3a3] hover:text-white transition">Limpar</button>
           )}
+
+          {/* Ações */}
+          <div className="relative">
+            <button
+              onClick={() => setOpenActionsMenu((o) => !o)}
+              disabled={selectedRows.size === 0 || zipping}
+              className="px-4 py-2 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition disabled:opacity-40 whitespace-nowrap"
+            >
+              {acoesLabel}
+            </button>
+            {openActionsMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setOpenActionsMenu(false)} />
+                <div className="absolute right-0 mt-1 w-60 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg shadow-lg z-20 py-1">
+                  <button
+                    onClick={handleBaixarZip}
+                    disabled={selectedRows.size === 0}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#111111] transition disabled:opacity-40"
+                  >
+                    Baixar .zip das selecionadas ({selectedRows.size})
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Contagem */}
       <div className="text-xs text-[#666666]">
         {loading ? 'Carregando...' : `${filtradas.length} remessa(s)`}
+        {selectedRows.size > 0 && <span className="text-[#a3a3a3]"> · {selectedRows.size} selecionada(s)</span>}
       </div>
 
       {/* Tabela */}
@@ -151,6 +275,15 @@ export default function RemessasPage() {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-[#0a0a0a] z-10">
             <tr className="text-left text-[#666666] border-b border-[#1f1f1f]">
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={todasFiltradasSelecionadas}
+                  onChange={toggleTodas}
+                  className="accent-white cursor-pointer"
+                  title="Selecionar todas (filtradas)"
+                />
+              </th>
               <th className="px-4 py-3 font-medium">Arquivo</th>
               <th className="px-4 py-3 font-medium">Cedente</th>
               <th className="px-4 py-3 font-medium">Data / Hora</th>
@@ -160,10 +293,18 @@ export default function RemessasPage() {
           </thead>
           <tbody>
             {!loading && pagina.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-[#666666]">Nenhuma remessa encontrada.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-[#666666]">Nenhuma remessa encontrada.</td></tr>
             )}
             {pagina.map((r) => (
-              <tr key={r.ID} className="border-b border-[#141414] hover:bg-[#111111] transition">
+              <tr key={r.ID} className={`border-b border-[#141414] hover:bg-[#111111] transition ${selectedRows.has(r.ID) ? 'bg-[#0d0d0d]' : ''}`}>
+                <td className="px-4 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={selectedRows.has(r.ID)}
+                    onChange={() => toggleRow(r.ID)}
+                    className="accent-white cursor-pointer"
+                  />
+                </td>
                 <td className="px-4 py-2.5 font-mono text-white whitespace-nowrap">{r.ARQUIVO_REMESSA || '—'}</td>
                 <td className="px-4 py-2.5 text-[#e5e5e5]">
                   {nomeCedente(r.CONTA) || <span className="text-[#666666]">—</span>}
