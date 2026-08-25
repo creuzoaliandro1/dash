@@ -9,6 +9,7 @@ import ContaCaptPage from './pages/ContaCaptPage'
 import ExtratoPage from './pages/ExtratoPage'
 import ContabilPage from './pages/ContabilPage'
 import RetornoPage from './pages/RetornoPage'
+import RemessasPage from './pages/RemessasPage'
 import AcessosPage from './pages/AcessosPage'
 import CadastroPage from './pages/CadastroPage'
 import ContaBmpPage from './pages/ContaBmpPage'
@@ -78,6 +79,7 @@ export default function App() {
       {currentPage === 'conta-capt' && isMaster && <ContaCaptPage />}
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'retorno' && <RetornoPage />}
+      {currentPage === 'remessas' && isMaster && <RemessasPage />}
       {currentPage === 'acessos' && isMaster && <AcessosPage />}
       {currentPage === 'cadastro' && isMaster && <CadastroPage />}
       {currentPage === 'conta-bmp' && isMaster && <ContaBmpPage />}

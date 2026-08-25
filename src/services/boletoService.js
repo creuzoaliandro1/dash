@@ -1062,11 +1062,11 @@ export const uploadRemessaCNAB400 = async (contaId, filename, blobOuTexto) => {
 }
 
 // Gerar URL de download para um arquivo de remessa CNAB400 salvo no storage
-export const getDownloadUrlRemessa = async (caminhoStorage) => {
+export const getDownloadUrlRemessa = async (caminhoStorage, downloadName) => {
   try {
     const { data, error } = await supabase.storage
       .from('remessas')
-      .createSignedUrl(caminhoStorage, 3600) // URL válida por 1 hora
+      .createSignedUrl(caminhoStorage, 3600, downloadName ? { download: downloadName } : undefined) // URL válida por 1 hora
 
     if (error) throw error
 
@@ -1074,6 +1074,32 @@ export const getDownloadUrlRemessa = async (caminhoStorage) => {
   } catch (err) {
     console.error('[RemessaService] Erro ao gerar URL de download da remessa:', err)
     return { data: null, error: err }
+  }
+}
+
+// Lista TODAS as remessas CNAB400 geradas (tabela REMESSAS), mais recentes
+// primeiro. Pagina de 1000 em 1000 (limite do PostgREST) e concatena.
+export const getRemessas = async () => {
+  try {
+    const pageSize = 1000
+    let from = 0
+    let all = []
+    while (true) {
+      const { data, error } = await supabase
+        .from('REMESSAS')
+        .select('ID, ARQUIVO_REMESSA, DATA_REMESSA, DATA_ENVIO, STATUS, CONTA, AGENCIA, CAMINHO_STORAGE')
+        .order('DATA_ENVIO', { ascending: false, nullsFirst: false })
+        .range(from, from + pageSize - 1)
+      if (error) { console.warn('[getRemessas]', error.message); break }
+      if (!data || data.length === 0) break
+      all = all.concat(data)
+      if (data.length < pageSize) break
+      from += pageSize
+    }
+    return { data: all, error: null }
+  } catch (err) {
+    console.error('[getRemessas] Erro:', err)
+    return { data: [], error: err }
   }
 }
 

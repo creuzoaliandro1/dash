@@ -232,6 +232,18 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
               >
                 Retorno
               </button>
+              {isMaster && (
+                <button
+                  onClick={() => setCurrentPage('remessas')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'remessas'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  Remessas
+                </button>
+              )}
             </div>
           )}
         </div>
