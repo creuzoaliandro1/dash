@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -63,6 +63,21 @@ const parseTipo1 = (line, arquivoNome) => {
     valorTitulo: gn(line, 153, 165, 2),
     valorPago: gn(line, 254, 266, 2),
     motivosList,
+    // Campos completos p/ RET_CONTACAPT (posicoes fornecidas pelo cliente)
+    contaCedente: g(line, 28, 35),
+    carteiraRet: g(line, 22, 23),
+    bcoPgo: g(line, 166, 168),
+    agenciaPgo: g(line, 169, 173),
+    despesaCob: gn(line, 176, 188, 2),
+    juros: gn(line, 202, 214, 2),
+    abatimento: gn(line, 228, 240, 2),
+    desconto: gn(line, 241, 253, 2),
+    mora: gn(line, 267, 279, 2),
+    outros: gn(line, 280, 292, 2),
+    dataCredito: g(line, 296, 301),
+    avalistaCic: g(line, 329, 343),
+    avalistaNome: g(line, 344, 387),
+    motivoRaw: line.substring(318, 328),
     sequencial: g(line, 395, 400),
     arquivoNome,
   }
@@ -229,6 +244,44 @@ const formatDataBR = (iso) => {
 const formatValorBR = (v) =>
   (v == null || isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })
 
+// Monta a linha completa da RET_CONTACAPT a partir de um registro do .ret
+const montarLinhaRet = (reg, arquivoNome, numLanca) => {
+  const nn = (reg.nossoNumeroRaw || '').trim().slice(0, 12)
+  const dtOco = parseDDMMAA(reg.dataOcorrencia)
+  const venc = parseDDMMAA(reg.dataVencimento)
+  const dtCred = parseDDMMAA(reg.dataCredito)
+  const num = numLanca != null ? String(numLanca) : null
+  return {
+    RETORNO: arquivoNome || null,
+    CONTA_CEDENTE: reg.contaCedente || null,
+    CARTEIRA: reg.carteiraRet || null,
+    NOSSO_NUMERO: nn || null,
+    OCORRENCIA: reg.codigoOcorrencia || null,
+    DT_OCORRENCIA: dtOco,
+    NUM_TITULO: reg.numeroDocumento || null,
+    IDENTIFICACAO: reg.nossoNumeroBanco || null,
+    VENCIMENTO: venc,
+    VR_TITULO: reg.valorTitulo ?? null,
+    BCO_PGO: reg.bcoPgo || null,
+    AGENCIA_PGO: reg.agenciaPgo || null,
+    DESPESA_COB: reg.despesaCob ?? null,
+    JUROS: reg.juros ?? null,
+    ABATIMENTO: reg.abatimento ?? null,
+    DESCONTO: reg.desconto ?? null,
+    VR_PAGO: reg.valorPago ?? null,
+    MORA: reg.mora ?? null,
+    OUTROS: reg.outros ?? null,
+    DT_CREDJTO: dtCred,
+    MOTIVO: reg.motivoRaw || null,
+    AVALISTA_CIC: reg.avalistaCic || null,
+    AVALISTA_NOME: reg.avalistaNome || null,
+    NUM_LANCA: num,
+    link_metodo: num != null ? 'valor+venc+cic' : null,
+    link_score: num != null ? 100 : null,
+    hash_dedup: [arquivoNome || '', nn, reg.codigoOcorrencia || '', dtOco || '', Math.round((reg.valorTitulo || 0) * 100), reg.numeroDocumento || ''].join('|'),
+  }
+}
+
 // ─── Consulta capt_boletos com matching hierárquico ───────────────────────────
 // capt_boletos.nosso_numero é gravado SEM zeros à esquerda e SEM DV,
 // formato idêntico ao nossoNumeroBD extraído do arquivo de retorno.
@@ -287,6 +340,15 @@ export default function RetornoPage() {
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
   const [vinculos, setVinculos] = useState({})       // chave -> { numLanca, cic }
   const [processandoRet, setProcessandoRet] = useState(false)
+  const [retSalvos, setRetSalvos] = useState([])
+  const [loadingSalvos, setLoadingSalvos] = useState(false)
+  const loadSalvos = async () => {
+    setLoadingSalvos(true)
+    const { data } = await getRetContacapt()
+    setRetSalvos(data || [])
+    setLoadingSalvos(false)
+  }
+  useEffect(() => { loadSalvos() }, [])
   const [erros, setErros] = useState([])
   const fileInputRef = useRef(null)
 
@@ -505,15 +567,17 @@ export default function RetornoPage() {
       }))
       const res = await vincularRetornoOpeite(registros)
       const novo = { ...vinculos }
+      const numByChave = {}
       let comLanc = 0
-      res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic }; if (x.numLanca != null) comLanc++ })
+      res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic }; numByChave[x.chave] = x.numLanca; if (x.numLanca != null) comLanc++ })
       setVinculos(novo)
-      const linhas = res.filter(x => x.numLanca != null).map(x => ({ NOSSO_NUMERO: x.nossoNumeroRaw, NUM_LANCA: x.numLanca }))
-      const grav = await gravarRetContacapt(linhas)
+      const rows = alvo.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r.arquivoNome + r.sequencial]))
+      const grav = await gravarRetContacapt(rows)
+      loadSalvos()
       if (grav.error) {
-        alert(`Vinculados ${comLanc}/${registros.length}. Erro ao gravar em RET_CONTACAPT: ${grav.error.message}`)
+        alert(`Vinculados ${comLanc}/${registros.length} ao OPEITE. Erro ao gravar: ${grav.error.message}`)
       } else {
-        alert(`Vinculados ${comLanc} de ${registros.length} registro(s) ao OPEITE.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}.`)
+        alert(`Processados ${rows.length} registro(s).\nVinculados ao OPEITE (Nº Lançamento): ${comLanc}.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}.`)
       }
     } catch (e) {
       console.error('[RetornoPage] vincular/gravar:', e)
@@ -823,6 +887,58 @@ export default function RetornoPage() {
           <span>{arquivos.length} arquivo(s) · {boletosDB.total ?? 0} reg. encontrado(s) no DB</span>
         </div>
       )}
+
+      {/* Registros já gravados em RET_CONTACAPT */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">
+            Gravados em RET_CONTACAPT <span className="text-[#666666] font-normal">({retSalvos.length})</span>
+          </h2>
+          <button
+            onClick={loadSalvos}
+            className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
+          >
+            {loadingSalvos ? 'Atualizando...' : 'Atualizar'}
+          </button>
+        </div>
+        <div className="overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-h-72">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Arquivo</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Conta</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nosso Nº</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Título</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Ocorr.</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Vencimento</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-white whitespace-nowrap">VR Título</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Lançamento</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Gravado em</th>
+              </tr>
+            </thead>
+            <tbody>
+              {retSalvos.length === 0 && (
+                <tr><td colSpan={9} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
+              )}
+              {retSalvos.map((r, i) => (
+                <tr key={i} className="border-b border-[#1a1a1a] hover:bg-[#111111] transition">
+                  <td className="px-3 py-2 text-[#555555] text-xs whitespace-nowrap">{(r.RETORNO || '').replace(/\.[^.]+$/, '') || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NOSSO_NUMERO || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NUM_TITULO || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(r.OCORRENCIA || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{formatDataBR(r.VENCIMENTO)}</td>
+                  <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">{r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—'}</td>
+                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.NUM_LANCA ? <span className="text-green-400">{r.NUM_LANCA}</span> : <span className="text-[#555555]">—</span>}</td>
+                  <td className="px-3 py-2 text-[#666666] text-xs whitespace-nowrap">
+                    {r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }

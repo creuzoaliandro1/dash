@@ -3579,30 +3579,49 @@ export const vincularRetornoOpeite = async (registros) => {
 // Grava em RET_CONTACAPT apenas NOSSO_NUMERO (071-082) + NUM_LANCA.
 // Deduplica por hash NOSSO_NUMERO|NUM_LANCA (contra a tabela e dentro do lote).
 export const gravarRetContacapt = async (linhas) => {
-  const validas = (linhas || []).filter(l => l && l.NUM_LANCA != null && String(l.NUM_LANCA) !== '')
-  if (!validas.length) return { inseridos: 0, pulados: 0, error: null }
-  const withHash = validas.map(l => {
-    const nn = String(l.NOSSO_NUMERO || '').trim().slice(0, 12)
-    const num = String(l.NUM_LANCA)
-    return { NOSSO_NUMERO: nn, NUM_LANCA: num, hash_dedup: `${nn}|${num}` }
-  })
-  const hashes = [...new Set(withHash.map(l => l.hash_dedup))]
+  const rows = (linhas || []).filter(Boolean)
+  if (!rows.length) return { inseridos: 0, pulados: 0, error: null }
+  const hashes = [...new Set(rows.map(l => l.hash_dedup).filter(Boolean))]
   const existentes = new Set()
   for (const c of _cnabChunk(hashes, 300)) {
     const { data, error } = await supabase.from('RET_CONTACAPT').select('hash_dedup').in('hash_dedup', c)
     if (!error) (data || []).forEach(x => existentes.add(x.hash_dedup))
   }
   const seen = new Set(); const inserir = []
-  for (const l of withHash) {
-    if (existentes.has(l.hash_dedup) || seen.has(l.hash_dedup)) continue
-    seen.add(l.hash_dedup); inserir.push(l)
+  for (const l of rows) {
+    const h = l.hash_dedup
+    if (h && (existentes.has(h) || seen.has(h))) continue
+    if (h) seen.add(h)
+    inserir.push(l)
   }
-  if (!inserir.length) return { inseridos: 0, pulados: validas.length, error: null }
+  if (!inserir.length) return { inseridos: 0, pulados: rows.length, error: null }
   let ins = 0
   for (const c of _cnabChunk(inserir, 500)) {
     const { error } = await supabase.from('RET_CONTACAPT').insert(c)
-    if (error) { console.warn('[gravarRetContacapt] insert:', error.message); return { inseridos: ins, pulados: validas.length - ins, error } }
+    if (error) { console.warn('[gravarRetContacapt] insert:', error.message); return { inseridos: ins, pulados: rows.length - ins, error } }
     ins += c.length
   }
-  return { inseridos: ins, pulados: validas.length - ins, error: null }
+  return { inseridos: ins, pulados: rows.length - ins, error: null }
+}
+
+// Lê os registros já gravados em RET_CONTACAPT (mais recentes primeiro).
+export const getRetContacapt = async () => {
+  try {
+    const ps = 1000; let from = 0; let all = []
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, VENCIMENTO, VR_TITULO, NUM_LANCA, created_at')
+        .order('created_at', { ascending: false, nullsFirst: false })
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[getRetContacapt]', error.message); break }
+      if (!data || !data.length) break
+      all = all.concat(data)
+      if (data.length < ps) break
+      from += ps
+    }
+    return { data: all, error: null }
+  } catch (err) {
+    console.error('[getRetContacapt] Erro:', err)
+    return { data: [], error: err }
+  }
 }
