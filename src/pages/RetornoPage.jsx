@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
+import { vincularRetornoOpeite, gravarRetContacapt } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -284,6 +285,8 @@ export default function RetornoPage() {
   const [filtroArquivo, setFiltroArquivo] = useState('todos')
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  const [vinculos, setVinculos] = useState({})       // chave -> { numLanca, cic }
+  const [processandoRet, setProcessandoRet] = useState(false)
   const [erros, setErros] = useState([])
   const fileInputRef = useRef(null)
 
@@ -483,6 +486,43 @@ export default function RetornoPage() {
     doc.save(`retorno_${stamp}.pdf`)
   }
 
+  // ─── Vincular OPEITE (valor+venc+cic) e gravar em RET_CONTACAPT ──────────────
+  const handleVincularGravar = async () => {
+    setOpenActionsMenu(false)
+    const base = getLista()
+    const alvo = selectedRows.size > 0
+      ? base.filter(r => selectedRows.has(r.arquivoNome + r.sequencial))
+      : base
+    if (!alvo.length) { alert('Nenhum registro para processar.'); return }
+    setProcessandoRet(true)
+    try {
+      const registros = alvo.map(r => ({
+        chave: r.arquivoNome + r.sequencial,
+        nossoNumeroBD: r.nossoNumeroBD,
+        nossoNumeroRaw: (r.nossoNumeroRaw || r.nossoNumero || '').trim(),
+        valorCents: Math.round((r.valorTitulo || 0) * 100),
+        vencISO: parseDDMMAA(r.dataVencimento) || '',
+      }))
+      const res = await vincularRetornoOpeite(registros)
+      const novo = { ...vinculos }
+      let comLanc = 0
+      res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic }; if (x.numLanca != null) comLanc++ })
+      setVinculos(novo)
+      const linhas = res.filter(x => x.numLanca != null).map(x => ({ NOSSO_NUMERO: x.nossoNumeroRaw, NUM_LANCA: x.numLanca }))
+      const grav = await gravarRetContacapt(linhas)
+      if (grav.error) {
+        alert(`Vinculados ${comLanc}/${registros.length}. Erro ao gravar em RET_CONTACAPT: ${grav.error.message}`)
+      } else {
+        alert(`Vinculados ${comLanc} de ${registros.length} registro(s) ao OPEITE.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}.`)
+      }
+    } catch (e) {
+      console.error('[RetornoPage] vincular/gravar:', e)
+      alert('Erro ao processar: ' + (e?.message || e))
+    } finally {
+      setProcessandoRet(false)
+    }
+  }
+
   const lista = getLista()
   const multiArquivo = arquivos.length > 1
 
@@ -651,6 +691,13 @@ export default function RetornoPage() {
                 >
                   📑 Exportar PDF {selectedRows.size > 0 ? `(${selectedRows.size} sel.)` : '(todos)'}
                 </button>
+                <button
+                  onClick={handleVincularGravar}
+                  disabled={processandoRet}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition disabled:opacity-50 border-t border-[#2a2a2a]"
+                >
+                  {processandoRet ? '\u23f3 Processando...' : `\ud83d\udd17 Vincular OPEITE + gravar RET_CONTACAPT ${selectedRows.size > 0 ? `(${selectedRows.size} sel.)` : '(todos)'}`}
+                </button>
               </div>
             )}
           </div>
@@ -675,6 +722,7 @@ export default function RetornoPage() {
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white">Nome / Sacado</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Título</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nosso Nº</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Lançamento</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Vencimento</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-white whitespace-nowrap">Valor (R$)</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Ocorrência</th>
@@ -710,6 +758,11 @@ export default function RetornoPage() {
                     </td>
                     <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{r.numeroTitulo}</td>
                     <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{r.nossoNumeroBD}</td>
+                    <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                      {vinculos[key]?.numLanca != null
+                        ? <span className="text-green-400">{vinculos[key].numLanca}</span>
+                        : (vinculos[key] ? <span className="text-[#555555]">—</span> : <span className="text-[#333333]"></span>)}
+                    </td>
                     <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{r.vencimentoExibir}</td>
                     <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">
                       {r.valorExibir > 0 ? formatValorBR(r.valorExibir) : '—'}

@@ -3491,3 +3491,118 @@ export const getImportadosUnificados = async (contaId, contaData, userType = 'U'
     return { data: [], error: err }
   }
 }
+
+// ============================================================
+// RETORNO -> OPEITE -> RET_CONTACAPT
+// Rotina para tratar arquivos de retorno (.ret): resolve o CIC do sacado a
+// partir do nosso número (capt_boletos e, como fallback, capt_registrado) e
+// casa no OPEITE por valor + vencimento + CIC (a mesma regra usada na
+// E-Factor: OPEITE.COD_SACADO -> SACADO.CIC; ignora STATUS 'DC'; usa
+// DT_VENCI_NOVO quando STATUS 'PR'), retornando OPEITE.NUM_LANCAMENTO.
+// ============================================================
+const _cnabChunk = (arr, n) => {
+  const out = []
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+  return out
+}
+const _normNum = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '') || ''
+
+// nosso número (sem zeros/DV) -> CIC (só dígitos). Procura em capt_boletos e,
+// para os que não achar, em capt_registrado.
+export const resolverCicPorNosso = async (nossoNums) => {
+  const uniq = [...new Set((nossoNums || []).map(_normNum).filter(Boolean))]
+  const map = {}
+  if (!uniq.length) return map
+  for (const c of _cnabChunk(uniq, 300)) {
+    const { data, error } = await supabase.from('capt_boletos').select('nosso_numero, sacado_cic').in('nosso_numero', c)
+    if (error) { console.warn('[resolverCicPorNosso] capt_boletos:', error.message); continue }
+    ;(data || []).forEach(b => { const k = _normNum(b.nosso_numero), v = _normNum(b.sacado_cic); if (k && v && !map[k]) map[k] = v })
+  }
+  const faltam = uniq.filter(n => !map[n])
+  for (const c of _cnabChunk(faltam, 300)) {
+    const { data, error } = await supabase.from('capt_registrado').select('identd_nosso_num, cnpj_cpf_pagdr').in('identd_nosso_num', c)
+    if (error) { console.warn('[resolverCicPorNosso] capt_registrado:', error.message); continue }
+    ;(data || []).forEach(b => { const k = _normNum(b.identd_nosso_num), v = _normNum(b.cnpj_cpf_pagdr); if (k && v && !map[k]) map[k] = v })
+  }
+  return map
+}
+
+// registros: [{ chave, nossoNumeroBD, nossoNumeroRaw, valorCents, vencISO }]
+// retorna: [{ chave, nossoNumeroRaw, cic, numLanca }]
+export const vincularRetornoOpeite = async (registros) => {
+  const regs = registros || []
+  const nossoCic = await resolverCicPorNosso(regs.map(r => r.nossoNumeroBD))
+
+  // CICs -> COD_SACADO (SACADO)
+  const cics = [...new Set(Object.values(nossoCic))]
+  const cicPorCod = {}
+  for (const c of _cnabChunk(cics, 300)) {
+    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').in('CIC', c)
+    if (error) { console.warn('[vincularRetornoOpeite] SACADO:', error.message); continue }
+    ;(data || []).forEach(s => { const cic = _normNum(s.CIC); if (cic) cicPorCod[s.COD_SACADO] = cic })
+  }
+  const cods = [...new Set(Object.keys(cicPorCod).map(k => (isNaN(Number(k)) ? k : Number(k))))]
+
+  // OPEITE por COD_SACADO -> mapa (cic|cents|venc) -> NUM_LANCAMENTO
+  const opeiteMap = {}
+  for (const c of _cnabChunk(cods, 200)) {
+    let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('OPEITE')
+        .select('NUM_LANCAMENTO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
+        .in('COD_SACADO', c).range(from, from + ps - 1)
+      if (error) { console.warn('[vincularRetornoOpeite] OPEITE:', error.message); break }
+      if (!data || !data.length) break
+      data.forEach(o => {
+        const st = String(o.STATUS || '').toUpperCase()
+        if (st === 'DC') return
+        const cic = cicPorCod[o.COD_SACADO]; if (!cic) return
+        const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
+        const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
+        if (!venc) return
+        const k = `${cic}|${cents}|${venc}`
+        if (opeiteMap[k] == null) opeiteMap[k] = o.NUM_LANCAMENTO
+      })
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+
+  return regs.map(r => {
+    const cic = nossoCic[_normNum(r.nossoNumeroBD)] || ''
+    const k = cic ? `${cic}|${r.valorCents}|${r.vencISO}` : ''
+    const numLanca = (k && opeiteMap[k] != null) ? opeiteMap[k] : null
+    return { chave: r.chave, nossoNumeroRaw: r.nossoNumeroRaw, cic, numLanca }
+  })
+}
+
+// Grava em RET_CONTACAPT apenas NOSSO_NUMERO (071-082) + NUM_LANCA.
+// Deduplica por hash NOSSO_NUMERO|NUM_LANCA (contra a tabela e dentro do lote).
+export const gravarRetContacapt = async (linhas) => {
+  const validas = (linhas || []).filter(l => l && l.NUM_LANCA != null && String(l.NUM_LANCA) !== '')
+  if (!validas.length) return { inseridos: 0, pulados: 0, error: null }
+  const withHash = validas.map(l => {
+    const nn = String(l.NOSSO_NUMERO || '').trim().slice(0, 12)
+    const num = String(l.NUM_LANCA)
+    return { NOSSO_NUMERO: nn, NUM_LANCA: num, hash_dedup: `${nn}|${num}` }
+  })
+  const hashes = [...new Set(withHash.map(l => l.hash_dedup))]
+  const existentes = new Set()
+  for (const c of _cnabChunk(hashes, 300)) {
+    const { data, error } = await supabase.from('RET_CONTACAPT').select('hash_dedup').in('hash_dedup', c)
+    if (!error) (data || []).forEach(x => existentes.add(x.hash_dedup))
+  }
+  const seen = new Set(); const inserir = []
+  for (const l of withHash) {
+    if (existentes.has(l.hash_dedup) || seen.has(l.hash_dedup)) continue
+    seen.add(l.hash_dedup); inserir.push(l)
+  }
+  if (!inserir.length) return { inseridos: 0, pulados: validas.length, error: null }
+  let ins = 0
+  for (const c of _cnabChunk(inserir, 500)) {
+    const { error } = await supabase.from('RET_CONTACAPT').insert(c)
+    if (error) { console.warn('[gravarRetContacapt] insert:', error.message); return { inseridos: ins, pulados: validas.length - ins, error } }
+    ins += c.length
+  }
+  return { inseridos: ins, pulados: validas.length - ins, error: null }
+}
