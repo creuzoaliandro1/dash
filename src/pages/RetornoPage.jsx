@@ -32,7 +32,26 @@ const gn = (line, s, e, dec = 0) => {
   return dec > 0 ? n / Math.pow(10, dec) : n
 }
 
+// Corrige defeito do banco emissor: em algumas ocorrencias (ex.: 02 Entrada Confirmada)
+// a carteira sai com 2 digitos (deveria 3) e a agencia com 4 (deveria 5) -- um zero a
+// menos em cada -- e o bloco e completado com 2 espacos antes do nosso numero p/ manter 400.
+// Detecta pelos espacos nas posicoes 36-37 (que no formato correto sao digitos) e
+// reconstroi o bloco 18-37; tudo a partir da posicao 38 ja vem alinhado.
+const normalizarLinhaBug = (line) => {
+  if (!line || line.length < 400 || line[0] !== '1') return line
+  if (/\d/.test(line[35]) && /\d/.test(line[36])) return line   // ja correto
+  const bloco = line.substring(17, 37)                            // posicoes 18-37 (20 chars)
+  if (!bloco.endsWith('  ')) return line                          // padrao esperado do defeito
+  const filler = bloco.substring(0, 4)
+  const cart   = bloco.substring(4, 6)                            // carteira veio com 2 (deveria 3)
+  const ag     = bloco.substring(6, 10)                           // agencia veio com 4 (deveria 5)
+  const conta  = bloco.substring(10, 18)                          // conta 8 digitos
+  const novoBloco = filler + cart.padStart(3, '0') + ag.padStart(5, '0') + conta
+  return line.substring(0, 17) + novoBloco + line.substring(37)
+}
+
 const parseTipo1 = (line, arquivoNome) => {
+  line = normalizarLinhaBug(line)
   const motivosRaw = g(line, 319, 328)
   const motivosList = []
   for (let i = 0; i < 5; i++) {
@@ -64,10 +83,11 @@ const parseTipo1 = (line, arquivoNome) => {
     valorPago: gn(line, 254, 266, 2),
     motivosList,
     // Campos completos p/ RET_CONTACAPT (posicoes fornecidas pelo cliente)
-    contaCedente: g(line, 28, 35),
-    carteiraRet: g(line, 22, 23),
+    tipoSacado: g(line, 2, 3),
+    contaCedente: g(line, 30, 37),
+    carteiraRet: g(line, 23, 24),
     bcoPgo: g(line, 166, 168),
-    agenciaPgo: g(line, 169, 173),
+    agenciaPgo: g(line, 170, 173),
     despesaCob: gn(line, 176, 188, 2),
     juros: gn(line, 202, 214, 2),
     abatimento: gn(line, 228, 240, 2),
@@ -79,6 +99,10 @@ const parseTipo1 = (line, arquivoNome) => {
     avalistaNome: g(line, 344, 387),
     motivoRaw: line.substring(318, 328),
     sequencial: g(line, 395, 400),
+    // Chave de igualdade entre RETs: posicoes 19-395 (ignora cedente 1-18 e sequencial 396-400)
+    dedupKey: (line || '').substring(18, 395),
+    // CAPT CAPITAL: linha inicia com 10259849652000148 (posicoes 1-18)
+    isCaptCap: (line || '').startsWith('10259849652000148'),
     arquivoNome,
   }
 }
@@ -229,9 +253,10 @@ const ocorrenciaBadge = (cod) => {
 
 // ─── Formatadores ──────────────────────────────────────────────────────────────
 const parseDDMMAA = (s) => {
-  if (!s || s.length !== 6) return null
+  if (!s || s.length !== 6 || !/^\d{6}$/.test(s)) return null
   const dd = s.slice(0, 2), mm = s.slice(2, 4), aa = s.slice(4, 6)
-  if (dd === '000000'.slice(0, 2)) return null
+  const d = parseInt(dd, 10), m = parseInt(mm, 10)
+  if (d < 1 || d > 31 || m < 1 || m > 12) return null   // data invalida (ex.: 000000, campos zerados/lixo)
   return `20${aa}-${mm}-${dd}`
 }
 
@@ -243,9 +268,11 @@ const formatDataBR = (iso) => {
 
 const formatValorBR = (v) =>
   (v == null || isNaN(v)) ? '—' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })
+const moneyDash = (v) => (v && Number(v) > 0) ? formatValorBR(v) : '—'
+const txtDash = (v) => (String(v ?? '').trim() || '—')
 
 // Monta a linha completa da RET_CONTACAPT a partir de um registro do .ret
-const montarLinhaRet = (reg, arquivoNome, numLanca) => {
+const montarLinhaRet = (reg, arquivoNome, numLanca, metodo) => {
   const nn = (reg.nossoNumeroRaw || '').trim().slice(0, 12)
   const dtOco = parseDDMMAA(reg.dataOcorrencia)
   const venc = parseDDMMAA(reg.dataVencimento)
@@ -253,6 +280,7 @@ const montarLinhaRet = (reg, arquivoNome, numLanca) => {
   const num = numLanca != null ? String(numLanca) : null
   return {
     RETORNO: arquivoNome || null,
+    TIPO_SACADO: reg.tipoSacado || null,
     CONTA_CEDENTE: reg.contaCedente || null,
     CARTEIRA: reg.carteiraRet || null,
     NOSSO_NUMERO: nn || null,
@@ -276,9 +304,9 @@ const montarLinhaRet = (reg, arquivoNome, numLanca) => {
     AVALISTA_CIC: reg.avalistaCic || null,
     AVALISTA_NOME: reg.avalistaNome || null,
     NUM_LANCA: num,
-    link_metodo: num != null ? 'valor+venc+cic' : null,
-    link_score: num != null ? 100 : null,
-    hash_dedup: [arquivoNome || '', nn, reg.codigoOcorrencia || '', dtOco || '', Math.round((reg.valorTitulo || 0) * 100), reg.numeroDocumento || ''].join('|'),
+    link_metodo: num != null ? (metodo || 'valor+venc+cic') : null,
+    link_score: num != null ? (metodo === 'valor+venc+cic' ? 100 : metodo === 'valor+venc+titulo' ? 80 : 50) : null,
+    hash_dedup: reg.dedupKey ? ('L|' + reg.dedupKey) : [arquivoNome || '', nn, reg.codigoOcorrencia || '', dtOco || '', Math.round((reg.valorTitulo || 0) * 100), reg.numeroDocumento || ''].join('|'),
   }
 }
 
@@ -349,6 +377,74 @@ export default function RetornoPage() {
     setLoadingSalvos(false)
   }
   useEffect(() => { loadSalvos() }, [])
+
+  // ── Seleção / ordenação / PDF da tabela RET_CONTACAPT ─────────────────────
+  const [selSalvos, setSelSalvos] = useState(new Set())
+  const [sortSalvos, setSortSalvos] = useState({ col: 'created_at', dir: 'desc' })
+  const [openSalvosMenu, setOpenSalvosMenu] = useState(false)
+  const keySalvo = (r) => r.hash_dedup || [r.RETORNO, r.NOSSO_NUMERO, r.OCORRENCIA, r.VENCIMENTO, r.VR_TITULO, r.created_at].join('|')
+  const salvoCols = [
+    { key: 'RETORNO', label: 'Arquivo' },
+    { key: 'CONTA_CEDENTE', label: 'Conta' },
+    { key: 'NOSSO_NUMERO', label: 'Nosso Nº' },
+    { key: 'NUM_TITULO', label: 'Nº Título' },
+    { key: 'OCORRENCIA', label: 'Ocorr.' },
+    { key: 'VENCIMENTO', label: 'Vencimento', type: 'date' },
+    { key: 'VR_TITULO', label: 'VR Título', type: 'num', align: 'right' },
+    { key: 'NUM_LANCA', label: 'Nº Lançamento' },
+    { key: 'created_at', label: 'Gravado em', type: 'date' },
+  ]
+  const cmpSalvo = (a, b, col, type) => {
+    let va = a[col], vb = b[col]
+    if (type === 'num') { return (Number(va) || 0) - (Number(vb) || 0) }
+    if (type === 'date') { return (va ? new Date(va).getTime() : 0) - (vb ? new Date(vb).getTime() : 0) }
+    return String(va || '').localeCompare(String(vb || ''), 'pt-BR', { numeric: true })
+  }
+  const salvosOrdenados = [...retSalvos].sort((a, b) => {
+    const col = salvoCols.find(c => c.key === sortSalvos.col)
+    const r = cmpSalvo(a, b, sortSalvos.col, col?.type)
+    return sortSalvos.dir === 'asc' ? r : -r
+  })
+  const toggleSortSalvos = (key) => setSortSalvos(cur => cur.col === key ? { col: key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col: key, dir: 'asc' })
+  const toggleSelSalvo = (k) => setSelSalvos(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })
+  const allSalvosKeys = salvosOrdenados.map(keySalvo)
+  const allSelSalvos = allSalvosKeys.length > 0 && allSalvosKeys.every(k => selSalvos.has(k))
+  const toggleSelAllSalvos = () => setSelSalvos(() => allSelSalvos ? new Set() : new Set(allSalvosKeys))
+  const gerarPdfSalvos = () => {
+    setOpenSalvosMenu(false)
+    const alvo = selSalvos.size > 0 ? salvosOrdenados.filter(r => selSalvos.has(keySalvo(r))) : salvosOrdenados
+    if (!alvo.length) { alert('Nenhum registro para gerar PDF'); return }
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    doc.setFillColor(255, 255, 255); doc.rect(0, 0, 297, 210, 'F')
+    doc.setTextColor(0, 0, 0); doc.setFontSize(11); doc.setFont(undefined, 'bold')
+    doc.text('RET_CONTACAPT — Registros gravados', 14, 13)
+    doc.setFont(undefined, 'normal'); doc.setFontSize(8)
+    doc.text(`Registros: ${alvo.length}`, 14, 19)
+    autoTable(doc, {
+      startY: 24,
+      margin: { left: 14, right: 10 },
+      head: [['Arquivo', 'Conta', 'Nosso Nº', 'Nº Título', 'Ocorr.', 'Vencimento', 'VR Título', 'Nº Lançamento', 'Gravado em']],
+      body: alvo.map(r => [
+        (r.RETORNO || '').replace(/\.[^.]+$/, '') || '—',
+        (r.CONTA_CEDENTE || '').trim() || '—',
+        (r.NOSSO_NUMERO || '').trim() || '—',
+        (r.NUM_TITULO || '').trim() || '—',
+        (r.OCORRENCIA || '').trim() || '—',
+        formatDataBR(r.VENCIMENTO),
+        r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—',
+        r.NUM_LANCA || '—',
+        r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
+      ]),
+      styles: { fontSize: 7, cellPadding: { top: 0.8, bottom: 0.8, left: 1, right: 1 }, overflow: 'linebreak', textColor: [0, 0, 0], fillColor: [255, 255, 255], lineColor: [200, 200, 200], lineWidth: 0.1 },
+      headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      columnStyles: { 6: { halign: 'right' } },
+      theme: 'grid',
+    })
+    const now = new Date()
+    const stamp = `${String(now.getDate()).padStart(2, '0')}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getFullYear()).slice(-2)}`
+    doc.save(`ret_contacapt_${stamp}.pdf`)
+  }
   const [erros, setErros] = useState([])
   const fileInputRef = useRef(null)
 
@@ -356,7 +452,7 @@ export default function RetornoPage() {
   const todosRegistros = arquivos.flatMap(a => a.registros)
 
   const processarArquivos = async (files) => {
-    const validos = files.filter(f => /\.(ret|rem|txt)$/i.test(f.name))
+    const validos = files.filter(f => /\.ret$/i.test(f.name))
     if (!validos.length) {
       setErros(['Selecione arquivo(s) de retorno CNAB400 (.RET)'])
       return
@@ -556,28 +652,40 @@ export default function RetornoPage() {
       ? base.filter(r => selectedRows.has(r.arquivoNome + r.sequencial))
       : base
     if (!alvo.length) { alert('Nenhum registro para processar.'); return }
+    // Descarta linhas iguais entre RETs (mesmas posicoes 19-395), mantendo a da CAPT CAPITAL
+    const vistos = new Map()
+    for (const r of alvo) {
+      const k = r.dedupKey || (r.arquivoNome + r.sequencial)
+      const atual = vistos.get(k)
+      if (!atual) { vistos.set(k, r); continue }
+      if (r.isCaptCap && !atual.isCaptCap) vistos.set(k, r)   // prioridade CAPT CAPITAL
+    }
+    const alvoUnico = [...vistos.values()]
+    const descartados = alvo.length - alvoUnico.length
     setProcessandoRet(true)
     try {
-      const registros = alvo.map(r => ({
+      const registros = alvoUnico.map(r => ({
         chave: r.arquivoNome + r.sequencial,
         nossoNumeroBD: r.nossoNumeroBD,
         nossoNumeroRaw: (r.nossoNumeroRaw || r.nossoNumero || '').trim(),
         valorCents: Math.round((r.valorTitulo || 0) * 100),
         vencISO: parseDDMMAA(r.dataVencimento) || '',
+        titulo: r.numeroDocumento,
       }))
       const res = await vincularRetornoOpeite(registros)
       const novo = { ...vinculos }
       const numByChave = {}
+      const metByChave = {}
       let comLanc = 0
-      res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic }; numByChave[x.chave] = x.numLanca; if (x.numLanca != null) comLanc++ })
+      res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic, metodo: x.metodo }; numByChave[x.chave] = x.numLanca; metByChave[x.chave] = x.metodo; if (x.numLanca != null) comLanc++ })
       setVinculos(novo)
-      const rows = alvo.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r.arquivoNome + r.sequencial]))
+      const rows = alvoUnico.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r.arquivoNome + r.sequencial], metByChave[r.arquivoNome + r.sequencial]))
       const grav = await gravarRetContacapt(rows)
       loadSalvos()
       if (grav.error) {
         alert(`Vinculados ${comLanc}/${registros.length} ao OPEITE. Erro ao gravar: ${grav.error.message}`)
       } else {
-        alert(`Processados ${rows.length} registro(s).\nVinculados ao OPEITE (Nº Lançamento): ${comLanc}.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}.`)
+        alert(`Processados ${rows.length} registro(s)${descartados ? ` (${descartados} descartado(s) por duplicidade entre RETs)` : ''}.\nVinculados ao OPEITE (Nº Lançamento): ${comLanc}.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}${grav.falhas ? ` · falhas: ${grav.falhas}` : ''}.`)
       }
     } catch (e) {
       console.error('[RetornoPage] vincular/gravar:', e)
@@ -624,7 +732,7 @@ export default function RetornoPage() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".ret,.rem,.txt,application/octet-stream"
+              accept=".ret"
               onChange={handleFileInput}
               disabled={loading}
               className="hidden"
@@ -773,38 +881,55 @@ export default function RetornoPage() {
         <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
-              <tr>
-                <th className="px-3 py-2 text-center w-8">
+              <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:text-xs [&>th]:font-semibold [&>th]:text-white [&>th]:whitespace-nowrap">
+                <th className="!text-center w-8">
                   <input type="checkbox"
                     checked={lista.length > 0 && selectedRows.size === lista.length}
                     onChange={toggleAll}
                     className="w-4 h-4 cursor-pointer accent-white"
                   />
                 </th>
-                {multiArquivo && <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Arquivo</th>}
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">#</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white">Nome / Sacado</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Título</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nosso Nº</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Lançamento</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Vencimento</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-white whitespace-nowrap">Valor (R$)</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Ocorrência</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Dt. Ocorr.</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white">Motivo</th>
+                {multiArquivo && <th>Arquivo</th>}
+                <th>#</th>
+                <th>Tipo Sac.</th>
+                <th>Conta (030-037)</th>
+                <th>Carteira</th>
+                <th>Nosso Nº (071-082)</th>
+                <th>Nº Lançamento</th>
+                <th>Nome / Sacado</th>
+                <th>Nº Título</th>
+                <th>Identificação</th>
+                <th>Ocorrência</th>
+                <th>Dt. Ocorr.</th>
+                <th>Vencimento</th>
+                <th className="!text-right">VR Título</th>
+                <th className="!text-right">VR Pago</th>
+                <th>Bco Pgo</th>
+                <th>Ag. Pgo</th>
+                <th className="!text-right">Despesa</th>
+                <th className="!text-right">Juros</th>
+                <th className="!text-right">Abatim.</th>
+                <th className="!text-right">Desconto</th>
+                <th className="!text-right">Mora</th>
+                <th className="!text-right">Outros</th>
+                <th>Dt. Créd.</th>
+                <th>Motivo</th>
+                <th>Avalista CIC</th>
+                <th>Avalista Nome</th>
               </tr>
             </thead>
             <tbody>
               {lista.map((r) => {
                 const key = r.arquivoNome + r.sequencial
                 const sel = selectedRows.has(key)
+                const nl = vinculos[key]?.numLanca
                 return (
                   <tr
                     key={key}
                     onClick={() => toggleRow(key)}
-                    className={`border-b border-[#1a1a1a] hover:bg-[#111111] transition cursor-pointer ${sel ? 'bg-[#111111]' : ''}`}
+                    className={`border-b border-[#1a1a1a] hover:bg-[#111111] transition cursor-pointer [&>td]:px-3 [&>td]:py-2 [&>td]:text-xs [&>td]:whitespace-nowrap ${sel ? 'bg-[#111111]' : ''}`}
                   >
-                    <td className="px-3 py-2 text-center">
+                    <td className="!text-center">
                       <input type="checkbox" checked={sel}
                         onChange={() => toggleRow(key)}
                         onClick={e => e.stopPropagation()}
@@ -812,38 +937,52 @@ export default function RetornoPage() {
                       />
                     </td>
                     {multiArquivo && (
-                      <td className="px-3 py-2 text-[#555555] text-xs truncate max-w-[100px]" title={r.arquivoNome}>
+                      <td className="text-[#555555] truncate max-w-[100px]" title={r.arquivoNome}>
                         {r.arquivoNome.replace(/\.[^.]+$/, '')}
                       </td>
                     )}
-                    <td className="px-3 py-2 text-[#555555] font-mono text-xs">{r.sequencial}</td>
-                    <td className="px-3 py-2 max-w-xs truncate" title={r.nomeExibir}>
-                      <span className={r.achouNoDB ? 'text-white' : 'text-[#555555] italic'}>{r.nomeExibir}</span>
-                    </td>
-                    <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{r.numeroTitulo}</td>
-                    <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{r.nossoNumeroBD}</td>
-                    <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
-                      {vinculos[key]?.numLanca != null
-                        ? <span className="text-green-400">{vinculos[key].numLanca}</span>
+                    <td className="text-[#555555] font-mono">{r.sequencial}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.tipoSacado)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.contaCedente)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.carteiraRet)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{r.nossoNumeroBD}</td>
+                    <td className="font-mono">
+                      {nl != null
+                        ? <span className="text-green-400">{nl}</span>
                         : (vinculos[key] ? <span className="text-[#555555]">—</span> : <span className="text-[#333333]"></span>)}
                     </td>
-                    <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{r.vencimentoExibir}</td>
-                    <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">
-                      {r.valorExibir > 0 ? formatValorBR(r.valorExibir) : '—'}
+                    <td className="max-w-xs truncate" title={r.nomeExibir}>
+                      <span className={r.achouNoDB ? 'text-white' : 'text-[#555555] italic'}>{r.nomeExibir}</span>
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.numeroDocumento)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.nossoNumeroBanco)}</td>
+                    <td>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border font-medium ${ocorrenciaBadge(r.codigoOcorrencia)}`}>
                         {r.codigoOcorrencia} {r.ocorrenciaDesc}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{r.dataOcorrenciaFmt}</td>
-                    <td className="px-3 py-2 text-xs max-w-[200px]">
+                    <td className="text-[#a3a3a3]">{r.dataOcorrenciaFmt}</td>
+                    <td className="text-[#a3a3a3]">{r.vencimentoExibir}</td>
+                    <td className="text-white font-mono !text-right">{r.valorExibir > 0 ? formatValorBR(r.valorExibir) : '—'}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.valorPago)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.bcoPgo)}</td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.agenciaPgo)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.despesaCob)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.juros)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.abatimento)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.desconto)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.mora)}</td>
+                    <td className="text-[#a3a3a3] font-mono !text-right">{moneyDash(r.outros)}</td>
+                    <td className="text-[#a3a3a3]">{formatDataBR(parseDDMMAA(r.dataCredito))}</td>
+                    <td className="max-w-[200px] whitespace-normal">
                       {r.motivosDesc.length > 0 ? (
                         <span className={['03','24','27','32'].includes(r.codigoOcorrencia) ? 'text-red-400' : 'text-[#a3a3a3]'}>
                           {r.motivosDesc.join(' · ')}
                         </span>
                       ) : <span className="text-[#333333]">—</span>}
                     </td>
+                    <td className="text-[#a3a3a3] font-mono">{txtDash(r.avalistaCic)}</td>
+                    <td className="text-[#a3a3a3] max-w-[200px] truncate" title={r.avalistaNome}>{txtDash(r.avalistaNome)}</td>
                   </tr>
                 )
               })}
@@ -893,35 +1032,62 @@ export default function RetornoPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">
             Gravados em RET_CONTACAPT <span className="text-[#666666] font-normal">({retSalvos.length})</span>
+            {selSalvos.size > 0 && <span className="text-[#666666] font-normal"> · {selSalvos.size} sel.</span>}
           </h2>
-          <button
-            onClick={loadSalvos}
-            className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
-          >
-            {loadingSalvos ? 'Atualizando...' : 'Atualizar'}
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setOpenSalvosMenu(o => !o)}
+                className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
+              >
+                Ações ▾
+              </button>
+              {openSalvosMenu && (
+                <div className="absolute right-0 mt-1 w-56 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20">
+                  <button
+                    onClick={gerarPdfSalvos}
+                    className="block w-full text-left px-3 py-2 text-xs text-[#a3a3a3] hover:bg-[#1a1a1a] hover:text-white transition"
+                  >
+                    📄 Gerar PDF {selSalvos.size > 0 ? `(${selSalvos.size} sel.)` : '(todos)'}
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={loadSalvos}
+              className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
+            >
+              {loadingSalvos ? 'Atualizando...' : 'Atualizar'}
+            </button>
+          </div>
         </div>
         <div className="overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-h-72">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Arquivo</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Conta</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nosso Nº</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Título</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Ocorr.</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Vencimento</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-white whitespace-nowrap">VR Título</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Nº Lançamento</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-white whitespace-nowrap">Gravado em</th>
+                <th className="px-3 py-2 text-left w-8">
+                  <input type="checkbox" checked={allSelSalvos} onChange={toggleSelAllSalvos} className="accent-green-500 cursor-pointer align-middle" />
+                </th>
+                {salvoCols.map(c => (
+                  <th key={c.key}
+                    onClick={() => toggleSortSalvos(c.key)}
+                    className={`px-3 py-2 text-xs font-semibold text-white whitespace-nowrap cursor-pointer select-none hover:text-green-400 ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                    {c.label}{sortSalvos.col === c.key ? (sortSalvos.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {retSalvos.length === 0 && (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
+              {salvosOrdenados.length === 0 && (
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
               )}
-              {retSalvos.map((r, i) => (
-                <tr key={i} className="border-b border-[#1a1a1a] hover:bg-[#111111] transition">
+              {salvosOrdenados.map((r, i) => {
+                const k = keySalvo(r)
+                return (
+                <tr key={k + '|' + i} className="border-b border-[#1a1a1a] hover:bg-[#111111] transition">
+                  <td className="px-3 py-2">
+                    <input type="checkbox" checked={selSalvos.has(k)} onChange={() => toggleSelSalvo(k)} className="accent-green-500 cursor-pointer align-middle" />
+                  </td>
                   <td className="px-3 py-2 text-[#555555] text-xs whitespace-nowrap">{(r.RETORNO || '').replace(/\.[^.]+$/, '') || '—'}</td>
                   <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
                   <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NOSSO_NUMERO || '').trim() || '—'}</td>
@@ -934,7 +1100,8 @@ export default function RetornoPage() {
                     {r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

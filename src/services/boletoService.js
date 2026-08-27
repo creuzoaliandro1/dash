@@ -3532,47 +3532,95 @@ export const resolverCicPorNosso = async (nossoNums) => {
 export const vincularRetornoOpeite = async (registros) => {
   const regs = registros || []
   const nossoCic = await resolverCicPorNosso(regs.map(r => r.nossoNumeroBD))
+  const normTit = (t) => String(t || '').replace(/\D/g, '').replace(/^0+/, '')
 
-  // CICs -> COD_SACADO (SACADO)
-  const cics = [...new Set(Object.values(nossoCic))]
-  const cicPorCod = {}
-  for (const c of _cnabChunk(cics, 300)) {
-    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').in('CIC', c)
-    if (error) { console.warn('[vincularRetornoOpeite] SACADO:', error.message); continue }
-    ;(data || []).forEach(s => { const cic = _normNum(s.CIC); if (cic) cicPorCod[s.COD_SACADO] = cic })
-  }
-  const cods = [...new Set(Object.keys(cicPorCod).map(k => (isNaN(Number(k)) ? k : Number(k))))]
-
-  // OPEITE por COD_SACADO -> mapa (cic|cents|venc) -> NUM_LANCAMENTO
-  const opeiteMap = {}
-  for (const c of _cnabChunk(cods, 200)) {
-    let from = 0; const ps = 1000
-    while (true) {
-      const { data, error } = await supabase.from('OPEITE')
-        .select('NUM_LANCAMENTO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
-        .in('COD_SACADO', c).range(from, from + ps - 1)
-      if (error) { console.warn('[vincularRetornoOpeite] OPEITE:', error.message); break }
-      if (!data || !data.length) break
-      data.forEach(o => {
-        const st = String(o.STATUS || '').toUpperCase()
-        if (st === 'DC') return
-        const cic = cicPorCod[o.COD_SACADO]; if (!cic) return
-        const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
-        const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
-        if (!venc) return
-        const k = `${cic}|${cents}|${venc}`
-        if (opeiteMap[k] == null) opeiteMap[k] = o.NUM_LANCAMENTO
-      })
-      if (data.length < ps) break
-      from += ps
+  // Busca OPEITE pelos VENCIMENTOS presentes no lote (DT_VENCI e DT_VENCI_NOVO),
+  // independente do sacado — assim conseguimos casar por CIC (preciso) e, quando
+  // nao houver CIC, por valor+vencimento (fallback), preferindo o titulo igual.
+  const vencs = [...new Set(regs.map(r => r.vencISO).filter(Boolean))]
+  const opeiteRows = []
+  const seenLanc = new Set()
+  const fetchBy = async (col) => {
+    for (const c of _cnabChunk(vencs, 100)) {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('OPEITE')
+          .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
+          .in(col, c).range(from, from + ps - 1)
+        if (error) { console.warn('[vincularRetornoOpeite] OPEITE', col, error.message); break }
+        if (!data || !data.length) break
+        data.forEach(o => { const id = o.NUM_LANCAMENTO; if (!seenLanc.has(id)) { seenLanc.add(id); opeiteRows.push(o) } })
+        if (data.length < ps) break
+        from += ps
+      }
     }
   }
+  if (vencs.length) { await fetchBy('DT_VENCI'); await fetchBy('DT_VENCI_NOVO') }
+
+  // CIC por COD_SACADO (para o caminho preciso)
+  const cods = [...new Set(opeiteRows.map(o => o.COD_SACADO))]
+  const cicPorCod = {}
+  for (const c of _cnabChunk(cods, 300)) {
+    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').in('COD_SACADO', c)
+    if (error) { console.warn('[vincularRetornoOpeite] SACADO:', error.message); continue }
+    ;(data || []).forEach(sa => { const cic = _normNum(sa.CIC); if (cic) cicPorCod[sa.COD_SACADO] = cic })
+  }
+
+  // Indices
+  const byCic = {}    // cic|cents|venc -> num
+  const byVenc = {}   // cents|venc -> [{ num, tit }]
+  opeiteRows.forEach(o => {
+    const st = String(o.STATUS || '').toUpperCase()
+    if (st === 'DC') return
+    const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
+    const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
+    if (!venc) return
+    const kv = `${cents}|${venc}`
+    ;(byVenc[kv] = byVenc[kv] || []).push({ num: o.NUM_LANCAMENTO, tit: normTit(o.NUM_TITULO) })
+    const cic = cicPorCod[o.COD_SACADO]
+    if (cic) { const kc = `${cic}|${cents}|${venc}`; if (byCic[kc] == null) byCic[kc] = o.NUM_LANCAMENTO }
+  })
+
+  // Duplicidade no ARQUIVO DE RETORNO (lote importado): conta ocorrencias de
+  // valor+venc e de valor+venc+titulo entre os registros que estao sem CIC.
+  const semCicSet = new Set(regs.filter(r => !(nossoCic[_normNum(r.nossoNumeroBD)])).map(r => r.chave))
+  const retVV = {}, retVVT = {}
+  regs.forEach(r => {
+    if (!semCicSet.has(r.chave)) return
+    const kv = `${r.valorCents}|${r.vencISO}`
+    retVV[kv] = (retVV[kv] || 0) + 1
+    retVVT[`${kv}|${normTit(r.titulo)}`] = (retVVT[`${kv}|${normTit(r.titulo)}`] || 0) + 1
+  })
 
   return regs.map(r => {
     const cic = nossoCic[_normNum(r.nossoNumeroBD)] || ''
-    const k = cic ? `${cic}|${r.valorCents}|${r.vencISO}` : ''
-    const numLanca = (k && opeiteMap[k] != null) ? opeiteMap[k] : null
-    return { chave: r.chave, nossoNumeroRaw: r.nossoNumeroRaw, cic, numLanca }
+    const kv = `${r.valorCents}|${r.vencISO}`
+    let numLanca = null, metodo = null
+    const porCic = cic ? byCic[`${cic}|${r.valorCents}|${r.vencISO}`] : null
+    if (porCic != null) {
+      // Caminho preciso: CIC + valor + venc
+      numLanca = porCic; metodo = 'valor+venc+cic'
+    } else {
+      // Sem CIC: compara valor + vencimento
+      const cands = byVenc[kv] || []       // lancamentos OPEITE distintos com esse valor+venc
+      const nOpVV = cands.length
+      if (nOpVV === 1) {
+        // um unico lancamento OPEITE p/ esse valor+venc -> grava.
+        // Se o retorno repetir o valor+venc em varias ocorrencias, TODAS recebem o mesmo NUM_LANCA.
+        numLanca = cands[0].num; metodo = 'valor+venc'
+      } else if (nOpVV > 1) {
+        // multiplos lancamentos OPEITE p/ esse valor+venc -> desempata por Nº Titulo
+        const tit = normTit(r.titulo)
+        const candsT = tit ? cands.filter(c => c.tit === tit) : []
+        if (tit && candsT.length === 1) {
+          numLanca = candsT[0].num; metodo = 'valor+venc+titulo'
+        } else {
+          // ambiguo no OPEITE -> NAO salva NUM_LANCA
+          numLanca = null; metodo = null
+        }
+      }
+    }
+    return { chave: r.chave, nossoNumeroRaw: r.nossoNumeroRaw, cic, numLanca, metodo }
   })
 }
 
@@ -3594,14 +3642,20 @@ export const gravarRetContacapt = async (linhas) => {
     if (h) seen.add(h)
     inserir.push(l)
   }
-  if (!inserir.length) return { inseridos: 0, pulados: rows.length, error: null }
-  let ins = 0
+  const jaExistiam = rows.length - inserir.length
+  if (!inserir.length) return { inseridos: 0, pulados: jaExistiam, falhas: 0, error: null }
+  let ins = 0, falhas = 0, primeiroErro = null
   for (const c of _cnabChunk(inserir, 500)) {
     const { error } = await supabase.from('RET_CONTACAPT').insert(c)
-    if (error) { console.warn('[gravarRetContacapt] insert:', error.message); return { inseridos: ins, pulados: rows.length - ins, error } }
-    ins += c.length
+    if (!error) { ins += c.length; continue }
+    // 1 registro ruim nao deve derrubar o lote inteiro: tenta linha a linha
+    for (const row of c) {
+      const { error: e1 } = await supabase.from('RET_CONTACAPT').insert(row)
+      if (e1) { falhas++; if (!primeiroErro) primeiroErro = e1; console.warn('[gravarRetContacapt] falha NOSSO', row.NOSSO_NUMERO, ':', e1.message) }
+      else ins++
+    }
   }
-  return { inseridos: ins, pulados: rows.length - ins, error: null }
+  return { inseridos: ins, pulados: jaExistiam, falhas, error: (ins === 0 ? primeiroErro : null) }
 }
 
 // Lê os registros já gravados em RET_CONTACAPT (mais recentes primeiro).
@@ -3610,7 +3664,7 @@ export const getRetContacapt = async () => {
     const ps = 1000; let from = 0; let all = []
     while (true) {
       const { data, error } = await supabase.from('RET_CONTACAPT')
-        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, VENCIMENTO, VR_TITULO, NUM_LANCA, created_at')
+        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, VENCIMENTO, VR_TITULO, NUM_LANCA, created_at, hash_dedup')
         .order('created_at', { ascending: false, nullsFirst: false })
         .range(from, from + ps - 1)
       if (error) { console.warn('[getRetContacapt]', error.message); break }
