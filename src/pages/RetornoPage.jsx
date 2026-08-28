@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import jsPDF from 'jspdf'
+import JSZip from 'jszip'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -382,6 +383,32 @@ export default function RetornoPage() {
   const [selSalvos, setSelSalvos] = useState(new Set())
   const [sortSalvos, setSortSalvos] = useState({ col: 'created_at', dir: 'desc' })
   const [openSalvosMenu, setOpenSalvosMenu] = useState(false)
+  const [vincTitVal, setVincTitVal] = useState(false)
+  const handleVincTitVal = async () => {
+    setVincTitVal(true)
+    try {
+      const res = await vincularRetPorTituloValor()
+      await loadSalvos()
+      alert(`Vínculo por Nº Título + Valor:\nRegistros sem lançamento: ${res.total}\nVinculados agora: ${res.atualizados}\nSem correspondência: ${res.semMatch}${res.falhas ? `\nFalhas: ${res.falhas}` : ''}`)
+    } catch (e) {
+      alert('Erro ao vincular: ' + (e?.message || e))
+    } finally {
+      setVincTitVal(false)
+    }
+  }
+  const [vincVencTit, setVincVencTit] = useState(false)
+  const handleVincVencTit = async () => {
+    setVincVencTit(true)
+    try {
+      const res = await vincularRetPorVencTitulo()
+      await loadSalvos()
+      alert(`Vínculo por Vencimento + Nº Título:\nRegistros sem lançamento: ${res.total}\nVinculados agora: ${res.atualizados}\nSem correspondência: ${res.semMatch}${res.falhas ? `\nFalhas: ${res.falhas}` : ''}`)
+    } catch (e) {
+      alert('Erro ao vincular: ' + (e?.message || e))
+    } finally {
+      setVincVencTit(false)
+    }
+  }
   const keySalvo = (r) => r.hash_dedup || [r.RETORNO, r.NOSSO_NUMERO, r.OCORRENCIA, r.VENCIMENTO, r.VR_TITULO, r.created_at].join('|')
   const salvoCols = [
     { key: 'RETORNO', label: 'Arquivo' },
@@ -452,27 +479,45 @@ export default function RetornoPage() {
   const todosRegistros = arquivos.flatMap(a => a.registros)
 
   const processarArquivos = async (files) => {
-    const validos = files.filter(f => /\.ret$/i.test(f.name))
-    if (!validos.length) {
-      setErros(['Selecione arquivo(s) de retorno CNAB400 (.RET)'])
+    const arr = Array.from(files)
+    const rets = arr.filter(f => /\.ret$/i.test(f.name))
+    const zips = arr.filter(f => /\.zip$/i.test(f.name))
+    if (!rets.length && !zips.length) {
+      setErros(['Selecione arquivo(s) .RET ou um .ZIP contendo arquivos .RET'])
       return
     }
 
     setLoading(true)
     setErros([])
 
-    const novosArquivos = []
     const errosLista = []
-
-    for (const file of validos) {
+    // Monta a lista de entradas { nome, text } a partir dos .RET soltos e dos .RET dentro dos .ZIP
+    const entradas = []
+    for (const f of rets) {
+      try { entradas.push({ nome: f.name, text: await f.text() }) }
+      catch (e) { errosLista.push(`${f.name}: ${e.message}`) }
+    }
+    for (const zf of zips) {
       try {
-        const text = await file.text()
-        const { header, trailer, registros } = parseCNAB400Retorno(text, file.name)
+        const zip = await JSZip.loadAsync(await zf.arrayBuffer())
+        const retEntries = Object.values(zip.files).filter(e => !e.dir && /\.ret$/i.test(e.name))
+        if (!retEntries.length) { errosLista.push(`${zf.name}: nenhum arquivo .RET dentro do .zip`); continue }
+        for (const e of retEntries) {
+          const base = e.name.split('/').pop()
+          entradas.push({ nome: base, text: await e.async('string') })
+        }
+      } catch (e) { errosLista.push(`${zf.name}: falha ao abrir o .zip — ${e.message}`) }
+    }
+
+    const novosArquivos = []
+    for (const ent of entradas) {
+      try {
+        const { header, trailer, registros } = parseCNAB400Retorno(ent.text, ent.nome)
         if (!header) throw new Error('Header não encontrado')
         if (!registros.length) throw new Error('Sem registros de transação')
-        novosArquivos.push({ nome: file.name, header, trailer, registros })
+        novosArquivos.push({ nome: ent.nome, header, trailer, registros })
       } catch (e) {
-        errosLista.push(`${file.name}: ${e.message}`)
+        errosLista.push(`${ent.nome}: ${e.message}`)
       }
     }
 
@@ -699,7 +744,7 @@ export default function RetornoPage() {
   const multiArquivo = arquivos.length > 1
 
   return (
-    <div className="flex flex-col gap-4 flex-1 min-h-0">
+    <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -724,7 +769,7 @@ export default function RetornoPage() {
           <div className="flex-1 min-w-0">
             <span className="text-white font-semibold text-sm">Importar Arquivo(s) de Retorno</span>
             <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
-              Arraste um ou mais .RET (CNAB400 BMP) ou clique em Selecionar
+              Arraste um ou mais .RET (ou um .ZIP com .RET) ou clique em Selecionar
             </span>
           </div>
           <label className="shrink-0">
@@ -732,7 +777,7 @@ export default function RetornoPage() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".ret"
+              accept=".ret,.zip"
               onChange={handleFileInput}
               disabled={loading}
               className="hidden"
@@ -745,7 +790,7 @@ export default function RetornoPage() {
 
         {/* Lista de arquivos carregados */}
         {arquivos.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-2 max-h-[50vh] overflow-y-auto">
             {arquivos.map((a) => (
               <div key={a.nome} className="flex items-center gap-2 bg-[#111111] border border-[#2a2a2a] rounded px-2.5 py-1">
                 <svg className="w-3 h-3 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -781,7 +826,7 @@ export default function RetornoPage() {
 
       {/* Resumo cards */}
       {arquivos.length > 0 && (
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3 max-h-[25vh] overflow-y-auto">
           {arquivos.map((a) => (
             <div key={a.nome} className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-4 py-2 flex flex-col min-w-0">
               <span className="text-[10px] text-[#666666] uppercase tracking-wider truncate max-w-[160px]" title={a.nome}>{a.nome}</span>
@@ -878,7 +923,7 @@ export default function RetornoPage() {
 
       {/* Tabela */}
       {todosRegistros.length > 0 && (
-        <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+        <div className="max-h-[60vh] overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
               <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:text-xs [&>th]:font-semibold [&>th]:text-white [&>th]:whitespace-nowrap">
@@ -1054,6 +1099,22 @@ export default function RetornoPage() {
               )}
             </div>
             <button
+              onClick={handleVincTitVal}
+              disabled={vincTitVal}
+              className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
+              title="Vincular NUM_LANCA por Valor + Nº Título (para registros sem lançamento)"
+            >
+              {vincTitVal ? 'Vinculando...' : 'Num Tit + Valor'}
+            </button>
+            <button
+              onClick={handleVincVencTit}
+              disabled={vincVencTit}
+              className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
+              title="Vincular NUM_LANCA por Vencimento + Nº Título (para registros sem lançamento)"
+            >
+              {vincVencTit ? 'Vinculando...' : 'Vencimento+Num Titulo'}
+            </button>
+            <button
               onClick={loadSalvos}
               className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
             >
@@ -1061,7 +1122,7 @@ export default function RetornoPage() {
             </button>
           </div>
         </div>
-        <div className="overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-h-72">
+        <div className="overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-h-[50vh]">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
               <tr>

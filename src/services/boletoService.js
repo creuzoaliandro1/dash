@@ -3679,3 +3679,154 @@ export const getRetContacapt = async () => {
     return { data: [], error: err }
   }
 }
+
+// Vincula NUM_LANCA aos registros de RET_CONTACAPT ainda SEM lançamento, casando
+// primeiro por VALOR (VR_TITULO = OPEITE.VR_FACE) e, quando o valor tem mais de um
+// lançamento, desempatando pelo Nº do Título normalizado (remove /, -, e demais
+// caracteres, e zeros à esquerda). Encontrando correspondência única, grava o NUM_LANCA.
+// Gera as variantes normalizadas de um Nº de Título para casar bases diferentes:
+//  - "6078-01"  -> {"607801", "60781"}   (dígitos puros; e cada segmento sem zeros à esquerda)
+//  - "607801"   -> {"607801"}   |   "60781" -> {"60781"}
+// Descarta / - e demais caracteres; casa quando qualquer variante de um lado coincide com a do outro.
+const _titKeys = (raw) => {
+  const str = String(raw || '')
+  const keys = new Set()
+  const digits = str.replace(/\D/g, '')
+  if (!digits) return keys
+  keys.add(digits.replace(/^0+/, '') || digits)
+  const segs = str.split(/\D+/).filter(Boolean)
+  if (segs.length > 1) {
+    const perSeg = segs.map(x => x.replace(/^0+/, '') || x).join('')
+    keys.add(perSeg.replace(/^0+/, '') || perSeg)
+  }
+  return keys
+}
+const _keysIntersect = (a, b) => { for (const k of a) { if (b.has(k)) return true } return false }
+
+export const vincularRetPorTituloValor = async () => {
+  // 1) registros pendentes (sem NUM_LANCA)
+  const pend = []
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('hash_dedup, VR_TITULO, NUM_TITULO')
+        .is('NUM_LANCA', null)
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[vincTitVal] pend:', error.message); break }
+      if (!data || !data.length) break
+      pend.push(...data)
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+  if (!pend.length) return { total: 0, atualizados: 0, semMatch: 0, falhas: 0, error: null }
+
+  // 2) OPEITE filtrado pelos valores presentes -> indices por valor e por valor+titulo
+  const valores = [...new Set(pend.map(r => Number(r.VR_TITULO) || 0).filter(v => v > 0))]
+  const opList = {}    // cents -> [{ num, keys:Set }]  (para desempate por título)
+  for (const c of _cnabChunk(valores, 200)) {
+    let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('OPEITE')
+        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, STATUS')
+        .in('VR_FACE', c).range(from, from + ps - 1)
+      if (error) { console.warn('[vincTitVal] OPEITE:', error.message); break }
+      if (!data || !data.length) break
+      data.forEach(o => {
+        if (String(o.STATUS || '').toUpperCase() === 'DC') return
+        const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
+        ;(opList[cents] = opList[cents] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO) })
+      })
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+
+  // 3) resolve cada pendente e grava
+  let atualizados = 0, semMatch = 0, falhas = 0
+  for (const r of pend) {
+    const cents = Math.round((Number(r.VR_TITULO) || 0) * 100)
+    let num = null
+    // Exige DUAS coisas em comum: VALOR + Nº TÍTULO. Nunca casa só pelo valor.
+    const pk = _titKeys(r.NUM_TITULO)
+    const cands = (opList[cents] || []).filter(o => _keysIntersect(pk, o.keys))
+    const distintos = [...new Set(cands.map(o => o.num))]
+    if (distintos.length === 1) num = distintos[0]      // valor + título -> lançamento único
+    if (num == null) { semMatch++; continue }
+    const { error } = await supabase.from('RET_CONTACAPT')
+      .update({ NUM_LANCA: String(num), link_metodo: 'titulo+valor', link_score: 60 })
+      .eq('hash_dedup', r.hash_dedup)
+    if (error) { falhas++; console.warn('[vincTitVal] update:', error.message) }
+    else atualizados++
+  }
+  return { total: pend.length, atualizados, semMatch, falhas, error: null }
+}
+
+// Vincula NUM_LANCA aos registros SEM lançamento casando por VENCIMENTO + Nº TÍTULO.
+// Exige as DUAS coisas em comum (vencimento e título); descarta / - e demais caracteres
+// no título (variantes via _titKeys). OPEITE: usa DT_VENCI_NOVO quando STATUS='PR'; ignora 'DC'.
+export const vincularRetPorVencTitulo = async () => {
+  // 1) pendentes
+  const pend = []
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('hash_dedup, VENCIMENTO, NUM_TITULO')
+        .is('NUM_LANCA', null)
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[vincVencTit] pend:', error.message); break }
+      if (!data || !data.length) break
+      pend.push(...data)
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+  const pendV = pend.filter(r => r.VENCIMENTO)
+  if (!pendV.length) return { total: pend.length, atualizados: 0, semMatch: pend.length, falhas: 0, error: null }
+
+  // 2) OPEITE pelos vencimentos presentes (DT_VENCI e DT_VENCI_NOVO) -> indice por vencISO
+  const vencs = [...new Set(pendV.map(r => String(r.VENCIMENTO).slice(0, 10)))]
+  const opList = {}    // vencISO -> [{ num, keys:Set }]
+  const seen = new Set()
+  const fetchBy = async (col) => {
+    for (const c of _cnabChunk(vencs, 100)) {
+      let from = 0; const ps = 1000
+      while (true) {
+        const { data, error } = await supabase.from('OPEITE')
+          .select('NUM_LANCAMENTO, NUM_TITULO, DT_VENCI, DT_VENCI_NOVO, STATUS')
+          .in(col, c).range(from, from + ps - 1)
+        if (error) { console.warn('[vincVencTit] OPEITE', col, error.message); break }
+        if (!data || !data.length) break
+        data.forEach(o => {
+          const key = `${o.NUM_LANCAMENTO}`
+          if (seen.has(key)) return
+          seen.add(key)
+          const st = String(o.STATUS || '').toUpperCase()
+          if (st === 'DC') return
+          const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
+          if (!venc) return
+          ;(opList[venc] = opList[venc] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO) })
+        })
+        if (data.length < ps) break
+        from += ps
+      }
+    }
+  }
+  await fetchBy('DT_VENCI'); await fetchBy('DT_VENCI_NOVO')
+
+  // 3) resolve e grava
+  let atualizados = 0, semMatch = 0, falhas = 0
+  for (const r of pendV) {
+    const venc = String(r.VENCIMENTO).slice(0, 10)
+    const pk = _titKeys(r.NUM_TITULO)
+    const cands = (opList[venc] || []).filter(o => _keysIntersect(pk, o.keys))
+    const distintos = [...new Set(cands.map(o => o.num))]
+    if (distintos.length !== 1) { semMatch++; continue }   // exige venc + título -> único
+    const { error } = await supabase.from('RET_CONTACAPT')
+      .update({ NUM_LANCA: String(distintos[0]), link_metodo: 'venc+titulo', link_score: 70 })
+      .eq('hash_dedup', r.hash_dedup)
+    if (error) { falhas++; console.warn('[vincVencTit] update:', error.message) }
+    else atualizados++
+  }
+  return { total: pend.length, atualizados, semMatch, falhas, error: null }
+}
