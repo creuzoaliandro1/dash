@@ -2915,7 +2915,7 @@ export const getProximoCodOperacao = async (codCedente) => {
     console.log('[BoletoService] Buscando próximo COD_OPERACAO para:', codCedente)
 
     const { data, error } = await supabase
-      .from('OPECABWEB')
+      .from('OPECAB_WEB')
       .select('COD_OPERACAO')
       .eq('COD_CEDENTE', codCedente)
       .order('COD_OPERACAO', { ascending: false })
@@ -2943,7 +2943,7 @@ export const getProximoCodBordero = async () => {
     console.log('[BoletoService] Buscando próximo COD_BORDERO global...')
 
     const { data, error } = await supabase
-      .from('OPECABWEB')
+      .from('OPECAB_WEB')
       .select('COD_BORDERO')
       .order('COD_BORDERO', { ascending: false })
       .limit(1)
@@ -2964,13 +2964,13 @@ export const getProximoCodBordero = async () => {
   }
 }
 
-// Buscar o próximo COD_TITULO da tabela OPEITEWEB
+// Buscar o próximo COD_TITULO da tabela OPEITE_WEB
 export const getProximoCodTitulo = async () => {
   try {
-    console.log('[BoletoService] Buscando próximo COD_TITULO de OPEITEWEB...')
+    console.log('[BoletoService] Buscando próximo COD_TITULO de OPEITE_WEB...')
 
     const { data, error } = await supabase
-      .from('OPEITEWEB')
+      .from('OPEITE_WEB')
       .select('COD_TITULO')
       .order('COD_TITULO', { ascending: false })
       .limit(1)
@@ -3002,7 +3002,7 @@ const truncarString = (str, maxLength = 25) => {
   return strOriginal
 }
 
-// Criar antecipação: insere registros em OPECABWEB, SACADOWEB e OPEITEWEB
+// Criar antecipação: insere registros em OPECAB_WEB, SACADO_WEB e OPEITE_WEB
 export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
   try {
     console.log('[BoletoService] Criando antecipação para', boletosParaAntecipar.length, 'boletos')
@@ -3016,12 +3016,12 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     const { data: proximoCodBordero } = await getProximoCodBordero()
     const { data: proximoCodTituloInicial } = await getProximoCodTitulo()
 
-    // 2. Preparar dados para OPECABWEB
+    // 2. Preparar dados para OPECAB_WEB
     const agora = new Date()
     const dtRecepcao = agora.toISOString().split('T')[0] // YYYY-MM-DD
     const hrRecepcao = agora.toTimeString().split(' ')[0] // HH:mm:ss
 
-    const registroOPECABWEB = {
+    const registroOPECAB_WEB = {
       COD_CEDENTE: contaData.cod_cedente,
       COD_OPERACAO: proximoCodOperacao,
       DT_RECEPCAO: dtRecepcao,
@@ -3030,20 +3030,20 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
       STATUS: 'R'
     }
 
-    console.log('[BoletoService] Inserindo OPECABWEB com STATUS=R:', registroOPECABWEB)
+    console.log('[BoletoService] Inserindo OPECAB_WEB com STATUS=R:', registroOPECAB_WEB)
 
-    // 3. Inserir em OPECABWEB
-    const { error: erroOPECABWEB } = await supabase
-      .from('OPECABWEB')
-      .insert([registroOPECABWEB])
+    // 3. Inserir em OPECAB_WEB
+    const { error: erroOPECAB_WEB } = await supabase
+      .from('OPECAB_WEB')
+      .insert([registroOPECAB_WEB])
 
-    if (erroOPECABWEB) {
-      console.error('[BoletoService] Erro ao inserir OPECABWEB:', erroOPECABWEB)
-      throw erroOPECABWEB
+    if (erroOPECAB_WEB) {
+      console.error('[BoletoService] Erro ao inserir OPECAB_WEB:', erroOPECAB_WEB)
+      throw erroOPECAB_WEB
     }
 
-    // 4. Preparar e inserir registros em SACADOWEB para cada boleto
-    console.log('[BoletoService] Preparando registros SACADOWEB...')
+    // 4. Preparar e inserir registros em SACADO_WEB para cada boleto
+    console.log('[BoletoService] Preparando registros SACADO_WEB...')
 
     const registrosSACLADOWEB = boletosParaAntecipar.map(boleto => ({
       NOME_SACADO: boleto.sacado_nome || '',
@@ -3055,20 +3055,20 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
       UF: boleto.sacado_uf || ''
     }))
 
-    // Inserir em SACADOWEB (pode gerar erro de duplicata, que é aceitável)
-    const { error: erroSACADOWEB } = await supabase
-      .from('SACADOWEB')
+    // Inserir em SACADO_WEB (pode gerar erro de duplicata, que é aceitável)
+    const { error: erroSACADO_WEB } = await supabase
+      .from('SACADO_WEB')
       .insert(registrosSACLADOWEB)
 
-    if (erroSACADOWEB) {
-      console.warn('[BoletoService] Aviso ao inserir SACADOWEB (pode ter duplicatas):', erroSACADOWEB.message)
+    if (erroSACADO_WEB) {
+      console.warn('[BoletoService] Aviso ao inserir SACADO_WEB (pode ter duplicatas):', erroSACADO_WEB.message)
       // Não lançar erro, pois SACADO pode já existir
     }
 
-    // 5. Preparar registros para OPEITEWEB com COD_TITULO sequencial
+    // 5. Preparar registros para OPEITE_WEB com COD_TITULO sequencial
     const PREFIXO_NOSSO_NUMERO = '36877480' // 8 dígitos
     let codTituloAtual = proximoCodTituloInicial
-    const registrosOPEITEWEB = boletosParaAntecipar.map(boleto => {
+    const registrosOPEITE_WEB = boletosParaAntecipar.map(boleto => {
       // Construir NOSSO_NUMERO com prefixo (total 17 dígitos)
       // Prefixo (8) + nosso_numero (9) = 17 dígitos
       const nossoNumeroCompleto = PREFIXO_NOSSO_NUMERO + (boleto.nosso_numero || '').padStart(9, '0')
@@ -3103,20 +3103,20 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
       return registro
     })
 
-    console.log('[BoletoService] Inserindo', registrosOPEITEWEB.length, 'registros OPEITEWEB com COD_TITULO sequencial')
+    console.log('[BoletoService] Inserindo', registrosOPEITE_WEB.length, 'registros OPEITE_WEB com COD_TITULO sequencial')
 
-    if (registrosOPEITEWEB.length > 0) {
-      console.log('[BoletoService] Exemplo de registro OPEITEWEB:', JSON.stringify(registrosOPEITEWEB[0], null, 2))
+    if (registrosOPEITE_WEB.length > 0) {
+      console.log('[BoletoService] Exemplo de registro OPEITE_WEB:', JSON.stringify(registrosOPEITE_WEB[0], null, 2))
     }
 
-    // 6. Inserir em OPEITEWEB
-    const { error: erroOPEITEWEB } = await supabase
-      .from('OPEITEWEB')
-      .insert(registrosOPEITEWEB)
+    // 6. Inserir em OPEITE_WEB
+    const { error: erroOPEITE_WEB } = await supabase
+      .from('OPEITE_WEB')
+      .insert(registrosOPEITE_WEB)
 
-    if (erroOPEITEWEB) {
-      console.error('[BoletoService] Erro ao inserir OPEITEWEB:', erroOPEITEWEB)
-      throw erroOPEITEWEB
+    if (erroOPEITE_WEB) {
+      console.error('[BoletoService] Erro ao inserir OPEITE_WEB:', erroOPEITE_WEB)
+      throw erroOPEITE_WEB
     }
 
     // Marca os boletos enviados para antecipação como status_efactor = 'Enviado'
@@ -3138,7 +3138,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
       data: {
         codBordero: proximoCodBordero,
         codOperacao: proximoCodOperacao,
-        quantidadeBoletos: registrosOPEITEWEB.length,
+        quantidadeBoletos: registrosOPEITE_WEB.length,
         codTituloInicio: proximoCodTituloInicial,
         codTituloFim: codTituloAtual - 1
       },
@@ -3151,7 +3151,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
 }
 
 // Retornar (desfazer) antecipação: remove os registros gravados pelo Antecipar.
-// Regra: se o título em OPEITEWEB estiver com STATUS = 'R', NÃO é possível retornar.
+// Regra: se o título em OPEITE_WEB estiver com STATUS = 'R', NÃO é possível retornar.
 // (condição isolada em STATUS_BLOQUEIA_RETORNO para fácil ajuste/inversão)
 export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
   try {
@@ -3160,7 +3160,7 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
     }
 
     const PREFIXO_NOSSO_NUMERO = '36877480'
-    const STATUS_PERMITE_RETORNO = 'R' // OPECABWEB.STATUS = 'R' => permite retornar
+    const STATUS_PERMITE_RETORNO = 'R' // OPECAB_WEB.STATUS = 'R' => permite retornar
 
     // Monta as chaves NOSSO_NUMERO (mesma regra usada no criarAntecipacao)
     const chaves = (boletosParaRetornar || [])
@@ -3171,9 +3171,9 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
       return { data: { retornados: 0, bloqueados: 0, naoEncontrados: (boletosParaRetornar || []).length, bloqueadosTitulos: [] }, error: null }
     }
 
-    // 1) Localiza os títulos em OPEITEWEB
+    // 1) Localiza os títulos em OPEITE_WEB
     const { data: rows, error: errBusca } = await supabase
-      .from('OPEITEWEB')
+      .from('OPEITE_WEB')
       .select('ID, COD_BORDERO, NOSSO_NUMERO, NUMERO')
       .eq('COD_CEDENTE', contaData.cod_cedente)
       .in('NOSSO_NUMERO', chaves)
@@ -3188,12 +3188,12 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
       return { data: { retornados: 0, bloqueados: 0, naoEncontrados, bloqueadosTitulos: [] }, error: null }
     }
 
-    // 2) Carrega o STATUS de OPECABWEB para cada borderô envolvido
+    // 2) Carrega o STATUS de OPECAB_WEB para cada borderô envolvido
     const borderos = [...new Set(encontrados.map(r => r.COD_BORDERO).filter(v => v != null))]
     const statusPorBordero = {}
     if (borderos.length > 0) {
       const { data: cabs, error: errCab } = await supabase
-        .from('OPECABWEB')
+        .from('OPECAB_WEB')
         .select('COD_BORDERO, STATUS')
         .eq('COD_CEDENTE', contaData.cod_cedente)
         .in('COD_BORDERO', borderos)
@@ -3201,35 +3201,35 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
       ;(cabs || []).forEach(c => { statusPorBordero[c.COD_BORDERO] = c.STATUS })
     }
 
-    // 3) Permite retornar quando OPECABWEB.STATUS = 'R'; caso contrário, bloqueia
+    // 3) Permite retornar quando OPECAB_WEB.STATUS = 'R'; caso contrário, bloqueia
     const permitidos = encontrados.filter(r => statusPorBordero[r.COD_BORDERO] === STATUS_PERMITE_RETORNO)
     const bloqueados = encontrados.filter(r => statusPorBordero[r.COD_BORDERO] !== STATUS_PERMITE_RETORNO)
 
-    console.log(`[BoletoService] Retornar antecipação: ${encontrados.length} encontrados, ${permitidos.length} permitidos (OPECABWEB.STATUS=R), ${bloqueados.length} bloqueados`)
+    console.log(`[BoletoService] Retornar antecipação: ${encontrados.length} encontrados, ${permitidos.length} permitidos (OPECAB_WEB.STATUS=R), ${bloqueados.length} bloqueados`)
 
     let retornados = 0
     if (permitidos.length > 0) {
-      // Remove os títulos permitidos de OPEITEWEB
+      // Remove os títulos permitidos de OPEITE_WEB
       const ids = permitidos.map(r => r.ID)
-      const { error: errDel } = await supabase.from('OPEITEWEB').delete().in('ID', ids)
+      const { error: errDel } = await supabase.from('OPEITE_WEB').delete().in('ID', ids)
       if (errDel) throw errDel
       retornados = permitidos.length
 
-      // Remove o cabeçalho OPECABWEB do borderô quando não restarem títulos
+      // Remove o cabeçalho OPECAB_WEB do borderô quando não restarem títulos
       const borderosAfetados = [...new Set(permitidos.map(r => r.COD_BORDERO).filter(v => v != null))]
       for (const bordero of borderosAfetados) {
         const { count } = await supabase
-          .from('OPEITEWEB')
+          .from('OPEITE_WEB')
           .select('*', { count: 'exact', head: true })
           .eq('COD_CEDENTE', contaData.cod_cedente)
           .eq('COD_BORDERO', bordero)
         if (!count || count === 0) {
           const { error: errCabDel } = await supabase
-            .from('OPECABWEB')
+            .from('OPECAB_WEB')
             .delete()
             .eq('COD_CEDENTE', contaData.cod_cedente)
             .eq('COD_BORDERO', bordero)
-          if (errCabDel) console.warn('[BoletoService] Aviso ao remover OPECABWEB do borderô', bordero, errCabDel.message)
+          if (errCabDel) console.warn('[BoletoService] Aviso ao remover OPECAB_WEB do borderô', bordero, errCabDel.message)
         }
       }
     }
