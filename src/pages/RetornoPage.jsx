@@ -3,7 +3,7 @@ import jsPDF from 'jspdf'
 import JSZip from 'jszip'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, getOpeiteStatusMap, recomputarStatusRet } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -52,6 +52,7 @@ const normalizarLinhaBug = (line) => {
 }
 
 const parseTipo1 = (line, arquivoNome) => {
+  const linhaOriginal = line
   line = normalizarLinhaBug(line)
   const motivosRaw = g(line, 319, 328)
   const motivosList = []
@@ -96,14 +97,15 @@ const parseTipo1 = (line, arquivoNome) => {
     mora: gn(line, 267, 279, 2),
     outros: gn(line, 280, 292, 2),
     dataCredito: g(line, 296, 301),
-    avalistaCic: g(line, 329, 343),
-    avalistaNome: g(line, 344, 387),
+    avalistaCic: g(line, 329, 342),
+    avalistaNome: g(line, 343, 387),
     motivoRaw: line.substring(318, 328),
     sequencial: g(line, 395, 400),
     // Chave de igualdade entre RETs: posicoes 19-395 (ignora cedente 1-18 e sequencial 396-400)
     dedupKey: (line || '').substring(18, 395),
     // CAPT CAPITAL: linha inicia com 10259849652000148 (posicoes 1-18)
     isCaptCap: (line || '').startsWith('10259849652000148'),
+    linhaRaw: linhaOriginal,
     arquivoNome,
   }
 }
@@ -243,6 +245,18 @@ const getMotivoDesc = (ocorrencia, motivo) => {
   return t[motivo] || `Motivo ${motivo}`
 }
 
+// Quebra o campo MOTIVO (ate 5 codigos de 2 digitos, ex.: "5224534800") em "codigo - nome",
+// ignorando "00"/vazios. Retorna array (um item por motivo).
+const motivosDeLinha = (raw, ocorrencia) => {
+  const str = String(raw || '')
+  const out = []
+  for (let i = 0; i < 5; i++) {
+    const m = (str.substring(i * 2, i * 2 + 2) || '').trim()
+    if (m && m !== '00') out.push(`${m} - ${getMotivoDesc(ocorrencia, m)}`)
+  }
+  return out
+}
+
 const ocorrenciaBadge = (cod) => {
   if (cod === '02') return 'bg-green-900/40 text-green-400 border-green-800'
   if (['03', '24'].includes(cod)) return 'bg-red-900/40 text-red-400 border-red-800'
@@ -300,10 +314,15 @@ const montarLinhaRet = (reg, arquivoNome, numLanca, metodo) => {
     VR_PAGO: reg.valorPago ?? null,
     MORA: reg.mora ?? null,
     OUTROS: reg.outros ?? null,
-    DT_CREDJTO: dtCred,
+    DT_CREDITO: dtCred,
     MOTIVO: reg.motivoRaw || null,
     AVALISTA_CIC: reg.avalistaCic || null,
     AVALISTA_NOME: reg.avalistaNome || null,
+    NOME_CORRENTISTA: null,
+    CIC_CORRENTISTA: null,
+    STATUS: null,
+    LINHA: reg.linhaRaw || null,
+    LINHA_DIGITAVEL: null,
     NUM_LANCA: num,
     link_metodo: num != null ? (metodo || 'valor+venc+cic') : null,
     link_score: num != null ? (metodo === 'valor+venc+cic' ? 100 : metodo === 'valor+venc+titulo' ? 80 : 50) : null,
@@ -371,18 +390,50 @@ export default function RetornoPage() {
   const [processandoRet, setProcessandoRet] = useState(false)
   const [retSalvos, setRetSalvos] = useState([])
   const [loadingSalvos, setLoadingSalvos] = useState(false)
+  const [opeiteStatusMap, setOpeiteStatusMap] = useState({})
   const loadSalvos = async () => {
     setLoadingSalvos(true)
     const { data } = await getRetContacapt()
-    setRetSalvos(data || [])
+    const rows = data || []
+    setRetSalvos(rows)
+    try {
+      const lancas = [...new Set(rows.map(r => r.NUM_LANCA).filter(Boolean))]
+      setOpeiteStatusMap(await getOpeiteStatusMap(lancas))
+    } catch (e) { console.warn('[RetornoPage] getOpeiteStatusMap:', e?.message) }
     setLoadingSalvos(false)
   }
   useEffect(() => { loadSalvos() }, [])
+
+  // Contas p/ resolver nome do cedente no filtro
+  const [allContasRet, setAllContasRet] = useState([])
+  useEffect(() => { getAllContas().then(({ data }) => setAllContasRet(data || [])).catch(() => {}) }, [])
+  const normContaRet = (v) => { const t = String(v == null ? '' : v).trim(); return t.replace(/^0+/, '') || t }
+  const nomeCedenteRet = (ced) => {
+    const key = normContaRet(ced)
+    const hit = allContasRet.find(c => normContaRet(c.conta) === key || normContaRet(c.cedente) === key)
+    return hit ? hit.nome_correntista : ''
+  }
+
+  // Busca livre + filtros da tabela Gravados em RET_CONTACAPT
+  const [buscaSalvos, setBuscaSalvos] = useState('')
+  const [showFiltroSalvos, setShowFiltroSalvos] = useState(false)
+  const [svVencIni, setSvVencIni] = useState(''); const [svVencFim, setSvVencFim] = useState('')
+  const [svDtOcoIni, setSvDtOcoIni] = useState(''); const [svDtOcoFim, setSvDtOcoFim] = useState('')
+  const [svLancIni, setSvLancIni] = useState(''); const [svLancFim, setSvLancFim] = useState('')
+  const [svVrIni, setSvVrIni] = useState(''); const [svVrFim, setSvVrFim] = useState('')
+  const [svCedente, setSvCedente] = useState(''); const [svOcorrencia, setSvOcorrencia] = useState('')
+  const [filtroLanc, setFiltroLanc] = useState(true)  // marcado=todos; desmarcado=só sem Nº Lançamento
+  const svCedenteOptions = [...new Set(retSalvos.map(r => (r.CONTA_CEDENTE == null ? '' : String(r.CONTA_CEDENTE)).trim()).filter(Boolean))].sort()
+  const svOcorrenciaOptions = [...new Set([
+    ...Object.keys(OCORRENCIAS),
+    ...retSalvos.map(r => (r.OCORRENCIA == null ? '' : String(r.OCORRENCIA)).trim()).filter(Boolean),
+  ])].sort()
 
   // ── Seleção / ordenação / PDF da tabela RET_CONTACAPT ─────────────────────
   const [selSalvos, setSelSalvos] = useState(new Set())
   const [sortSalvos, setSortSalvos] = useState({ col: 'created_at', dir: 'desc' })
   const [openSalvosMenu, setOpenSalvosMenu] = useState(false)
+  const [openSyncMenu, setOpenSyncMenu] = useState(false)
   const [vincTitVal, setVincTitVal] = useState(false)
   const handleVincTitVal = async () => {
     setVincTitVal(true)
@@ -411,15 +462,20 @@ export default function RetornoPage() {
   }
   const keySalvo = (r) => r.hash_dedup || [r.RETORNO, r.NOSSO_NUMERO, r.OCORRENCIA, r.VENCIMENTO, r.VR_TITULO, r.created_at].join('|')
   const salvoCols = [
-    { key: 'RETORNO', label: 'Arquivo' },
-    { key: 'CONTA_CEDENTE', label: 'Conta' },
+    { key: 'NUM_LANCA', label: 'Nº Lança' },
     { key: 'NOSSO_NUMERO', label: 'Nosso Nº' },
     { key: 'NUM_TITULO', label: 'Nº Título' },
-    { key: 'OCORRENCIA', label: 'Ocorr.' },
     { key: 'VENCIMENTO', label: 'Vencimento', type: 'date' },
-    { key: 'VR_TITULO', label: 'VR Título', type: 'num', align: 'right' },
-    { key: 'NUM_LANCA', label: 'Nº Lançamento' },
-    { key: 'created_at', label: 'Gravado em', type: 'date' },
+    { key: 'VR_TITULO', label: 'Valor', type: 'num', align: 'right' },
+    { key: 'CONTA_CEDENTE', label: 'Conta' },
+    { key: 'NOME_CORRENTISTA', label: 'Correntista' },
+    { key: 'CIC_CORRENTISTA', label: 'CIC' },
+    { key: 'OCORRENCIA', label: 'Ocorrência' },
+    { key: 'MOTIVO', label: 'Motivo' },
+    { key: 'STATUS', label: 'Status' },
+    { key: 'created_at', label: 'Gravado', type: 'date' },
+    { key: 'OPEITE_STATUS', label: 'St. OPEITE' },
+    { key: 'RETORNO', label: 'Arquivo' },
   ]
   const cmpSalvo = (a, b, col, type) => {
     let va = a[col], vb = b[col]
@@ -427,7 +483,35 @@ export default function RetornoPage() {
     if (type === 'date') { return (va ? new Date(va).getTime() : 0) - (vb ? new Date(vb).getTime() : 0) }
     return String(va || '').localeCompare(String(vb || ''), 'pt-BR', { numeric: true })
   }
-  const salvosOrdenados = [...retSalvos].sort((a, b) => {
+  const salvosFiltrados = retSalvos.filter(r => {
+    // Busca livre em todas as colunas exibidas
+    if (buscaSalvos.trim()) {
+      const term = buscaSalvos.toLowerCase()
+      const hay = [r.RETORNO, r.CONTA_CEDENTE, r.NOME_CORRENTISTA, r.CIC_CORRENTISTA, r.NOSSO_NUMERO, r.NUM_TITULO, r.OCORRENCIA, motivosDeLinha(r.MOTIVO, String(r.OCORRENCIA || '').trim()).join(' '), r.STATUS, r.VENCIMENTO, r.VR_TITULO, r.NUM_LANCA, r.created_at]
+        .map(v => (v == null ? '' : String(v))).join(' | ').toLowerCase()
+      if (!hay.includes(term)) return false
+    }
+    // Vencimento (intervalo) — coluna date 'YYYY-MM-DD'
+    if (svVencIni && !(r.VENCIMENTO && r.VENCIMENTO >= svVencIni)) return false
+    if (svVencFim && !(r.VENCIMENTO && r.VENCIMENTO <= svVencFim)) return false
+    // Dt. Ocorrência (intervalo)
+    if (svDtOcoIni && !(r.DT_OCORRENCIA && r.DT_OCORRENCIA >= svDtOcoIni)) return false
+    if (svDtOcoFim && !(r.DT_OCORRENCIA && r.DT_OCORRENCIA <= svDtOcoFim)) return false
+    // Nº de Lançamento (intervalo)
+    if (svLancIni !== '' && !(r.NUM_LANCA != null && Number(r.NUM_LANCA) >= Number(svLancIni))) return false
+    if (svLancFim !== '' && !(r.NUM_LANCA != null && Number(r.NUM_LANCA) <= Number(svLancFim))) return false
+    // VR Título (intervalo)
+    if (svVrIni !== '' && !(r.VR_TITULO != null && Number(r.VR_TITULO) >= Number(svVrIni))) return false
+    if (svVrFim !== '' && !(r.VR_TITULO != null && Number(r.VR_TITULO) <= Number(svVrFim))) return false
+    // Cedente
+    if (svCedente !== '' && String(r.CONTA_CEDENTE || '').trim() !== svCedente) return false
+    // Ocorrência
+    if (svOcorrencia !== '' && String(r.OCORRENCIA || '').trim() !== svOcorrencia) return false
+    // Lançamento: desmarcado mostra só os SEM correspondência de Nº Lançamento
+    if (!filtroLanc && r.NUM_LANCA != null && String(r.NUM_LANCA).trim() !== '') return false
+    return true
+  })
+  const salvosOrdenados = [...salvosFiltrados].sort((a, b) => {
     const col = salvoCols.find(c => c.key === sortSalvos.col)
     const r = cmpSalvo(a, b, sortSalvos.col, col?.type)
     return sortSalvos.dir === 'asc' ? r : -r
@@ -450,22 +534,26 @@ export default function RetornoPage() {
     autoTable(doc, {
       startY: 24,
       margin: { left: 14, right: 10 },
-      head: [['Arquivo', 'Conta', 'Nosso Nº', 'Nº Título', 'Ocorr.', 'Vencimento', 'VR Título', 'Nº Lançamento', 'Gravado em']],
+      head: [['Nº Lança', 'Nosso Nº', 'Nº Título', 'Vencimento', 'Valor', 'Conta', 'Correntista', 'CIC', 'Ocorrência', 'Motivo', 'Status', 'Gravado', 'Arquivo']],
       body: alvo.map(r => [
-        (r.RETORNO || '').replace(/\.[^.]+$/, '') || '—',
-        (r.CONTA_CEDENTE || '').trim() || '—',
+        r.NUM_LANCA || '—',
         (r.NOSSO_NUMERO || '').trim() || '—',
         (r.NUM_TITULO || '').trim() || '—',
-        (r.OCORRENCIA || '').trim() || '—',
         formatDataBR(r.VENCIMENTO),
         r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—',
-        r.NUM_LANCA || '—',
+        (r.CONTA_CEDENTE || '').trim() || '—',
+        (r.NOME_CORRENTISTA || '').trim() || '—',
+        (r.CIC_CORRENTISTA || '').trim() || '—',
+        (() => { const oc = (r.OCORRENCIA || '').trim(); return oc ? (OCORRENCIAS[oc] ? `${oc} - ${OCORRENCIAS[oc]}` : oc) : '—' })(),
+        motivosDeLinha(r.MOTIVO, (r.OCORRENCIA || '').trim()).join('\n') || '—',
+        (r.STATUS || '').trim() || '—',
         r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
+        (r.RETORNO || '').replace(/\.[^.]+$/, '') || '—',
       ]),
       styles: { fontSize: 7, cellPadding: { top: 0.8, bottom: 0.8, left: 1, right: 1 }, overflow: 'linebreak', textColor: [0, 0, 0], fillColor: [255, 255, 255], lineColor: [200, 200, 200], lineWidth: 0.1 },
       headStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [245, 245, 245] },
-      columnStyles: { 6: { halign: 'right' } },
+      columnStyles: { 4: { halign: 'right' } },
       theme: 'grid',
     })
     const now = new Date()
@@ -515,7 +603,7 @@ export default function RetornoPage() {
         const { header, trailer, registros } = parseCNAB400Retorno(ent.text, ent.nome)
         if (!header) throw new Error('Header não encontrado')
         if (!registros.length) throw new Error('Sem registros de transação')
-        novosArquivos.push({ nome: ent.nome, header, trailer, registros })
+        novosArquivos.push({ nome: ent.nome, text: ent.text, header, trailer, registros })
       } catch (e) {
         errosLista.push(`${ent.nome}: ${e.message}`)
       }
@@ -725,12 +813,38 @@ export default function RetornoPage() {
       res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic, metodo: x.metodo }; numByChave[x.chave] = x.numLanca; metByChave[x.chave] = x.metodo; if (x.numLanca != null) comLanc++ })
       setVinculos(novo)
       const rows = alvoUnico.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r.arquivoNome + r.sequencial], metByChave[r.arquivoNome + r.sequencial]))
+      // Resolve NOME_CORRENTISTA / CIC_CORRENTISTA cruzando OPEITE+SACADO / capt_boletos / capt_registrado / REGISTRADOS / REMESSAS
+      try {
+        const itens = alvoUnico.map(r => ({ key: r.arquivoNome + r.sequencial, nosso: r.nossoNumeroBD, numLanca: numByChave[r.arquivoNome + r.sequencial] }))
+        const corr = await resolverCorrentistaRet(itens)
+        rows.forEach((row, idx) => {
+          const c = corr[alvoUnico[idx].arquivoNome + alvoUnico[idx].sequencial]
+          if (c) { row.NOME_CORRENTISTA = c.nome; row.CIC_CORRENTISTA = c.cic; row.LINHA_DIGITAVEL = c.barcode }
+        })
+      } catch (e) { console.warn('[RetornoPage] resolverCorrentistaRet:', e?.message) }
+      // Salva os arquivos .ret no Storage (bucket 'retornos') para download posterior
+      try {
+        const nomes = [...new Set(alvoUnico.map(r => r.arquivoNome))]
+        const entradas = nomes.map(n => ({ nome: n, text: (arquivos.find(a => a.nome === n) || {}).text })).filter(e => e.text)
+        if (entradas.length) await uploadRetFiles(entradas)
+      } catch (e) { console.warn('[RetornoPage] uploadRetFiles:', e?.message) }
       const grav = await gravarRetContacapt(rows)
+      // Alimenta NUM_LANCA dos gravados sem lançamento rodando as duas rotinas de sincronização
+      let syncMsg = ''
+      if (!grav.error) {
+        try {
+          const r1 = await vincularRetPorTituloValor()
+          const r2 = await vincularRetPorVencTitulo()
+          const bf = await backfillCorrentistaRet()
+          const st = await recomputarStatusRet()
+          syncMsg = `\nSincronização Nº Lançamento — Nº Título+Valor: ${r1.atualizados} vinculado(s); Vencimento+Nº Título: ${r2.atualizados} vinculado(s).\nCorrentista preenchido (nome/CIC): ${bf.atualizados}. STATUS atualizado: ${st.atualizados}.`
+        } catch (e) { console.warn('[RetornoPage] sync NUM_LANCA:', e?.message) }
+      }
       loadSalvos()
       if (grav.error) {
         alert(`Vinculados ${comLanc}/${registros.length} ao OPEITE. Erro ao gravar: ${grav.error.message}`)
       } else {
-        alert(`Processados ${rows.length} registro(s)${descartados ? ` (${descartados} descartado(s) por duplicidade entre RETs)` : ''}.\nVinculados ao OPEITE (Nº Lançamento): ${comLanc}.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}${grav.falhas ? ` · falhas: ${grav.falhas}` : ''}.`)
+        alert(`Processados ${rows.length} registro(s)${descartados ? ` (${descartados} descartado(s) por duplicidade entre RETs)` : ''}.\nVinculados ao OPEITE (Nº Lançamento): ${comLanc}.\nGravados em RET_CONTACAPT: ${grav.inseridos}${grav.pulados ? ` (já existiam: ${grav.pulados})` : ''}${grav.falhas ? ` · falhas: ${grav.falhas}` : ''}.${syncMsg}`)
       }
     } catch (e) {
       console.error('[RetornoPage] vincular/gravar:', e)
@@ -738,6 +852,16 @@ export default function RetornoPage() {
     } finally {
       setProcessandoRet(false)
     }
+  }
+
+  const handleDownloadRet = async (nome) => {
+    if (!nome) return
+    try {
+      const { data, error } = await getDownloadUrlRet(nome)
+      if (error || !data) { alert('Arquivo .ret não encontrado no armazenamento. Ele passa a ser salvo a partir de novos processamentos.'); return }
+      const a = document.createElement('a'); a.href = data; a.download = nome
+      document.body.appendChild(a); a.click(); a.remove()
+    } catch (e) { alert('Erro ao baixar o .ret: ' + (e?.message || e)) }
   }
 
   const lista = getLista()
@@ -1080,6 +1204,87 @@ export default function RetornoPage() {
             {selSalvos.size > 0 && <span className="text-[#666666] font-normal"> · {selSalvos.size} sel.</span>}
           </h2>
           <div className="flex items-center gap-2">
+            {/* Busca livre — filtra ao digitar em todas as colunas */}
+            <input
+              type="text"
+              value={buscaSalvos}
+              onChange={(e) => setBuscaSalvos(e.target.value)}
+              placeholder="Pesquisar..."
+              className="w-56 px-3 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white placeholder-[#666666] text-xs focus:border-white outline-none transition"
+            />
+            {/* Filtro */}
+            <div className="relative">
+              <button
+                onClick={() => setShowFiltroSalvos(v => !v)}
+                className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
+              >
+                Filtro ▾
+              </button>
+              {showFiltroSalvos && (
+                <div className="absolute right-0 mt-1 w-72 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20 p-4 max-h-[70vh] overflow-y-auto">
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Vencimento</label>
+                    <div className="flex gap-2">
+                      <input type="date" value={svVencIni} onChange={(e) => setSvVencIni(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Início" />
+                      <input type="date" value={svVencFim} onChange={(e) => setSvVencFim(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Final" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Dt. Ocorrência</label>
+                    <div className="flex gap-2">
+                      <input type="date" value={svDtOcoIni} onChange={(e) => setSvDtOcoIni(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Início" />
+                      <input type="date" value={svDtOcoFim} onChange={(e) => setSvDtOcoFim(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Final" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Nº de Lançamento</label>
+                    <div className="flex gap-2">
+                      <input type="number" value={svLancIni} onChange={(e) => setSvLancIni(e.target.value)} placeholder="De" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                      <input type="number" value={svLancFim} onChange={(e) => setSvLancFim(e.target.value)} placeholder="Até" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">VR Título (R$)</label>
+                    <div className="flex gap-2">
+                      <input type="number" step="0.01" value={svVrIni} onChange={(e) => setSvVrIni(e.target.value)} placeholder="Mín" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                      <input type="number" step="0.01" value={svVrFim} onChange={(e) => setSvVrFim(e.target.value)} placeholder="Máx" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Cedente</label>
+                    <select value={svCedente} onChange={(e) => setSvCedente(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
+                      <option value="">Todos</option>
+                      {svCedenteOptions.map(ced => {
+                        const nome = nomeCedenteRet(ced)
+                        return <option key={ced} value={ced}>{nome ? `${ced} — ${nome}` : ced}</option>
+                      })}
+                    </select>
+                  </div>
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Ocorrência</label>
+                    <select value={svOcorrencia} onChange={(e) => setSvOcorrencia(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
+                      <option value="">Todas</option>
+                      {svOcorrenciaOptions.map(cod => (
+                        <option key={cod} value={cod}>{OCORRENCIAS[cod] ? `${cod} — ${OCORRENCIAS[cod]}` : cod}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mb-3 pt-3 border-t border-[#2a2a2a]">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={filtroLanc} onChange={(e) => setFiltroLanc(e.target.checked)} className="w-4 h-4 cursor-pointer accent-white" />
+                      <span className="text-xs text-white">Lançamento</span>
+                    </label>
+                    <p className="text-[10px] text-[#666666] mt-1">Desmarque para ver só os registros SEM Nº de Lançamento.</p>
+                  </div>
+                  <button
+                    onClick={() => { setSvVencIni(''); setSvVencFim(''); setSvDtOcoIni(''); setSvDtOcoFim(''); setSvLancIni(''); setSvLancFim(''); setSvVrIni(''); setSvVrFim(''); setSvCedente(''); setSvOcorrencia(''); setBuscaSalvos(''); setFiltroLanc(true) }}
+                    className="w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
+                  >
+                    Limpar filtros
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="relative">
               <button
                 onClick={() => setOpenSalvosMenu(o => !o)}
@@ -1098,22 +1303,35 @@ export default function RetornoPage() {
                 </div>
               )}
             </div>
-            <button
-              onClick={handleVincTitVal}
-              disabled={vincTitVal}
-              className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
-              title="Vincular NUM_LANCA por Valor + Nº Título (para registros sem lançamento)"
-            >
-              {vincTitVal ? 'Vinculando...' : 'Num Tit + Valor'}
-            </button>
-            <button
-              onClick={handleVincVencTit}
-              disabled={vincVencTit}
-              className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
-              title="Vincular NUM_LANCA por Vencimento + Nº Título (para registros sem lançamento)"
-            >
-              {vincVencTit ? 'Vinculando...' : 'Vencimento+Num Titulo'}
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setOpenSyncMenu(o => !o)}
+                disabled={vincTitVal || vincVencTit}
+                className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
+              >
+                {(vincTitVal || vincVencTit) ? 'Vinculando...' : 'Sincronizar ▾'}
+              </button>
+              {openSyncMenu && (
+                <div className="absolute right-0 mt-1 w-56 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20">
+                  <button
+                    onClick={() => { setOpenSyncMenu(false); handleVincTitVal() }}
+                    disabled={vincTitVal}
+                    className="block w-full text-left px-3 py-2 text-xs text-[#a3a3a3] hover:bg-[#1a1a1a] hover:text-white transition disabled:opacity-50"
+                    title="Vincular NUM_LANCA por Valor + Nº Título (para registros sem lançamento)"
+                  >
+                    {vincTitVal ? 'Vinculando...' : 'Num Tit + Valor'}
+                  </button>
+                  <button
+                    onClick={() => { setOpenSyncMenu(false); handleVincVencTit() }}
+                    disabled={vincVencTit}
+                    className="block w-full text-left px-3 py-2 text-xs text-[#a3a3a3] hover:bg-[#1a1a1a] hover:text-white transition disabled:opacity-50"
+                    title="Vincular NUM_LANCA por Vencimento + Nº Título (para registros sem lançamento)"
+                  >
+                    {vincVencTit ? 'Vinculando...' : 'Vencimento + Num Titulo'}
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={loadSalvos}
               className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
@@ -1140,7 +1358,7 @@ export default function RetornoPage() {
             </thead>
             <tbody>
               {salvosOrdenados.length === 0 && (
-                <tr><td colSpan={10} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
+                <tr><td colSpan={15} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
               )}
               {salvosOrdenados.map((r, i) => {
                 const k = keySalvo(r)
@@ -1149,16 +1367,36 @@ export default function RetornoPage() {
                   <td className="px-3 py-2">
                     <input type="checkbox" checked={selSalvos.has(k)} onChange={() => toggleSelSalvo(k)} className="accent-green-500 cursor-pointer align-middle" />
                   </td>
-                  <td className="px-3 py-2 text-[#555555] text-xs whitespace-nowrap">{(r.RETORNO || '').replace(/\.[^.]+$/, '') || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.NUM_LANCA ? <span className="text-green-400">{r.NUM_LANCA}</span> : <span className="text-[#555555]">—</span>}</td>
                   <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NOSSO_NUMERO || '').trim() || '—'}</td>
                   <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NUM_TITULO || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(r.OCORRENCIA || '').trim() || '—'}</td>
                   <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{formatDataBR(r.VENCIMENTO)}</td>
                   <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">{r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—'}</td>
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.NUM_LANCA ? <span className="text-green-400">{r.NUM_LANCA}</span> : <span className="text-[#555555]">—</span>}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(r.NOME_CORRENTISTA || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CIC_CORRENTISTA || '').trim() || '—'}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(() => { const oc = (r.OCORRENCIA || '').trim(); return oc ? (OCORRENCIAS[oc] ? `${oc} - ${OCORRENCIAS[oc]}` : oc) : '—' })()}</td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs">
+                    {(() => {
+                      const ms = motivosDeLinha(r.MOTIVO, (r.OCORRENCIA || '').trim())
+                      return ms.length ? ms.map((m, mi) => <div key={mi} className="whitespace-nowrap">{m}</div>) : '—'
+                    })()}
+                  </td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap font-medium">
+                    {(() => {
+                      const st = (r.STATUS || '').trim()
+                      const cor = st === 'Pago' ? 'text-green-400' : st === 'Cancelado' ? 'text-red-400' : st === 'Registrado' ? 'text-blue-400' : 'text-[#555555]'
+                      return <span className={cor}>{st || '—'}</span>
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-[#666666] text-xs whitespace-nowrap">
                     {r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{opeiteStatusMap[String(r.NUM_LANCA || '').trim()] || '—'}</td>
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    {r.RETORNO
+                      ? <button onClick={() => handleDownloadRet(r.RETORNO)} className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer" title={`Baixar ${r.RETORNO}`}>{(r.RETORNO || '').replace(/\.[^.]+$/, '')}</button>
+                      : <span className="text-[#555555]">—</span>}
                   </td>
                 </tr>
                 )

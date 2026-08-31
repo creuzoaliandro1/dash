@@ -4,7 +4,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus } from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto } from '../services/boletoService'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
@@ -13,6 +13,17 @@ import { buildDuplicatasBoletosBlob, buildBorderoBlobs, buildPdfCompletoSemBolet
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
+
+// Codigos de ocorrencia do retorno CNAB400 (BMP) — usados no filtro de Ocorrencia.
+const OCORRENCIAS = {
+  '02': 'Entrada confirmada', '03': 'Entrada rejeitada', '06': 'Liquidacao normal',
+  '09': 'Baixado automaticamente', '10': 'Baixado pelo banco', '11': 'Em ser (pendente)',
+  '12': 'Abatimento concedido', '13': 'Abatimento cancelado', '14': 'Protesto do titulo',
+  '16': 'Protesto rejeitado', '17': 'Liquidacao apos baixa', '18': 'Acerto depositaria',
+  '21': 'Acerto controle participante', '22': 'Pagamento cancelado', '24': 'Rejeitado - CEP irregular',
+  '27': 'Baixa rejeitada', '28': 'Debito tarifas/custas', '29': 'Ocorrencias do pagador',
+  '32': 'Instrucao rejeitada', '40': 'Estorno de pagamento',
+}
 
 // Barra de progresso do CNAB400 isolada: timer proprio que calcula a % pelo
 // TEMPO DECORRIDO (1% + 3% por segundo, ate 95%). Por ser um componente pequeno,
@@ -145,6 +156,53 @@ export default function BoletosPage() {
   const userType = user.tipo || 'U'
   const selectedContaId = localStorage.getItem('activeContaId') || user.id
   const [allContas, setAllContas] = useState([])
+
+  // Dados de RET_CONTACAPT para os filtros de Cedente / Ocorrencia / Dt. Ocorrencia
+  const [retByLanc, setRetByLanc] = useState({})
+  const [cedenteOptions, setCedenteOptions] = useState([])
+  const [ocorrenciaOptions, setOcorrenciaOptions] = useState([])
+  const [dataOcorrenciaInicio, setDataOcorrenciaInicio] = useState('')
+  const [dataOcorrenciaFim, setDataOcorrenciaFim] = useState('')
+  const [numLancInicio, setNumLancInicio] = useState('')
+  const [numLancFim, setNumLancFim] = useState('')
+  const [vrTituloInicio, setVrTituloInicio] = useState('')
+  const [vrTituloFim, setVrTituloFim] = useState('')
+  const [cedenteFiltro, setCedenteFiltro] = useState('')
+  const [ocorrenciaFiltro, setOcorrenciaFiltro] = useState('')
+
+  useEffect(() => {
+    getRetContacaptFiltro().then(({ data }) => {
+      const rows = data || []
+      const byLanc = {}
+      const ceds = new Set()
+      const ocos = new Set()
+      for (const r of rows) {
+        const ced = (r.CONTA_CEDENTE == null ? '' : String(r.CONTA_CEDENTE)).trim()
+        const oco = (r.OCORRENCIA == null ? '' : String(r.OCORRENCIA)).trim()
+        const dt = r.DT_OCORRENCIA || ''
+        if (ced) ceds.add(ced)
+        if (oco) ocos.add(oco)
+        const lanc = r.NUM_LANCA == null ? '' : String(r.NUM_LANCA).trim()
+        if (lanc) {
+          if (!byLanc[lanc]) byLanc[lanc] = []
+          byLanc[lanc].push({ cedente: ced, ocorrencia: oco, dt })
+        }
+      }
+      setRetByLanc(byLanc)
+      setCedenteOptions([...ceds].sort())
+      setOcorrenciaOptions([...new Set([...Object.keys(OCORRENCIAS), ...ocos])].sort())
+    }).catch(err => console.warn('[BoletosPage] getRetContacaptFiltro:', err?.message))
+  }, [])
+
+  const normConta = (v) => {
+    const t = String(v == null ? '' : v).trim()
+    return t.replace(/^0+/, '') || t
+  }
+  const contaNomePorCedente = (ced) => {
+    const key = normConta(ced)
+    const hit = allContas.find(c => normConta(c.conta) === key || normConta(c.cedente) === key)
+    return hit ? hit.nome_correntista : ''
+  }
 
   // Debug: log do tipo de usuário
   useEffect(() => {
@@ -504,17 +562,14 @@ export default function BoletosPage() {
   const getFilteredBoletos = () => {
     let filtered = boletos
 
-    // Filter by search term
+    // Filter by search term — busca livre em TODAS as colunas exibidas na tela
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase()
-      filtered = filtered.filter(boleto => {
-        return (
-          (boleto.numero_documento != null && String(boleto.numero_documento).toLowerCase().includes(term)) ||
-          (boleto.sacado_nome && boleto.sacado_nome.toLowerCase().includes(term)) ||
-          (boleto.nosso_numero != null && String(boleto.nosso_numero).toLowerCase().includes(term)) ||
-          (boleto.sacado_cic != null && String(boleto.sacado_cic).toLowerCase().includes(term))
-        )
-      })
+      const hay = (b) => [
+        b.num_lancamento, b.nosso_numero, b.data_emissao, b.numero_documento,
+        b.valor, b.data_vencimento, b.sacado_nome, b.sacado_cic, b.status,
+      ].map(v => (v == null ? '' : String(v))).join(' | ').toLowerCase()
+      filtered = filtered.filter(b => hay(b).includes(term))
     }
 
     // Filter by status
@@ -568,6 +623,41 @@ export default function BoletosPage() {
     }
     if (dataAntecipadoFim) {
       filtered = filtered.filter(boleto => boleto.data_antecipacao && boleto.data_antecipacao <= dataAntecipadoFim)
+    }
+
+    // Nº de Lançamento (intervalo) — coluna LANC exibida na tela
+    if (numLancInicio !== '') {
+      const ini = Number(numLancInicio)
+      filtered = filtered.filter(b => b.num_lancamento != null && Number(b.num_lancamento) >= ini)
+    }
+    if (numLancFim !== '') {
+      const fim = Number(numLancFim)
+      filtered = filtered.filter(b => b.num_lancamento != null && Number(b.num_lancamento) <= fim)
+    }
+
+    // VR Título (intervalo) — coluna Valor exibida na tela
+    if (vrTituloInicio !== '') {
+      const ini = Number(vrTituloInicio)
+      filtered = filtered.filter(b => b.valor != null && Number(b.valor) >= ini)
+    }
+    if (vrTituloFim !== '') {
+      const fim = Number(vrTituloFim)
+      filtered = filtered.filter(b => b.valor != null && Number(b.valor) <= fim)
+    }
+
+    // Filtros vindos da RET_CONTACAPT (ligados por Nº de Lançamento)
+    if (cedenteFiltro !== '' || ocorrenciaFiltro !== '' || dataOcorrenciaInicio !== '' || dataOcorrenciaFim !== '') {
+      filtered = filtered.filter(b => {
+        const recs = b.num_lancamento != null ? (retByLanc[String(b.num_lancamento).trim()] || []) : []
+        if (!recs.length) return false
+        return recs.some(r => {
+          if (cedenteFiltro !== '' && String(r.cedente || '').trim() !== cedenteFiltro) return false
+          if (ocorrenciaFiltro !== '' && String(r.ocorrencia || '').trim() !== ocorrenciaFiltro) return false
+          if (dataOcorrenciaInicio !== '' && !(r.dt && r.dt >= dataOcorrenciaInicio)) return false
+          if (dataOcorrenciaFim !== '' && !(r.dt && r.dt <= dataOcorrenciaFim)) return false
+          return true
+        })
+      })
     }
 
     return filtered
@@ -1837,7 +1927,7 @@ export default function BoletosPage() {
               </button>
 
               {showFiltroMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 p-4 min-w-72">
+                <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded shadow-lg z-50 p-4 min-w-72 max-h-[80vh] overflow-y-auto">
                   {/* Vencimento */}
                   <div className="mb-3">
                     <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Vencimento</label>
@@ -1899,6 +1989,56 @@ export default function BoletosPage() {
                         title="Final"
                       />
                     </div>
+                  </div>
+
+                  {/* Dt. Ocorrência */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Dt. Ocorrência</label>
+                    <div className="flex gap-2">
+                      <input type="date" value={dataOcorrenciaInicio} onChange={(e) => setDataOcorrenciaInicio(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Início" />
+                      <input type="date" value={dataOcorrenciaFim} onChange={(e) => setDataOcorrenciaFim(e.target.value)} className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" title="Final" />
+                    </div>
+                  </div>
+
+                  {/* Nº de Lançamento */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Nº de Lançamento</label>
+                    <div className="flex gap-2">
+                      <input type="number" value={numLancInicio} onChange={(e) => setNumLancInicio(e.target.value)} placeholder="De" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                      <input type="number" value={numLancFim} onChange={(e) => setNumLancFim(e.target.value)} placeholder="Até" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                    </div>
+                  </div>
+
+                  {/* VR Título */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">VR Título (R$)</label>
+                    <div className="flex gap-2">
+                      <input type="number" step="0.01" value={vrTituloInicio} onChange={(e) => setVrTituloInicio(e.target.value)} placeholder="Mín" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                      <input type="number" step="0.01" value={vrTituloFim} onChange={(e) => setVrTituloFim(e.target.value)} placeholder="Máx" className="flex-1 px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition" />
+                    </div>
+                  </div>
+
+                  {/* Cedente */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Cedente</label>
+                    <select value={cedenteFiltro} onChange={(e) => setCedenteFiltro(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
+                      <option value="">Todos</option>
+                      {cedenteOptions.map(ced => {
+                        const nome = contaNomePorCedente(ced)
+                        return <option key={ced} value={ced}>{nome ? `${ced} — ${nome}` : ced}</option>
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Ocorrência */}
+                  <div className="mb-3">
+                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Ocorrência</label>
+                    <select value={ocorrenciaFiltro} onChange={(e) => setOcorrenciaFiltro(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
+                      <option value="">Todas</option>
+                      {ocorrenciaOptions.map(cod => (
+                        <option key={cod} value={cod}>{OCORRENCIAS[cod] ? `${cod} — ${OCORRENCIAS[cod]}` : cod}</option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Status */}
@@ -1969,6 +2109,10 @@ export default function BoletosPage() {
                       setDataVencimentoInicio(''); setDataVencimentoFim('')
                       setDataRegistroInicio(''); setDataRegistroFim('')
                       setDataAntecipadoInicio(''); setDataAntecipadoFim('')
+                      setDataOcorrenciaInicio(''); setDataOcorrenciaFim('')
+                      setNumLancInicio(''); setNumLancFim('')
+                      setVrTituloInicio(''); setVrTituloFim('')
+                      setCedenteFiltro(''); setOcorrenciaFiltro('')
                       setStatusChecks({ pago: false, cancelado: false, pendente: true })
                       setStatusFlags({ antecipa: true, registro: true, assina: true })
                     }}

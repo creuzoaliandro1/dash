@@ -1061,6 +1061,49 @@ export const uploadRemessaCNAB400 = async (contaId, filename, blobOuTexto) => {
   }
 }
 
+// ── Arquivos de RETORNO (.ret) no Storage (bucket 'retornos') ────────────────
+// Chave determinística a partir do nome do arquivo (para casar upload/download).
+export const retStorageKey = (nome) => String(nome || '').trim().replace(/[^\w.\-]+/g, '_') || 'retorno.ret'
+
+// Salva o conteúdo bruto de um .ret no bucket 'retornos' (upsert por nome).
+export const uploadRetFile = async (filename, texto) => {
+  try {
+    if (!texto) throw new Error('Conteúdo do arquivo .ret não informado')
+    const key = retStorageKey(filename)
+    const blob = texto instanceof Blob ? texto : new Blob([texto], { type: 'text/plain' })
+    const { error } = await supabase.storage.from('retornos').upload(key, blob, { upsert: true, contentType: 'text/plain' })
+    if (error) throw error
+    return { data: { caminho: key }, error: null }
+  } catch (err) {
+    console.warn('[uploadRetFile]', err?.message || err)
+    return { data: null, error: err }
+  }
+}
+
+// Sobe vários .ret de uma vez: entradas = [{ nome, text }]
+export const uploadRetFiles = async (entradas) => {
+  let ok = 0, falhas = 0
+  for (const e of (entradas || [])) {
+    if (!e || !e.nome || !e.text) continue
+    const { error } = await uploadRetFile(e.nome, e.text)
+    if (error) falhas++; else ok++
+  }
+  return { ok, falhas }
+}
+
+// Gera URL assinada de download para um .ret salvo (por nome de arquivo).
+export const getDownloadUrlRet = async (filename) => {
+  try {
+    const key = retStorageKey(filename)
+    const { data, error } = await supabase.storage.from('retornos').createSignedUrl(key, 3600, { download: filename || key })
+    if (error) throw error
+    return { data: data.signedUrl, error: null }
+  } catch (err) {
+    console.warn('[getDownloadUrlRet]', err?.message || err)
+    return { data: null, error: err }
+  }
+}
+
 // Gerar URL de download para um arquivo de remessa CNAB400 salvo no storage
 export const getDownloadUrlRemessa = async (caminhoStorage, downloadName) => {
   try {
@@ -3527,6 +3570,208 @@ export const resolverCicPorNosso = async (nossoNums) => {
   return map
 }
 
+// Resolve NOME_CORRENTISTA + CIC_CORRENTISTA (do sacado/pagador) para os registros
+// de um retorno .ret, cruzando as tabelas na ordem de prioridade informada pelo
+// cliente: OPEITE+SACADO (via Nº Lançamento) -> capt_boletos -> capt_registrado
+// -> REGISTRADOS -> REMESSAS (as tres ultimas pelo nosso numero normalizado).
+// items: [{ key, nosso, numLanca }]  ->  retorna { [key]: { nome, cic } }
+export const resolverCorrentistaRet = async (items) => {
+  const list = items || []
+  const out = {}
+  if (!list.length) return out
+  const nossos = [...new Set(list.map(i => _normNum(i.nosso)).filter(Boolean))]
+  const lancas = [...new Set(list.map(i => (i.numLanca == null ? '' : String(i.numLanca).trim())).filter(Boolean))]
+
+  // 1) OPEITE por NUM_LANCAMENTO -> COD_SACADO -> SACADO (nome + cic)
+  const codPorLanca = {}
+  const codSet = new Set()
+  for (const c of _cnabChunk(lancas, 300)) {
+    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, COD_SACADO').in('NUM_LANCAMENTO', c)
+    if (error) { console.warn('[resolverCorrentistaRet] OPEITE:', error.message); continue }
+    ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && codPorLanca[l] == null) { codPorLanca[l] = o.COD_SACADO; if (o.COD_SACADO != null) codSet.add(o.COD_SACADO) } })
+  }
+  const sacadoPorCod = {}
+  for (const c of _cnabChunk([...codSet], 300)) {
+    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', c)
+    if (error) { console.warn('[resolverCorrentistaRet] SACADO:', error.message); continue }
+    ;(data || []).forEach(sa => { sacadoPorCod[sa.COD_SACADO] = { nome: (sa.NOME_CORRENTISTA || '').trim(), cic: _normNum(sa.CIC) } })
+  }
+
+  // Helper generico p/ montar mapa nosso->{nome,cic} de uma tabela
+  const mapaPorNosso = async (tabela, colNosso, colNome, colCic, colBarcode) => {
+    const m = {}
+    const cols = [colNosso, colNome, colCic, colBarcode].filter(Boolean).join(', ')
+    for (const c of _cnabChunk(nossos, 300)) {
+      const { data, error } = await supabase.from(tabela).select(cols).in(colNosso, c)
+      if (error) { console.warn(`[resolverCorrentistaRet] ${tabela}:`, error.message); continue }
+      ;(data || []).forEach(r => {
+        const k = _normNum(r[colNosso])
+        if (!k || m[k]) return
+        m[k] = {
+          nome: (r[colNome] || '').trim(),
+          cic: colCic ? _normNum(r[colCic]) : '',
+          barcode: colBarcode ? String(r[colBarcode] || '').trim() : '',
+        }
+      })
+    }
+    return m
+  }
+
+  // 2..5) nosso numero (normalizado) nas demais tabelas
+  const cb = await mapaPorNosso('capt_boletos', 'nosso_numero', 'sacado_nome', 'sacado_cic', 'codigo_barras')
+  const cr = await mapaPorNosso('capt_registrado', 'identd_nosso_num', 'nom_rz_soc_pagdr', 'cnpj_cpf_pagdr', 'num_linha_digtvl')
+  const rg = await mapaPorNosso('REGISTRADOS', 'NossoNumero', 'SACADO_NOME', null, 'CodigoBarras')
+  const rm = await mapaPorNosso('REMESSAS', 'NOSSO_NUMERO', 'SACADO_NOME', 'SACADO_CIC', null)
+
+  for (const it of list) {
+    const nk = _normNum(it.nosso)
+    const lk = it.numLanca == null ? '' : String(it.numLanca).trim()
+    const viaLanca = lk && codPorLanca[lk] != null ? sacadoPorCod[codPorLanca[lk]] : null
+    // capt_registrado (BTG, mais atualizado) tem PRIORIDADE; depois OPEITE→SACADO, capt_boletos, REGISTRADOS, REMESSAS
+    const fontes = [cr[nk], viaLanca, cb[nk], rg[nk], rm[nk]].filter(Boolean)
+    let nome = '', cic = ''
+    for (const f of fontes) { if (!nome && f.nome) nome = f.nome; if (!cic && f.cic) cic = f.cic; if (nome && cic) break }
+    // Codigo de barras (LINHA_DIGITAVEL): prioridade REGISTRADOS -> capt_boletos -> capt_registrado
+    let barcode = ''
+    for (const f of [cr[nk], rg[nk], cb[nk]]) { if (f && f.barcode) { barcode = f.barcode; break } }
+    out[it.key] = { nome: nome || null, cic: cic || null, barcode: barcode || null }
+  }
+  return out
+}
+
+// Backfill: preenche NOME_CORRENTISTA/CIC_CORRENTISTA dos registros ja gravados
+// em RET_CONTACAPT que ainda estao sem esses dados (ex.: ganharam NUM_LANCA depois,
+// via as rotinas de sincronizacao). Atualiza por hash_dedup.
+export const backfillCorrentistaRet = async () => {
+  const ps = 1000; let from = 0; let pend = []
+  while (true) {
+    const { data, error } = await supabase.from('RET_CONTACAPT')
+      .select('hash_dedup, NOSSO_NUMERO, NUM_LANCA, NOME_CORRENTISTA, CIC_CORRENTISTA, LINHA_DIGITAVEL')
+      .or('NOME_CORRENTISTA.is.null,CIC_CORRENTISTA.is.null,LINHA_DIGITAVEL.is.null')
+      .range(from, from + ps - 1)
+    if (error) { console.warn('[backfillCorrentistaRet]', error.message); break }
+    if (!data || !data.length) break
+    pend = pend.concat(data)
+    if (data.length < ps) break
+    from += ps
+  }
+  if (!pend.length) return { total: 0, atualizados: 0, falhas: 0 }
+  const items = pend.filter(r => r.hash_dedup).map(r => ({ key: r.hash_dedup, nosso: r.NOSSO_NUMERO, numLanca: r.NUM_LANCA }))
+  const corr = await resolverCorrentistaRet(items)
+  let atualizados = 0, falhas = 0
+  for (const r of pend) {
+    if (!r.hash_dedup) continue
+    const c = corr[r.hash_dedup]
+    if (!c) continue
+    const upd = {}
+    if (!(r.NOME_CORRENTISTA && String(r.NOME_CORRENTISTA).trim()) && c.nome) upd.NOME_CORRENTISTA = c.nome
+    if (!(r.CIC_CORRENTISTA && String(r.CIC_CORRENTISTA).trim()) && c.cic) upd.CIC_CORRENTISTA = c.cic
+    if (!(r.LINHA_DIGITAVEL && String(r.LINHA_DIGITAVEL).trim()) && c.barcode) upd.LINHA_DIGITAVEL = c.barcode
+    if (!Object.keys(upd).length) continue
+    const { error } = await supabase.from('RET_CONTACAPT').update(upd).eq('hash_dedup', r.hash_dedup)
+    if (error) { falhas++; console.warn('[backfillCorrentistaRet] update', r.hash_dedup, error.message) }
+    else atualizados++
+  }
+  return { total: pend.length, atualizados, falhas }
+}
+
+// Mapa NUM_LANCAMENTO -> OPEITE.STATUS (exibicao na tela dos Gravados em RET_CONTACAPT).
+export const getOpeiteStatusMap = async (lancas) => {
+  const uniq = [...new Set((lancas || []).map(l => (l == null ? '' : String(l).trim())).filter(Boolean))]
+  const map = {}
+  for (const c of _cnabChunk(uniq, 300)) {
+    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, STATUS').in('NUM_LANCAMENTO', c)
+    if (error) { console.warn('[getOpeiteStatusMap]', error.message); continue }
+    ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && map[l] == null) map[l] = (o.STATUS == null ? '' : String(o.STATUS)).trim() })
+  }
+  return map
+}
+
+// STATUS do registro (fluxo dos .ret): 02=Registrado; 06/17=Pago; 03/09/10/22/32/40=Cancelado; demais=informativa (não define).
+const _catStatusOcorrencia = (oc) => {
+  const c = String(oc == null ? '' : oc).trim()
+  if (c === '02') return 'Registrado'
+  if (c === '06' || c === '17') return 'Pago'
+  if (['03','09','10','22','32','40'].includes(c)) return 'Cancelado'
+  return null
+}
+
+// Recalcula RET_CONTACAPT.STATUS de TODOS os registros com base no fluxo dos .ret.
+// Agrupa por NOSSO_NUMERO + CONTA_CEDENTE; STATUS = categoria da ocorrência mais
+// recente (DT_OCORRENCIA, desempate created_at) que define estado. Registros sem
+// nosso número (ex.: 03 rejeitada) usam a própria ocorrência. Atualiza só o que mudou.
+export const recomputarStatusRet = async () => {
+  const ps = 1000; let from = 0; let rows = []
+  while (true) {
+    const { data, error } = await supabase.from('RET_CONTACAPT')
+      .select('hash_dedup, NOSSO_NUMERO, CONTA_CEDENTE, OCORRENCIA, DT_OCORRENCIA, created_at, STATUS')
+      .range(from, from + ps - 1)
+    if (error) { console.warn('[recomputarStatusRet]', error.message); break }
+    if (!data || !data.length) break
+    rows = rows.concat(data)
+    if (data.length < ps) break
+    from += ps
+  }
+  if (!rows.length) return { atualizados: 0 }
+  const gkey = (r) => {
+    const nn = String(r.NOSSO_NUMERO == null ? '' : r.NOSSO_NUMERO).trim()
+    const cc = String(r.CONTA_CEDENTE == null ? '' : r.CONTA_CEDENTE).trim()
+    return nn ? (nn + '|' + cc) : ('__row__' + (r.hash_dedup || Math.random()))
+  }
+  const grupos = {}
+  for (const r of rows) { (grupos[gkey(r)] = grupos[gkey(r)] || []).push(r) }
+  const statusPorGrupo = {}
+  for (const k of Object.keys(grupos)) {
+    let best = null
+    for (const r of grupos[k]) {
+      const cat = _catStatusOcorrencia(r.OCORRENCIA); if (!cat) continue
+      const dto = String(r.DT_OCORRENCIA || ''); const cr = String(r.created_at || '')
+      if (!best || dto > best.dto || (dto === best.dto && cr > best.cr)) best = { cat, dto, cr }
+    }
+    statusPorGrupo[k] = best ? best.cat : null
+  }
+  // Também considera a situação do capt_registrado (relatório BTG) por nosso número.
+  // Combina com o fluxo dos .ret por prioridade: Cancelado(3) > Pago(2) > Registrado(1).
+  const regPri = {}
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('capt_registrado').select('identd_nosso_num, situacao_boleto').range(from, from + ps - 1)
+      if (error) { console.warn('[recomputarStatusRet] capt_registrado:', error.message); break }
+      if (!data || !data.length) break
+      for (const c of data) {
+        const nk = _normNum(c.identd_nosso_num); if (!nk) continue
+        const sit = String(c.situacao_boleto || '').trim().toLowerCase()
+        const pri = sit === 'cancelado' ? 3 : sit === 'pago' ? 2 : sit === 'pendente' ? 1 : 0
+        if (pri > (regPri[nk] || 0)) regPri[nk] = pri
+      }
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+  const _PRI = { Registrado: 1, Pago: 2, Cancelado: 3 }
+  const porNovo = {}
+  for (const r of rows) {
+    const retcat = statusPorGrupo[gkey(r)]
+    const retpri = retcat ? (_PRI[retcat] || 0) : 0
+    const nk = _normNum(r.NOSSO_NUMERO)
+    const regp = nk ? (regPri[nk] || 0) : 0
+    const fp = Math.max(retpri, regp)
+    const novo = fp === 3 ? 'Cancelado' : fp === 2 ? 'Pago' : fp === 1 ? 'Registrado' : null
+    const atual = r.STATUS == null ? null : String(r.STATUS)
+    if (novo !== atual && r.hash_dedup) { const key = novo == null ? '__NULL__' : novo; (porNovo[key] = porNovo[key] || []).push(r.hash_dedup) }
+  }
+  let atualizados = 0
+  for (const key of Object.keys(porNovo)) {
+    const val = key === '__NULL__' ? null : key
+    for (const c of _cnabChunk(porNovo[key], 150)) {
+      const { error } = await supabase.from('RET_CONTACAPT').update({ STATUS: val }).in('hash_dedup', c)
+      if (error) console.warn('[recomputarStatusRet] update', error.message)
+      else atualizados += c.length
+    }
+  }
+  return { atualizados }
+}
+
 // registros: [{ chave, nossoNumeroBD, nossoNumeroRaw, valorCents, vencISO }]
 // retorna: [{ chave, nossoNumeroRaw, cic, numLanca }]
 export const vincularRetornoOpeite = async (registros) => {
@@ -3566,19 +3811,23 @@ export const vincularRetornoOpeite = async (registros) => {
     ;(data || []).forEach(sa => { const cic = _normNum(sa.CIC); if (cic) cicPorCod[sa.COD_SACADO] = cic })
   }
 
-  // Indices
-  const byCic = {}    // cic|cents|venc -> num
-  const byVenc = {}   // cents|venc -> [{ num, tit }]
+  // Indices — DC entra com MENOR prioridade (só usado quando não há outro STATUS)
+  const byCic = {}    // cic|cents|venc -> { num, isDC }
+  const byVenc = {}   // cents|venc -> [{ num, tit, isDC }]
   opeiteRows.forEach(o => {
     const st = String(o.STATUS || '').toUpperCase()
-    if (st === 'DC') return
+    const isDC = st === 'DC'
     const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
     const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
     if (!venc) return
     const kv = `${cents}|${venc}`
-    ;(byVenc[kv] = byVenc[kv] || []).push({ num: o.NUM_LANCAMENTO, tit: normTit(o.NUM_TITULO) })
+    ;(byVenc[kv] = byVenc[kv] || []).push({ num: o.NUM_LANCAMENTO, tit: normTit(o.NUM_TITULO), isDC })
     const cic = cicPorCod[o.COD_SACADO]
-    if (cic) { const kc = `${cic}|${cents}|${venc}`; if (byCic[kc] == null) byCic[kc] = o.NUM_LANCAMENTO }
+    if (cic) {
+      const kc = `${cic}|${cents}|${venc}`
+      // guarda o primeiro; se o guardado for DC e vier um não-DC, troca (prioriza não-DC)
+      if (byCic[kc] == null || (byCic[kc].isDC && !isDC)) byCic[kc] = { num: o.NUM_LANCAMENTO, isDC }
+    }
   })
 
   // Duplicidade no ARQUIVO DE RETORNO (lote importado): conta ocorrencias de
@@ -3596,13 +3845,15 @@ export const vincularRetornoOpeite = async (registros) => {
     const cic = nossoCic[_normNum(r.nossoNumeroBD)] || ''
     const kv = `${r.valorCents}|${r.vencISO}`
     let numLanca = null, metodo = null
-    const porCic = cic ? byCic[`${cic}|${r.valorCents}|${r.vencISO}`] : null
-    if (porCic != null) {
+    const porCicObj = cic ? byCic[`${cic}|${r.valorCents}|${r.vencISO}`] : null
+    if (porCicObj != null) {
       // Caminho preciso: CIC + valor + venc
-      numLanca = porCic; metodo = 'valor+venc+cic'
+      numLanca = porCicObj.num; metodo = 'valor+venc+cic'
     } else {
-      // Sem CIC: compara valor + vencimento
-      const cands = byVenc[kv] || []       // lancamentos OPEITE distintos com esse valor+venc
+      // Sem CIC: compara valor + vencimento — DC só quando não há outro STATUS
+      const allC = byVenc[kv] || []
+      const nonDC = allC.filter(c => !c.isDC)
+      const cands = nonDC.length ? nonDC : allC
       const nOpVV = cands.length
       if (nOpVV === 1) {
         // um unico lancamento OPEITE p/ esse valor+venc -> grava.
@@ -3664,7 +3915,7 @@ export const getRetContacapt = async () => {
     const ps = 1000; let from = 0; let all = []
     while (true) {
       const { data, error } = await supabase.from('RET_CONTACAPT')
-        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, VENCIMENTO, VR_TITULO, NUM_LANCA, created_at, hash_dedup')
+        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, DT_OCORRENCIA, MOTIVO, VENCIMENTO, VR_TITULO, NUM_LANCA, NOME_CORRENTISTA, CIC_CORRENTISTA, STATUS, created_at, hash_dedup')
         .order('created_at', { ascending: false, nullsFirst: false })
         .range(from, from + ps - 1)
       if (error) { console.warn('[getRetContacapt]', error.message); break }
@@ -3676,6 +3927,28 @@ export const getRetContacapt = async () => {
     return { data: all, error: null }
   } catch (err) {
     console.error('[getRetContacapt] Erro:', err)
+    return { data: [], error: err }
+  }
+}
+
+// Dados de RET_CONTACAPT usados nos filtros da pagina Boletos (Cedente / Ocorrencia / Dt. Ocorrencia).
+// Retorna linhas enxutas ligadas ao boleto por NUM_LANCA (e NOSSO_NUMERO como apoio).
+export const getRetContacaptFiltro = async () => {
+  try {
+    const ps = 1000; let from = 0; let all = []
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('NUM_LANCA, NOSSO_NUMERO, CONTA_CEDENTE, OCORRENCIA, DT_OCORRENCIA')
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[getRetContacaptFiltro]', error.message); break }
+      if (!data || !data.length) break
+      all = all.concat(data)
+      if (data.length < ps) break
+      from += ps
+    }
+    return { data: all, error: null }
+  } catch (err) {
+    console.error('[getRetContacaptFiltro] Erro:', err)
     return { data: [], error: err }
   }
 }
@@ -3733,9 +4006,9 @@ export const vincularRetPorTituloValor = async () => {
       if (error) { console.warn('[vincTitVal] OPEITE:', error.message); break }
       if (!data || !data.length) break
       data.forEach(o => {
-        if (String(o.STATUS || '').toUpperCase() === 'DC') return
+        const isDC = String(o.STATUS || '').toUpperCase() === 'DC'
         const cents = Math.round((parseFloat(o.VR_FACE) || 0) * 100)
-        ;(opList[cents] = opList[cents] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO) })
+        ;(opList[cents] = opList[cents] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO), isDC })
       })
       if (data.length < ps) break
       from += ps
@@ -3749,7 +4022,9 @@ export const vincularRetPorTituloValor = async () => {
     let num = null
     // Exige DUAS coisas em comum: VALOR + Nº TÍTULO. Nunca casa só pelo valor.
     const pk = _titKeys(r.NUM_TITULO)
-    const cands = (opList[cents] || []).filter(o => _keysIntersect(pk, o.keys))
+    const candsAll = (opList[cents] || []).filter(o => _keysIntersect(pk, o.keys))
+    const candsND = candsAll.filter(o => !o.isDC)
+    const cands = candsND.length ? candsND : candsAll   // DC só quando não há outro STATUS
     const distintos = [...new Set(cands.map(o => o.num))]
     if (distintos.length === 1) num = distintos[0]      // valor + título -> lançamento único
     if (num == null) { semMatch++; continue }
@@ -3802,10 +4077,9 @@ export const vincularRetPorVencTitulo = async () => {
           if (seen.has(key)) return
           seen.add(key)
           const st = String(o.STATUS || '').toUpperCase()
-          if (st === 'DC') return
           const venc = String((st === 'PR' && o.DT_VENCI_NOVO) ? o.DT_VENCI_NOVO : (o.DT_VENCI || '')).slice(0, 10)
           if (!venc) return
-          ;(opList[venc] = opList[venc] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO) })
+          ;(opList[venc] = opList[venc] || []).push({ num: o.NUM_LANCAMENTO, keys: _titKeys(o.NUM_TITULO), isDC: st === 'DC' })
         })
         if (data.length < ps) break
         from += ps
@@ -3819,7 +4093,9 @@ export const vincularRetPorVencTitulo = async () => {
   for (const r of pendV) {
     const venc = String(r.VENCIMENTO).slice(0, 10)
     const pk = _titKeys(r.NUM_TITULO)
-    const cands = (opList[venc] || []).filter(o => _keysIntersect(pk, o.keys))
+    const candsAll = (opList[venc] || []).filter(o => _keysIntersect(pk, o.keys))
+    const candsND = candsAll.filter(o => !o.isDC)
+    const cands = candsND.length ? candsND : candsAll   // DC só quando não há outro STATUS
     const distintos = [...new Set(cands.map(o => o.num))]
     if (distintos.length !== 1) { semMatch++; continue }   // exige venc + título -> único
     const { error } = await supabase.from('RET_CONTACAPT')
