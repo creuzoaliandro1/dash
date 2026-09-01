@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase'
 import { generateBarcodeFromBoleto } from '../utils/boleto'
 import { firebirdConfig } from '../config/firebird'
+import { smartFrom } from './firebirdQuery'
 import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
 
 // Calcula DV do nosso numero - algoritmo BMP274 CNAB400 (oficial)
@@ -709,7 +710,7 @@ export const buscarLancamentos = async (boletos) => {
     {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
+        const { data, error } = await smartFrom('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
         if (error) { console.warn('[buscarLancamentos] SACADO:', error.message); break }
         if (!data || data.length === 0) break
         data.forEach(s => { cicPorCod[s.COD_SACADO] = onlyDigits(s.CIC) })
@@ -723,7 +724,7 @@ export const buscarLancamentos = async (boletos) => {
     {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('OPEITE')
+        const { data, error } = await smartFrom('OPEITE')
           .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO')
           .range(from, from + ps - 1)
         if (error) { console.warn('[buscarLancamentos] OPEITE:', error.message); break }
@@ -781,8 +782,7 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
     if (!cic) return { data: [], error: null }
 
     // 1) COD_SACADO(s) com esse CIC
-    const { data: sacados, error: e1 } = await supabase
-      .from('SACADO')
+    const { data: sacados, error: e1 } = await smartFrom('SACADO')
       .select('COD_SACADO, CIC')
       .eq('CIC', cic)
     if (e1) throw e1
@@ -794,8 +794,7 @@ export const buscarOpeitePorCic = async (sacadoCic) => {
     const ps = 1000
     let from = 0
     while (true) {
-      const { data, error } = await supabase
-        .from('OPEITE')
+      const { data, error } = await smartFrom('OPEITE')
         .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
         .in('COD_SACADO', cods)
         .in('STATUS', ['DO', 'PR', 'IN'])
@@ -827,7 +826,7 @@ export const getOpeiteMatchMaps = async () => {
     {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
+        const { data, error } = await smartFrom('SACADO').select('COD_SACADO, CIC').range(from, from + ps - 1)
         if (error) { console.warn('[getOpeiteMatchMaps] SACADO:', error.message); break }
         if (!data || data.length === 0) break
         data.forEach(s => { cicPorCod[s.COD_SACADO] = String(s.CIC || '').replace(/\D/g, '') })
@@ -842,7 +841,7 @@ export const getOpeiteMatchMaps = async () => {
     {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('OPEITE').select('NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO').range(from, from + ps - 1)
+        const { data, error } = await smartFrom('OPEITE').select('NUM_TITULO, VR_FACE, DT_VENCI, COD_SACADO').range(from, from + ps - 1)
         if (error) { console.warn('[getOpeiteMatchMaps] OPEITE:', error.message); break }
         if (!data || data.length === 0) break
         data.forEach(o => {
@@ -1775,8 +1774,7 @@ export const getOPEITEInadimplentesTotal = async (codCedente) => {
     let from = 0
     const pageSize = 1000
     while (true) {
-      const { data, error } = await supabase
-        .from('OPEITE')
+      const { data, error } = await smartFrom('OPEITE')
         .select('VR_FACE')
         .eq('COD_CEDENTE', codCedente)
         .eq('STATUS', 'IN')
@@ -1802,8 +1800,7 @@ export const getOPEITEAbertoTotal = async (codCedente) => {
     let from = 0
     const pageSize = 1000
     while (true) {
-      const { data, error } = await supabase
-        .from('OPEITE')
+      const { data, error } = await smartFrom('OPEITE')
         .select('VR_FACE')
         .eq('COD_CEDENTE', codCedente)
         .in('STATUS', ['IN', 'PR', 'DO'])
@@ -1834,8 +1831,7 @@ export const getOPEITEByCedente = async (codCedente) => {
       const start = page * pageSize
       const end = start + pageSize - 1
 
-      const { data, error } = await supabase
-        .from('OPEITE')
+      const { data, error } = await smartFrom('OPEITE')
         .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('COD_CEDENTE', codCedente)
         .eq('TIPO_TITULO', 'DUP')
@@ -1881,8 +1877,7 @@ export const getOPEITEByCedente = async (codCedente) => {
       for (let i = 0; i < codSacadoArray.length; i += pageSize) {
         const batch = codSacadoArray.slice(i, i + pageSize)
 
-        const { data: sacados, error: sacadoError } = await supabase
-          .from('SACADO')
+        const { data: sacados, error: sacadoError } = await smartFrom('SACADO')
           .select('COD_SACADO, NOME_CORRENTISTA, CIC')
           .in('COD_SACADO', batch)
 
@@ -2179,8 +2174,7 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
       const start = page * pageSize
       const end = start + pageSize - 1
 
-      let query = supabase
-        .from('OPEITE')
+      let query = smartFrom('OPEITE')
         .select('NUM_LANCAMENTO, DT_LANCA, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO, COD_CEDENTE, NOME_AVALISTA, CIC_AVALISTA')
         .eq('TIPO_TITULO', 'DUP')
         .in('STATUS', ['DO', 'IN', 'PR'])
@@ -2241,8 +2235,7 @@ export const getOpeiteEfactorDisponiveis = async (codCedente = null) => {
 
     for (let i = 0; i < codSacadoArray.length; i += pageSize) {
       const batch = codSacadoArray.slice(i, i + pageSize)
-      const { data: sacados, error: sacadoError } = await supabase
-        .from('SACADO')
+      const { data: sacados, error: sacadoError } = await smartFrom('SACADO')
         .select('COD_SACADO, NOME_CORRENTISTA, CIC')
         .in('COD_SACADO', batch)
 
@@ -2304,8 +2297,7 @@ export const getBorderoData = async (numLancamento) => {
     }
 
     // 1) Linha do título no OPEITE -> COD_OPERACAO + COD_CEDENTE
-    const { data: itemRows, error: itemErr } = await supabase
-      .from('OPEITE')
+    const { data: itemRows, error: itemErr } = await smartFrom('OPEITE')
       .select('NUM_LANCAMENTO, COD_OPERACAO, COD_CEDENTE')
       .eq('NUM_LANCAMENTO', numLanc)
       .limit(1)
@@ -2317,8 +2309,7 @@ export const getBorderoData = async (numLancamento) => {
     const codCedente = itemRows[0].COD_CEDENTE
 
     // 2) Header da operação (OPECAB) — STATUS BI/LC/LP
-    const { data: cabRows, error: cabErr } = await supabase
-      .from('OPECAB')
+    const { data: cabRows, error: cabErr } = await smartFrom('OPECAB')
       .select('COD_CEDENTE, COD_OPERACAO, DATA, VR_FACE, VR_DESAGIO, VR_COMPRA, QTD_TITULOS, VR_IOF, VR_CPMF, VR_ADVALOREM, VR_ISS, VR_COBRANCA, VR_LIQUIDO, PRAZO_MEDIO, STATUS, STATUS_PAGAMENTO')
       .eq('COD_OPERACAO', codOperacao)
       .eq('COD_CEDENTE', codCedente)
@@ -2331,8 +2322,7 @@ export const getBorderoData = async (numLancamento) => {
     const cabecalho = cabRows[0]
 
     // 3) Qualificação do CEDENTE
-    const { data: cedRows, error: cedErr } = await supabase
-      .from('CEDENTE')
+    const { data: cedRows, error: cedErr } = await smartFrom('CEDENTE')
       .select('COD_CEDENTE, RAZAO_SOCIAL, NOME_FANTASIA, ENDERECO, BAIRRO, CIDADE, UF, CEP, CIC, TELEFONE, ATIVIDADE')
       .eq('COD_CEDENTE', codCedente)
       .limit(1)
@@ -2340,8 +2330,7 @@ export const getBorderoData = async (numLancamento) => {
     const cedente = (cedRows && cedRows[0]) || { COD_CEDENTE: codCedente, RAZAO_SOCIAL: '' }
 
     // 4) Todos os títulos da operação (OPEITE)
-    const { data: titRows, error: titErr } = await supabase
-      .from('OPEITE')
+    const { data: titRows, error: titErr } = await smartFrom('OPEITE')
       .select('NUM_LANCAMENTO, NUM_TITULO, TIPO_TITULO, DT_VENCI, VR_FACE, COD_SACADO')
       .eq('COD_OPERACAO', codOperacao)
       .eq('COD_CEDENTE', codCedente)
@@ -2351,8 +2340,7 @@ export const getBorderoData = async (numLancamento) => {
     const codSacadoSet = Array.from(new Set((titRows || []).map(t => t.COD_SACADO).filter(Boolean)))
     const sacadoMap = {}
     if (codSacadoSet.length > 0) {
-      const { data: sacados } = await supabase
-        .from('SACADO')
+      const { data: sacados } = await smartFrom('SACADO')
         .select('COD_SACADO, NOME_CORRENTISTA, CIC')
         .in('COD_SACADO', codSacadoSet)
       ;(sacados || []).forEach(s => { sacadoMap[s.COD_SACADO] = { nome: s.NOME_CORRENTISTA || '', cic: s.CIC || '' } })
@@ -2397,8 +2385,7 @@ export const getBoletosDoBordero = async (numLancamento) => {
     const numLanc = Number(numLancamento)
     if (!numLanc || isNaN(numLanc)) return { data: [], error: new Error('Título sem num_lancamento.') }
 
-    const { data: itemRows, error: e1 } = await supabase
-      .from('OPEITE')
+    const { data: itemRows, error: e1 } = await smartFrom('OPEITE')
       .select('COD_OPERACAO, COD_CEDENTE')
       .eq('NUM_LANCAMENTO', numLanc)
       .limit(1)
@@ -2406,8 +2393,7 @@ export const getBoletosDoBordero = async (numLancamento) => {
     if (!itemRows || itemRows.length === 0) return { data: [], error: new Error('Operação não encontrada.') }
     const { COD_OPERACAO, COD_CEDENTE } = itemRows[0]
 
-    const { data: titRows, error: e2 } = await supabase
-      .from('OPEITE')
+    const { data: titRows, error: e2 } = await smartFrom('OPEITE')
       .select('NUM_LANCAMENTO')
       .eq('COD_OPERACAO', COD_OPERACAO)
       .eq('COD_CEDENTE', COD_CEDENTE)
@@ -2473,8 +2459,7 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
       const pageSize = 1000
       for (let i = 0; i < codArray.length; i += pageSize) {
         const batch = codArray.slice(i, i + pageSize)
-        const { data: sacados, error: sacError } = await supabase
-          .from('SACADO')
+        const { data: sacados, error: sacError } = await smartFrom('SACADO')
           .select('COD_SACADO, NOME_CORRENTISTA, CIC, ENDERECO, BAIRRO, CIDADE, UF, CEP')
           .in('COD_SACADO', batch)
         if (!sacError && sacados) {
@@ -2578,8 +2563,7 @@ export const autoImportarParaCapt = async (contaId, records) => {
       const codArray = Array.from(codSacadoSet)
       for (let i = 0; i < codArray.length; i += 1000) {
         const batch = codArray.slice(i, i + 1000)
-        const { data: sacados, error: sacErr } = await supabase
-          .from('SACADO')
+        const { data: sacados, error: sacErr } = await smartFrom('SACADO')
           .select('COD_SACADO, NOME_CORRENTISTA, CIC, ENDERECO, BAIRRO, CIDADE, UF, CEP')
           .in('COD_SACADO', batch)
         if (!sacErr && sacados) {
@@ -3024,8 +3008,7 @@ export const getProximoCodOperacao = async (codCedente) => {
   try {
     console.log('[BoletoService] Buscando próximo COD_OPERACAO para:', codCedente)
 
-    const { data, error } = await supabase
-      .from('OPECAB_WEB')
+    const { data, error } = await smartFrom('OPECAB_WEB')
       .select('COD_OPERACAO')
       .eq('COD_CEDENTE', codCedente)
       .order('COD_OPERACAO', { ascending: false })
@@ -3052,8 +3035,7 @@ export const getProximoCodBordero = async () => {
   try {
     console.log('[BoletoService] Buscando próximo COD_BORDERO global...')
 
-    const { data, error } = await supabase
-      .from('OPECAB_WEB')
+    const { data, error } = await smartFrom('OPECAB_WEB')
       .select('COD_BORDERO')
       .order('COD_BORDERO', { ascending: false })
       .limit(1)
@@ -3079,8 +3061,7 @@ export const getProximoCodTitulo = async () => {
   try {
     console.log('[BoletoService] Buscando próximo COD_TITULO de OPEITE_WEB...')
 
-    const { data, error } = await supabase
-      .from('OPEITE_WEB')
+    const { data, error } = await smartFrom('OPEITE_WEB')
       .select('COD_TITULO')
       .order('COD_TITULO', { ascending: false })
       .limit(1)
@@ -3144,8 +3125,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     console.log('[BoletoService] Inserindo OPECAB_WEB com STATUS=R:', registroOPECAB_WEB)
 
     // 3. Inserir em OPECAB_WEB
-    const { error: erroOPECAB_WEB } = await supabase
-      .from('OPECAB_WEB')
+    const { error: erroOPECAB_WEB } = await smartFrom('OPECAB_WEB')
       .insert([registroOPECAB_WEB])
 
     if (erroOPECAB_WEB) {
@@ -3167,8 +3147,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     }))
 
     // Inserir em SACADO_WEB (pode gerar erro de duplicata, que é aceitável)
-    const { error: erroSACADO_WEB } = await supabase
-      .from('SACADO_WEB')
+    const { error: erroSACADO_WEB } = await smartFrom('SACADO_WEB')
       .insert(registrosSACLADOWEB)
 
     if (erroSACADO_WEB) {
@@ -3221,8 +3200,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     }
 
     // 6. Inserir em OPEITE_WEB
-    const { error: erroOPEITE_WEB } = await supabase
-      .from('OPEITE_WEB')
+    const { error: erroOPEITE_WEB } = await smartFrom('OPEITE_WEB')
       .insert(registrosOPEITE_WEB)
 
     if (erroOPEITE_WEB) {
@@ -3284,8 +3262,7 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
     }
 
     // 1) Localiza os títulos em OPEITE_WEB
-    const { data: rows, error: errBusca } = await supabase
-      .from('OPEITE_WEB')
+    const { data: rows, error: errBusca } = await smartFrom('OPEITE_WEB')
       .select('ID, COD_BORDERO, NOSSO_NUMERO, NUMERO')
       .eq('COD_CEDENTE', contaData.cod_cedente)
       .in('NOSSO_NUMERO', chaves)
@@ -3304,8 +3281,7 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
     const borderos = [...new Set(encontrados.map(r => r.COD_BORDERO).filter(v => v != null))]
     const statusPorBordero = {}
     if (borderos.length > 0) {
-      const { data: cabs, error: errCab } = await supabase
-        .from('OPECAB_WEB')
+      const { data: cabs, error: errCab } = await smartFrom('OPECAB_WEB')
         .select('COD_BORDERO, STATUS')
         .eq('COD_CEDENTE', contaData.cod_cedente)
         .in('COD_BORDERO', borderos)
@@ -3323,21 +3299,19 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
     if (permitidos.length > 0) {
       // Remove os títulos permitidos de OPEITE_WEB
       const ids = permitidos.map(r => r.ID)
-      const { error: errDel } = await supabase.from('OPEITE_WEB').delete().in('ID', ids)
+      const { error: errDel } = await smartFrom('OPEITE_WEB').delete().in('ID', ids)
       if (errDel) throw errDel
       retornados = permitidos.length
 
       // Remove o cabeçalho OPECAB_WEB do borderô quando não restarem títulos
       const borderosAfetados = [...new Set(permitidos.map(r => r.COD_BORDERO).filter(v => v != null))]
       for (const bordero of borderosAfetados) {
-        const { count } = await supabase
-          .from('OPEITE_WEB')
+        const { count } = await smartFrom('OPEITE_WEB')
           .select('*', { count: 'exact', head: true })
           .eq('COD_CEDENTE', contaData.cod_cedente)
           .eq('COD_BORDERO', bordero)
         if (!count || count === 0) {
-          const { error: errCabDel } = await supabase
-            .from('OPECAB_WEB')
+          const { error: errCabDel } = await smartFrom('OPECAB_WEB')
             .delete()
             .eq('COD_CEDENTE', contaData.cod_cedente)
             .eq('COD_BORDERO', bordero)
@@ -3698,13 +3672,13 @@ export const resolverCorrentistaRet = async (items) => {
   const codPorLanca = {}
   const codSet = new Set()
   for (const c of _cnabChunk(lancas, 300)) {
-    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, COD_SACADO').in('NUM_LANCAMENTO', c)
+    const { data, error } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, COD_SACADO').in('NUM_LANCAMENTO', c)
     if (error) { console.warn('[resolverCorrentistaRet] OPEITE:', error.message); continue }
     ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && codPorLanca[l] == null) { codPorLanca[l] = o.COD_SACADO; if (o.COD_SACADO != null) codSet.add(o.COD_SACADO) } })
   }
   const sacadoPorCod = {}
   for (const c of _cnabChunk([...codSet], 300)) {
-    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', c)
+    const { data, error } = await smartFrom('SACADO').select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', c)
     if (error) { console.warn('[resolverCorrentistaRet] SACADO:', error.message); continue }
     ;(data || []).forEach(sa => { sacadoPorCod[sa.COD_SACADO] = { nome: (sa.NOME_CORRENTISTA || '').trim(), cic: _normNum(sa.CIC) } })
   }
@@ -3792,7 +3766,7 @@ export const getOpeiteStatusMap = async (lancas) => {
   const uniq = [...new Set((lancas || []).map(l => (l == null ? '' : String(l).trim())).filter(Boolean))]
   const map = {}
   for (const c of _cnabChunk(uniq, 300)) {
-    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, STATUS').in('NUM_LANCAMENTO', c)
+    const { data, error } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, STATUS').in('NUM_LANCAMENTO', c)
     if (error) { console.warn('[getOpeiteStatusMap]', error.message); continue }
     ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && map[l] == null) map[l] = (o.STATUS == null ? '' : String(o.STATUS)).trim() })
   }
@@ -3901,7 +3875,7 @@ export const vincularRetornoOpeite = async (registros) => {
     for (const c of _cnabChunk(vencs, 100)) {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('OPEITE')
+        const { data, error } = await smartFrom('OPEITE')
           .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
           .in(col, c).range(from, from + ps - 1)
         if (error) { console.warn('[vincularRetornoOpeite] OPEITE', col, error.message); break }
@@ -3918,7 +3892,7 @@ export const vincularRetornoOpeite = async (registros) => {
   const cods = [...new Set(opeiteRows.map(o => o.COD_SACADO))]
   const cicPorCod = {}
   for (const c of _cnabChunk(cods, 300)) {
-    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').in('COD_SACADO', c)
+    const { data, error } = await smartFrom('SACADO').select('COD_SACADO, CIC').in('COD_SACADO', c)
     if (error) { console.warn('[vincularRetornoOpeite] SACADO:', error.message); continue }
     ;(data || []).forEach(sa => { const cic = _normNum(sa.CIC); if (cic) cicPorCod[sa.COD_SACADO] = cic })
   }
@@ -4112,7 +4086,7 @@ export const vincularRetPorTituloValor = async () => {
   for (const c of _cnabChunk(valores, 200)) {
     let from = 0; const ps = 1000
     while (true) {
-      const { data, error } = await supabase.from('OPEITE')
+      const { data, error } = await smartFrom('OPEITE')
         .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, STATUS')
         .in('VR_FACE', c).range(from, from + ps - 1)
       if (error) { console.warn('[vincTitVal] OPEITE:', error.message); break }
@@ -4179,7 +4153,7 @@ export const vincularRetPorVencTitulo = async () => {
     for (const c of _cnabChunk(vencs, 100)) {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await supabase.from('OPEITE')
+        const { data, error } = await smartFrom('OPEITE')
           .select('NUM_LANCAMENTO, NUM_TITULO, DT_VENCI, DT_VENCI_NOVO, STATUS')
           .in(col, c).range(from, from + ps - 1)
         if (error) { console.warn('[vincVencTit] OPEITE', col, error.message); break }
