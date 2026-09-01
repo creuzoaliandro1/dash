@@ -435,35 +435,139 @@ export const importContaCaptToRegistrado = async (boletosData) => {
     }
 
     const toNum = (v) => {
-      if (!v && v !== 0) return null
+      if (v === null || v === undefined) return null
       if (typeof v === 'number') return v
-      const s = String(v).trim().replace(/[^\d.,]/g, '')
-      if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || null
-      return parseFloat(s) || null
+      const s = String(v).trim()
+      if (!s || s === '- - -') return null
+      const c = s.replace(/[^\d.,-]/g, '')
+      const n = c.includes(',')
+        ? parseFloat(c.replace(/\./g, '').replace(',', '.'))
+        : parseFloat(c)
+      return isNaN(n) ? null : n
     }
 
-    // Mapeia campos da ContaCaptUpload → capt_registrado
-    const toRegistradoRow = (b) => ({
-      num_linha_digtvl: String(b.CODIGO_BARRAS || '').replace(/\D/g, '') || null,
-      numero_documento:            b.NUMERO_DOCUMENTO || null,
-      nom_rz_soc_pagdr:            b.SACADO_NOME     || null,
-      cnpj_cpf_pagdr:              String(b.SACADO_CIC  || '').replace(/\D/g, '') || null,
-      cep_pagdr:                   String(b.SACADO_CEP  || '').replace(/\D/g, '') || null,
-      lograd_pagdr:                b.SACADO_ENDERECO  || null,
-      numero_endereco_pagdr:       b.SACADO_NUMERO    || null,
-      complemento_endereco_pagdr:  b.SACADO_COMPLEMENTO || null,
-      cid_pagdr:                   b.SACADO_CIDADE    || null,
-      uf_pagdr:                    b.SACADO_UF        || null,
-      email_pagdr:                 b.SACADO_EMAIL     || null,
-      telefone_pagdr:              b.SACADO_TELEFONE  || null,
-      identd_nosso_num:            b.NOSSO_NUMERO     || null,
-      vlr_tit:                     toNum(b.VALOR),
-      dt_ems_tit:                  toISO(b.EMISSAO),
-      dt_venc_tit:                 toISO(b.VENCIMENTO),
-      nome_sacador_avalista:       b.AVALISTA_NOME    || null,
-      descricao:                   b.DESCRICAO        || null,
-      situacao_boleto:             b.STATUS           || null,
-    })
+    // Texto: normaliza placeholders do relatório ('- - -', vazio) para null
+    const txt = (v) => {
+      if (v === null || v === undefined) return null
+      const s = String(v).trim()
+      return (!s || s === '- - -') ? null : s
+    }
+    // Só dígitos (CPF/CNPJ, CEP, linha digitável)
+    const dig = (v) => {
+      const s = txt(v)
+      const d = s ? s.replace(/\D/g, '') : ''
+      return d || null
+    }
+
+    // Cabeçalho do Relatório de Gestão de Boletos (BTG) -> coluna em capt_registrado
+    const HEADER_TO_COL = {
+      'Documento federal do titular da conta': 'doc_federal_titular',
+      'Nome do titular da conta': 'nome_titular',
+      'Código cedente do titular da conta': 'cod_cedente_titular',
+      'Banco do titular': 'banco_titular',
+      'Agência do titular': 'agencia_titular',
+      'Número da conta do titular': 'conta_titular',
+      'Status do boleto': 'situacao_boleto',
+      'Nosso número': 'identd_nosso_num',
+      'Seu número': 'num_doc_tit',
+      'Número do documento': 'numero_documento',
+      'Nome do pagador': 'nom_rz_soc_pagdr',
+      'Documento federal do pagador': 'cnpj_cpf_pagdr',
+      'CEP do pagador': 'cep_pagdr',
+      'Logradouro do pagador': 'lograd_pagdr',
+      'Número do endereço do pagador': 'numero_endereco_pagdr',
+      'Complemento do endereço do pagador': 'complemento_endereco_pagdr',
+      'Cidade do pagador': 'cid_pagdr',
+      'UF do pagador': 'uf_pagdr',
+      'Email do pagador': 'email_pagdr',
+      'Telefone do pagador': 'telefone_pagdr',
+      'Data de emissão': 'dt_ems_tit',
+      'Data de registro': 'dt_inclusao',
+      'Valor do título': 'vlr_tit',
+      'Data de vencimento': 'dt_venc_tit',
+      'Data limite de pagamento': 'dt_lim_pgto_tit',
+      'Tipo de boleto': 'tipo_boleto',
+      'Linha digitável': 'num_linha_digtvl',
+      'PIX copia e cola': 'emv',
+      'Carteira': 'cod_cart_tit',
+      'Beneficiário final (sacador avalista)': 'nome_sacador_avalista',
+      'Parametrização multa': 'parametrizacao_multa',
+      'Valor de multa': 'valor_multa',
+      'Data multa': 'data_multa',
+      'Parametrização juros': 'cod_juros_tit',
+      'Valor de juros': 'vlr_perc_juros_tit',
+      'Data juros': 'dt_juros_tit',
+      'Parametrização desconto (primeira faixa)': 'cod_desct_tit_1',
+      'Valor de desconto (primeira faixa)': 'vlr_perc_desct_tit_1',
+      'Data de desconto (primeira faixa)': 'dt_desct_tit_1',
+      'Parametrização desconto (segunda faixa)': 'cod_desct_tit_2',
+      'Valor de desconto (segunda faixa)': 'vlr_perc_desct_tit_2',
+      'Data de desconto (segunda faixa)': 'dt_desct_tit_2',
+      'Parametrização desconto (terceira faixa)': 'cod_desct_tit_3',
+      'Valor de desconto (terceira faixa)': 'vlr_perc_desct_tit_3',
+      'Data de desconto (terceira faixa)': 'dt_desct_tit_3',
+      'Abatimento': 'vlr_abatt_tit',
+      'Valor pago': 'vlr_baixa_operac_tit',
+      'Data de pagamento': 'dt_pagamento',
+      'Data do crédito': 'dt_credito_boleto',
+      'Canal do pagamento': 'canal_pagamento',
+      'Espécie': 'cod_esp_tit',
+      'Modalidade': 'modalidade',
+      'Descrição': 'descricao',
+      'Cobrança compartilhada': 'cobranca_compartilhada',
+      'Nome do beneficiário 1 de cobrança compartilhada': 'benef1_nome',
+      'Documento federal do beneficiário 1 de cobrança compartilhada': 'benef1_doc_federal',
+      'Código cedente de beneficiário 1': 'benef1_cod_cedente',
+      'Conta do beneficiário 1 de cobrança compartilhada': 'benef1_conta',
+      'Percentual para beneficiário 1': 'benef1_percentual',
+      'Nome do beneficiário 2 de cobrança compartilhada': 'benef2_nome',
+      'Documento federal do beneficiário 2 de cobrança compartilhada': 'benef2_doc_federal',
+      'Código cedente de beneficiário 2': 'benef2_cod_cedente',
+      'Conta do beneficiário 2 de cobrança compartilhada': 'benef2_conta',
+      'Percentual para beneficiário 2': 'benef2_percentual',
+      'Nome do beneficiário 3 de cobrança compartilhada': 'benef3_nome',
+      'Documento federal do beneficiário 3 de cobrança compartilhada': 'benef3_doc_federal',
+      'Código cedente de beneficiário 3': 'benef3_cod_cedente',
+      'Conta do beneficiário 3 de cobrança compartilhada': 'benef3_conta',
+      'Percentual para beneficiário 3': 'benef3_percentual',
+      'Nome do beneficiário 4 de cobrança compartilhada': 'benef4_nome',
+      'Documento federal do beneficiário 4 de cobrança compartilhada': 'benef4_doc_federal',
+      'Código cedente de beneficiário 4': 'benef4_cod_cedente',
+      'Conta do beneficiário 4 de cobrança compartilhada': 'benef4_conta',
+      'Percentual para beneficiário 4': 'benef4_percentual',
+      'Nome do beneficiário 5 de cobrança compartilhada': 'benef5_nome',
+      'Documento federal do beneficiário 5 de cobrança compartilhada': 'benef5_doc_federal',
+      'Código cedente de beneficiário 5': 'benef5_cod_cedente',
+      'Conta do beneficiário 5 de cobrança compartilhada': 'benef5_conta',
+      'Percentual para beneficiário 5': 'benef5_percentual',
+      'Status de negociação': 'status_negociacao',
+      'Data da última instrução': 'data_ultima_instrucao',
+      'Canal de instrução': 'canal_instrucao',
+      'Última instrução': 'ultima_instrucao',
+      'Usuário da última instrução': 'usuario_ultima_instrucao',
+    }
+    const DATE_COLS = new Set(['dt_ems_tit','dt_inclusao','dt_venc_tit','dt_lim_pgto_tit','data_multa','dt_juros_tit','dt_desct_tit_1','dt_desct_tit_2','dt_desct_tit_3','dt_pagamento','dt_credito_boleto','data_ultima_instrucao'])
+    const NUM_COLS = new Set(['vlr_tit','valor_multa','vlr_perc_juros_tit','vlr_perc_desct_tit_1','vlr_perc_desct_tit_2','vlr_perc_desct_tit_3','vlr_abatt_tit','vlr_baixa_operac_tit','benef1_percentual','benef2_percentual','benef3_percentual','benef4_percentual','benef5_percentual'])
+    const DIGIT_COLS = new Set(['cnpj_cpf_pagdr','cep_pagdr','num_linha_digtvl'])
+
+    // Mapeia a linha do Excel -> capt_registrado (todas as 84 colunas do relatório)
+    const toRegistradoRow = (b) => {
+      const src = b.__raw || {}
+      const row = {}
+      for (const [header, col] of Object.entries(HEADER_TO_COL)) {
+        const raw = src[header]
+        if (DATE_COLS.has(col)) row[col] = toISO(raw)
+        else if (NUM_COLS.has(col)) row[col] = toNum(raw)
+        else if (DIGIT_COLS.has(col)) row[col] = dig(raw)
+        else row[col] = txt(raw)
+      }
+      // Honra edições feitas no preview (Documento e Sacado são editáveis inline)
+      if (b.NUMERO_DOCUMENTO !== undefined) row.numero_documento = txt(b.NUMERO_DOCUMENTO)
+      if (b.SACADO_NOME !== undefined) row.nom_rz_soc_pagdr = txt(b.SACADO_NOME)
+      // Linha digitável sempre só dígitos (chave de deduplicação)
+      row.num_linha_digtvl = String(b.CODIGO_BARRAS || src['Linha digitável'] || '').replace(/\D/g, '') || null
+      return row
+    }
 
     const rows = boletosData.map(toRegistradoRow)
     // Conjunto de linhas digitáveis do lote (sempre só dígitos)

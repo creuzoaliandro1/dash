@@ -31,6 +31,7 @@ export default function ContaCaptUpload({ onShowPreview }) {
       AVALISTA_NOME: excelRow['Beneficiário final (sacador avalista)'] || '',
       DESCRICAO: excelRow['Descrição'] || '',
       STATUS: mapStatus(excelRow['Status do boleto']),
+      __raw: excelRow,
     }
     return row
   }
