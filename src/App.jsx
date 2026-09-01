@@ -14,6 +14,7 @@ import AcessosPage from './pages/AcessosPage'
 import CadastroPage from './pages/CadastroPage'
 import ContaBmpPage from './pages/ContaBmpPage'
 import BoletosBmpPage from './pages/BoletosBmpPage'
+import SincronizarPage from './pages/SincronizarPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -81,6 +82,7 @@ export default function App() {
       {currentPage === 'retorno' && <RetornoPage />}
       {currentPage === 'remessas' && isMaster && <RemessasPage />}
       {currentPage === 'acessos' && isMaster && <AcessosPage />}
+      {currentPage === 'sincronizar' && isMaster && <SincronizarPage />}
       {currentPage === 'cadastro' && isMaster && <CadastroPage />}
       {currentPage === 'conta-bmp' && isMaster && <ContaBmpPage />}
       {currentPage === 'boletos-bmp' && isMaster && <BoletosBmpPage />}
