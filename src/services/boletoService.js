@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase'
 import { generateBarcodeFromBoleto } from '../utils/boleto'
+import { firebirdConfig } from '../config/firebird'
+import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
 
 // Calcula DV do nosso numero - algoritmo BMP274 CNAB400 (oficial)
 // Algoritmo:
@@ -2978,7 +2980,11 @@ export const deleteAnexoBoleto = async (anexoId, caminhoStorage) => {
 // no menu de ações da tabela de boletos sem precisar consultar um por um.
 export const getBoletosComXMLAnexado = async (boletoIds) => {
   try {
-    const ids = (boletoIds || []).filter(Boolean).map(String)
+    // boleto_id é UUID no banco. No modo Importados/Efactor a lista mistura ids
+    // sintéticos (reg_..., ope_...) que NÃO são UUID e faziam o Postgres estourar
+    // 22P02 (invalid input syntax for type uuid). Filtra só UUIDs válidos.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const ids = (boletoIds || []).filter(Boolean).map(String).filter((id) => UUID_RE.test(id))
     if (ids.length === 0) return { data: new Set(), error: null }
 
     const { data, error } = await supabase
@@ -3108,6 +3114,7 @@ const truncarString = (str, maxLength = 25) => {
 
 // Criar antecipação: insere registros em OPECAB_WEB, SACADO_WEB e OPEITE_WEB
 export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
+  if (firebirdConfig.enabled) return criarAntecipacaoFirebird(boletosParaAntecipar, contaData)
   try {
     console.log('[BoletoService] Criando antecipação para', boletosParaAntecipar.length, 'boletos')
 
@@ -3258,6 +3265,7 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
 // Regra: se o título em OPEITE_WEB estiver com STATUS = 'R', NÃO é possível retornar.
 // (condição isolada em STATUS_BLOQUEIA_RETORNO para fácil ajuste/inversão)
 export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
+  if (firebirdConfig.enabled) return retornarAntecipacaoFirebird(boletosParaRetornar, contaData)
   try {
     if (!contaData || !contaData.cod_cedente) {
       throw new Error('Conta sem cod_cedente definido')

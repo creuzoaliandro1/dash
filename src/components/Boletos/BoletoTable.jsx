@@ -5,6 +5,8 @@ import { generateBorderoPDF } from '../../utils/bordero'
 import { generateNotaFiscalPdfFromXML } from '../../utils/notaFiscal'
 import { getContaInfo, getBorderoData, getAnexosBoleto, getDownloadUrlAnexo, getBoletosComXMLAnexado } from '../../services/boletoService'
 import { supabase } from '../../lib/supabase'
+import { firebirdApi } from '../../services/firebirdApi'
+import { readThrough } from '../../services/firebirdRepo'
 import BoletoDetailsModal from './BoletoDetailsModal'
 
 const formatDate = (dateStr) => {
@@ -336,11 +338,22 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
       // Fix endereço para registros OPEITE (o modo unificado não carrega endereço do SACADO)
       if (!boletoForDuplicata.sacado_endereco && boleto._COD_SACADO) {
         try {
-          const { data: sac } = await supabase
-            .from('SACADO')
-            .select('ENDERECO, BAIRRO, CIDADE, UF, CEP')
-            .eq('COD_SACADO', boleto._COD_SACADO)
-            .single()
+          // Point-lookup: tenta Firebird (GET /SACADO/:COD_SACADO), cai para
+          // Supabase em qualquer falha. Controlado por firebirdConfig.enabled.
+          const { data: sac } = await readThrough({
+            firebird: async () => {
+              const r = await firebirdApi.get('SACADO', String(boleto._COD_SACADO))
+              return { data: r.data?.row ?? null, error: r.error, firebirdDown: r.firebirdDown }
+            },
+            supabaseFallback: async () => {
+              const { data, error } = await supabase
+                .from('SACADO')
+                .select('ENDERECO, BAIRRO, CIDADE, UF, CEP')
+                .eq('COD_SACADO', boleto._COD_SACADO)
+                .single()
+              return { data, error }
+            },
+          })
           if (sac) {
             boletoForDuplicata.sacado_endereco = sac.ENDERECO || ''
             boletoForDuplicata.sacado_bairro   = sac.BAIRRO   || ''
