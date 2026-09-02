@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
+import * as XLSX from 'xlsx'
 
 // Colunas de capt_registrado (84 campos do Relatório de Gestão de Boletos).
 // key = coluna no Supabase | label = rótulo original do Excel.
@@ -129,6 +130,9 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
   const [statusOcultos, setStatusOcultos] = useState(() => new Set())
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
+  const [selecionados, setSelecionados] = useState(() => new Set())
+  const [showAcoes, setShowAcoes] = useState(false)
+  const [gerandoRel, setGerandoRel] = useState(false)
 
   useEffect(() => {
     let ativo = true
@@ -207,6 +211,85 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
     } else {
       setSortKey(key)
       setSortDir('asc')
+    }
+  }
+
+  const toggleSel = (id) => {
+    setSelecionados((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelTodos = () => {
+    setSelecionados((prev) => {
+      const next = new Set(prev)
+      const todos = filtrados.length > 0 && filtrados.every((r) => next.has(r.id))
+      if (todos) filtrados.forEach((r) => next.delete(r.id))
+      else filtrados.forEach((r) => next.add(r.id))
+      return next
+    })
+  }
+
+  const exportarExcel = () => {
+    const linhas = registros.filter((r) => selecionados.has(r.id))
+    if (linhas.length === 0) return
+    const dados = linhas.map((r) => {
+      const o = {}
+      VISIBLE_COLUMNS.forEach((c) => { o[c.label] = r[c.key] ?? '' })
+      return o
+    })
+    const ws = XLSX.utils.json_to_sheet(dados)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Conta Capt')
+    XLSX.writeFile(wb, `conta_capt_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    setShowAcoes(false)
+  }
+
+  const gerarRelatorioConciliacao = async () => {
+    setGerandoRel(true)
+    try {
+      const { data, error } = await supabase.rpc('conciliacao_num_lanca')
+      if (error) { alert('Erro ao gerar relatório: ' + error.message); return }
+      if (!data || data.length === 0) { alert('Nenhuma sugestão de conciliação encontrada.'); return }
+      // Cabeçalho em 2 níveis: grupo + (OPEITE / CAPT), conforme layout solicitado
+      const grupo = ['CNPJ/CPF', '', 'VALOR', '', 'Lançamento', 'Nº Título', '', 'Vencimento', '', 'Venc. Novo', 'Status', 'Δ Valor', 'Δ Dias', 'Sugestão']
+      const sub   = ['OPEITE', 'CAPT', 'OPEITE', 'CAPT', 'OPEITE', 'OPEITE', 'CAPT', 'OPEITE', 'CAPT', 'OPEITE', 'OPEITE', '', '', '']
+      const corpo = data.map((r) => ([
+        r.op_cnpj ?? '', r.cr_cnpj ?? '',
+        r.op_valor ?? '', r.cr_valor ?? '',
+        r.op_num_lancamento ?? '',
+        r.op_num_titulo ?? '', r.cr_documento ?? '',
+        r.op_venci ?? '', r.cr_vencimento ?? '',
+        r.op_venci_novo ?? '',
+        r.op_status ?? '',
+        r.delta_valor ?? '', r.delta_dias ?? '', r.motivo ?? '',
+      ]))
+      const ws = XLSX.utils.aoa_to_sheet([grupo, sub, ...corpo])
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } },   // CNPJ/CPF (OPEITE|CAPT)
+        { s: { r: 0, c: 2 }, e: { r: 0, c: 3 } },   // VALOR (OPEITE|CAPT)
+        { s: { r: 0, c: 5 }, e: { r: 0, c: 6 } },   // Nº Título (OPEITE|CAPT)
+        { s: { r: 0, c: 7 }, e: { r: 0, c: 8 } },   // Vencimento (OPEITE|CAPT)
+        { s: { r: 0, c: 11 }, e: { r: 1, c: 11 } }, // Δ Valor
+        { s: { r: 0, c: 12 }, e: { r: 1, c: 12 } }, // Δ Dias
+        { s: { r: 0, c: 13 }, e: { r: 1, c: 13 } }, // Sugestão
+      ]
+      ws['!cols'] = [
+        { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+        { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+        { wch: 8 }, { wch: 9 }, { wch: 8 }, { wch: 52 },
+      ]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Conciliação')
+      XLSX.writeFile(wb, `conciliacao_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      setShowAcoes(false)
+    } catch (e) {
+      alert('Erro ao gerar relatório: ' + e.message)
+    } finally {
+      setGerandoRel(false)
     }
   }
 
@@ -325,6 +408,61 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
             </>
           )}
         </div>
+
+        {/* Ação: baixar selecionados */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowAcoes((v) => !v)}
+            title="Ações"
+            className="flex items-center gap-1.5 px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white text-sm hover:border-white hover:bg-[#1a1a1a] transition whitespace-nowrap"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6a1 1 0 100-2 1 1 0 000 2zm0 7a1 1 0 100-2 1 1 0 000 2zm0 7a1 1 0 100-2 1 1 0 000 2z" />
+            </svg>
+            Ação{selecionados.size > 0 ? ` (${selecionados.size})` : ''}
+          </button>
+          {showAcoes && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowAcoes(false)} />
+              <div className="absolute right-0 mt-1 z-20 w-60 bg-[#0f0f0f] border border-[#2a2a2a] rounded-md shadow-lg p-1">
+                <button
+                  type="button"
+                  onClick={exportarExcel}
+                  disabled={selecionados.size === 0}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-white rounded hover:bg-[#1a1a1a] transition disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                  </svg>
+                  Baixar selecionados (Excel)
+                </button>
+                <button
+                  type="button"
+                  onClick={gerarRelatorioConciliacao}
+                  disabled={gerandoRel}
+                  title="Sugere lançamentos OPEITE parecidos (valor/vencimento próximos) para os registros sem Nº Lançamento. Não altera dados."
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-white rounded hover:bg-[#1a1a1a] transition disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  {gerandoRel ? 'Gerando relatório…' : 'Relatório de conciliação (Excel)'}
+                </button>
+                {selecionados.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelecionados(new Set()); setShowAcoes(false) }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-[#a3a3a3] rounded hover:bg-[#1a1a1a] transition"
+                  >
+                    Limpar seleção
+                  </button>
+                )}
+                <p className="text-[11px] text-[#666666] px-3 py-1">{selecionados.size} selecionado(s)</p>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {syncMsg && (
@@ -346,6 +484,14 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
           <table className="text-xs text-white border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#141414]">
+                <th className="px-3 py-2 border-b border-[#2a2a2a] w-8">
+                  <input
+                    type="checkbox"
+                    checked={filtrados.length > 0 && filtrados.every((r) => selecionados.has(r.id))}
+                    onChange={toggleSelTodos}
+                    className="w-4 h-4 cursor-pointer accent-white align-middle"
+                  />
+                </th>
                 {VISIBLE_COLUMNS.map((c) => (
                   <th
                     key={c.key}
@@ -363,7 +509,15 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
             </thead>
             <tbody>
               {filtrados.map((r) => (
-                <tr key={r.id} className="hover:bg-[#111111] border-b border-[#1a1a1a]">
+                <tr key={r.id} className={`border-b border-[#1a1a1a] ${selecionados.has(r.id) ? 'bg-[#161616]' : 'hover:bg-[#111111]'}`}>
+                  <td className="px-3 py-1.5 w-8">
+                    <input
+                      type="checkbox"
+                      checked={selecionados.has(r.id)}
+                      onChange={() => toggleSel(r.id)}
+                      className="w-4 h-4 cursor-pointer accent-white align-middle"
+                    />
+                  </td>
                   {VISIBLE_COLUMNS.map((c) => (
                     <td key={c.key} className="px-3 py-1.5 whitespace-nowrap text-[#d4d4d4]">
                       {fmt(r[c.key])}
