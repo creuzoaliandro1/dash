@@ -1505,6 +1505,260 @@ function processOSTypeB(file, profileName, profileCIC, resolve, reject) {
 }
 
 /**
+ * ===== IMPORTAÇÃO DE PDF (Orçamento GestãoClick) =====
+ *
+ * Primeiro modelo de PDF suportado: orçamentos emitidos pelo sistema
+ * GestãoClick (www.gestaoclick.com.br). Detecção por conteúdo (não por
+ * nome de arquivo), pois qualquer empresa que use o GestãoClick pode
+ * emitir esse mesmo layout.
+ *
+ * Regra de parcelamento: quando a OBSERVAÇÃO do pagamento contém uma
+ * sequência como "30/60/90", cada número representa uma parcela mensal
+ * (30 = +1 mês, 60 = +2 meses, 90 = +3 meses) a partir da data de
+ * emissão do orçamento, mantendo o mesmo dia do mês (não são dias
+ * corridos). O valor total é dividido igualmente entre as parcelas,
+ * com o resto da divisão ajustado na última parcela para o total bater
+ * exatamente.
+ */
+
+/**
+ * Carregar pdf.js sob demanda (mesmo padrão usado para XLSX)
+ */
+async function loadPdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = 'https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.min.js'
+    script.onload = () => {
+      try {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js'
+        resolve(window.pdfjsLib)
+      } catch (err) {
+        reject(err)
+      }
+    }
+    script.onerror = () => reject(new Error('Erro ao carregar biblioteca PDF'))
+    document.head.appendChild(script)
+  })
+}
+
+/**
+ * Agrupar os itens de texto do pdf.js em linhas, respeitando a posição Y
+ * (o pdf.js retorna cada "palavra"/fragmento com sua posição, não linhas prontas)
+ */
+function groupTextItemsIntoLines(items) {
+  const lineMap = new Map()
+
+  items.forEach(item => {
+    // Arredonda o Y para agrupar fragmentos da mesma linha (tolerância de 2px)
+    const y = Math.round(item.transform[5] / 2) * 2
+    if (!lineMap.has(y)) lineMap.set(y, [])
+    lineMap.get(y).push(item)
+  })
+
+  // Y maior = mais alto na página (ordem de leitura: cima → baixo)
+  const sortedY = Array.from(lineMap.keys()).sort((a, b) => b - a)
+
+  return sortedY
+    .map(y => {
+      const lineItems = lineMap.get(y).sort((a, b) => a.transform[4] - b.transform[4])
+      return lineItems.map(it => it.str).join(' ').replace(/\s+/g, ' ').trim()
+    })
+    .filter(line => line.length > 0)
+}
+
+/**
+ * Extrair o texto de um PDF, página a página, preservando linhas
+ * @param {File} file - arquivo PDF
+ * @returns {Promise<string>}
+ */
+async function extractTextFromPDF(file) {
+  const pdfjsLib = await loadPdfJs()
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+
+  let fullText = ''
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    const lines = groupTextItemsIntoLines(content.items)
+    fullText += lines.join('\n') + '\n'
+  }
+
+  return fullText
+}
+
+/**
+ * Detectar se o texto extraído é um orçamento do GestãoClick
+ * @param {string} text - texto extraído do PDF
+ */
+function isGestaoClickOrcamentoText(text) {
+  const upper = text.toUpperCase()
+  const isGestaoClick = upper.includes('GESTÃOCLICK') || upper.includes('GESTAOCLICK')
+  const isOrcamento = upper.includes('ORÇAMENTO') || upper.includes('ORCAMENTO')
+  return isGestaoClick && isOrcamento
+}
+
+/**
+ * Somar uma sequência "30/60/90" em número de parcelas, dividindo o valor
+ * e calculando cada vencimento em +1, +2, +3... meses a partir da emissão
+ * @param {string} observacao - texto da coluna OBSERVAÇÃO (ex: "30/60/90.")
+ * @param {number} valorTotal - valor total a dividir entre as parcelas
+ * @param {string} dataBase - data base no formato DD/MM/YYYY (emissão)
+ * @returns {Array<{ vencimento: string, valor: number, parcela: number, totalParcelas: number }>|null}
+ */
+function calcularParcelasPorObservacao(observacao, valorTotal, dataBase) {
+  if (!observacao) return null
+
+  const match = observacao.match(/\d+(?:\s*\/\s*\d+)+/)
+  if (!match) return null
+
+  const prazos = match[0].split('/').map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n))
+  if (prazos.length < 2) return null
+
+  const [dia, mes, ano] = dataBase.split('/').map(n => parseInt(n, 10))
+  if (!dia || !mes || !ano) return null
+
+  const totalParcelas = prazos.length
+  const centavosTotal = Math.round(valorTotal * 100)
+  const centavosBase = Math.floor(centavosTotal / totalParcelas)
+  const resto = centavosTotal - centavosBase * totalParcelas
+
+  return prazos.map((prazo, index) => {
+    // 30 dias ≈ 1 mês, 60 ≈ 2 meses, 90 ≈ 3 meses... mantém o dia do mês
+    const mesesAAdicionar = Math.round(prazo / 30)
+    const dataVenc = new Date(ano, mes - 1 + mesesAAdicionar, dia)
+
+    // Centavos: distribui o resto na última parcela para o total bater exato
+    const centavosParcela = centavosBase + (index === totalParcelas - 1 ? resto : 0)
+
+    return {
+      vencimento: dataVenc.toLocaleDateString('pt-BR'),
+      valor: centavosParcela / 100,
+      parcela: index + 1,
+      totalParcelas,
+    }
+  })
+}
+
+/**
+ * Extrair um campo "Rótulo: valor" de uma linha de texto
+ * @param {string} text - texto completo
+ * @param {RegExp} regex - regex com um grupo de captura
+ */
+function extrairCampo(text, regex) {
+  const m = text.match(regex)
+  return m ? m[1].trim() : ''
+}
+
+/**
+ * Parse do PDF de Orçamento GestãoClick
+ * @param {string} text - texto já extraído do PDF (extractTextFromPDF)
+ * @param {string} profileName - nome do perfil/conta (avalista nome)
+ * @param {string} profileCIC - CNPJ do perfil/conta (avalista CIC)
+ */
+function parseGestaoClickOrcamentoPDF(text, profileName, profileCIC) {
+  // Número do orçamento + data de emissão (mesma linha: "ORÇAMENTO Nº 9282 09/09/2026")
+  const numOrcamento = extrairCampo(text, /OR[ÇC]AMENTO\s*N[ºo°]?\s*(\d+)/i)
+  const emissao = extrairCampo(text, /OR[ÇC]AMENTO\s*N[ºo°]?\s*\d+\s+(\d{2}\/\d{2}\/\d{4})/i)
+
+  // Cliente e CNPJ/CPF: "Cliente: FRANCISCA DILZA CNPJ/CPF: 04.208.767/0001-61"
+  const clienteMatch = text.match(/Cliente:\s*(.+?)\s*CNPJ\/CPF:\s*([\d.\-\/]+)/i)
+  const sacadoNome = clienteMatch ? clienteMatch[1].trim() : ''
+  const sacadoCic = clienteMatch ? clienteMatch[2].replace(/\D/g, '') : ''
+
+  // Telefone e e-mail: "Telefone: (85)99602-8268 E-mail: franciscoantrubens@gmail.com"
+  const contatoMatch = text.match(/Telefone:\s*(\S+)\s*E-mail:\s*(\S+)/i)
+  const sacadoTelefone = contatoMatch ? contatoMatch[1].trim() : ''
+  const sacadoEmail = contatoMatch ? contatoMatch[2].trim() : ''
+
+  // Itens de serviço (soma tudo em um único boleto): "1 SERV RECUPERAÇÃO (MANCAL) 1,00 3.800,00 3.800,00"
+  const itens = []
+  const itemRegex = /^\d+\s+(.+?)\s+[\d.,]+\s+[\d.,]+\s+([\d.,]+)$/gm
+  let itemMatch
+  while ((itemMatch = itemRegex.exec(text)) !== null) {
+    itens.push(itemMatch[1].trim())
+  }
+  const descricao = itens.length > 0 ? itens.join('; ') : ''
+
+  // Total geral: "TOTAL: R$ 3.800,00"
+  const totalStr = extrairCampo(text, /TOTAL:\s*R\$\s*([\d.,]+)/i)
+  const valorTotal = converterValor(totalStr)
+
+  // Linha de pagamento: "09/09/2026 3.800,00 Boleto Bancário (RETIFICA VOLANTE) 30/60/90."
+  const pagamentoMatch = text.match(
+    /(\d{2}\/\d{2}\/\d{4})\s+([\d.,]+)\s+(.+?)\s+((?:\d+\s*\/\s*)+\d+\.?)?\s*$/m
+  )
+  const vencimentoPdf = pagamentoMatch ? pagamentoMatch[1] : emissao
+  const observacao = pagamentoMatch && pagamentoMatch[4] ? pagamentoMatch[4] : ''
+
+  if (!sacadoNome) {
+    throw new Error('Não foi possível identificar o cliente no PDF (campo "Cliente:")')
+  }
+  if (!valorTotal || valorTotal <= 0) {
+    throw new Error('Não foi possível identificar o valor total no PDF (campo "TOTAL: R$")')
+  }
+
+  const dataEmissaoBase = emissao || vencimentoPdf || new Date().toLocaleDateString('pt-BR')
+  const parcelas = calcularParcelasPorObservacao(observacao, valorTotal, dataEmissaoBase)
+
+  const baseBoleto = {
+    SACADO_NOME: sacadoNome,
+    SACADO_CIC: sacadoCic,
+    SACADO_TELEFONE: sacadoTelefone,
+    SACADO_EMAIL: sacadoEmail,
+    EMISSAO: dataEmissaoBase,
+    AVALISTA_NOME: profileName || '',
+    AVALISTA_CIC: profileCIC || '',
+    STATUS: 'pendente',
+  }
+
+  if (parcelas) {
+    console.log(`[PDF GestãoClick] ${parcelas.length} parcela(s) detectada(s) via observação "${observacao}"`)
+    // NUM_TITULO precisa de sufixo por parcela: o sistema identifica boletos
+    // existentes pelo NUM_TITULO (numero_documento) — sem isso, a 2ª e 3ª
+    // parcelas seriam tratadas como atualização da 1ª em vez de novos boletos.
+    return parcelas.map(p => ({
+      ...baseBoleto,
+      NUM_TITULO: numOrcamento ? `${numOrcamento}/${p.parcela}` : '',
+      VENCIMENTO: p.vencimento,
+      VALOR: p.valor,
+      DESCRICAO: descricao ? `${descricao} (Parcela ${p.parcela}/${p.totalParcelas})` : `Parcela ${p.parcela}/${p.totalParcelas}`,
+    }))
+  }
+
+  // Sem parcelamento detectado: um único boleto com o vencimento/valor da tabela
+  return [{
+    ...baseBoleto,
+    NUM_TITULO: numOrcamento || '',
+    VENCIMENTO: vencimentoPdf || dataEmissaoBase,
+    VALOR: valorTotal,
+    DESCRICAO: descricao,
+  }]
+}
+
+/**
+ * Parse de arquivo PDF - detecta o modelo pelo conteúdo
+ * @param {File} file - arquivo PDF
+ * @param {string} profileName - nome do perfil/conta (avalista nome)
+ * @param {string} profileCIC - CNPJ do perfil/conta (avalista CIC)
+ */
+async function parsePDFFile(file, profileName, profileCIC) {
+  const text = await extractTextFromPDF(file)
+
+  if (isGestaoClickOrcamentoText(text)) {
+    console.log(`[PDF] "${file.name}" reconhecido como Orçamento GestãoClick`)
+    return parseGestaoClickOrcamentoPDF(text, profileName, profileCIC)
+  }
+
+  throw new Error(
+    'Modelo de PDF não reconhecido. No momento só importamos orçamentos no formato GestãoClick — me mande um exemplo desse novo modelo para eu aprender o mapeamento.'
+  )
+}
+
+/**
  * Detectar se arquivo é do tipo OS (Ordem de Serviço)
  * Padrão: OS_*.xls (pode vir de qualquer cliente)
  * @param {string} fileName - nome do arquivo
@@ -1720,6 +1974,9 @@ export async function processFile(file, profileName = '', profileCIC = '') {
           break
         case 'xml':
           data = await parseXMLFile(file)
+          break
+        case 'pdf':
+          data = await parsePDFFile(file, profileName, profileCIC)
           break
         default:
           throw new Error(`Formato de arquivo não suportado: .${extension}`)

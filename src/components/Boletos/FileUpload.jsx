@@ -9,7 +9,8 @@ export default function FileUpload({ userId, onShowPreview, onImportError, userT
 
   const acceptedFormats = [
     '.csv', '.txt', '.xlsx', '.xls',
-    '.xml', '.nfe', '.nfse', '.cte', '.mdfe'
+    '.xml', '.nfe', '.nfse', '.cte', '.mdfe',
+    '.pdf'
   ]
 
   const handleDragOver = (e) => {
