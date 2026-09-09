@@ -1674,6 +1674,44 @@ function parseGestaoClickOrcamentoPDF(text, profileName, profileCIC) {
   const sacadoTelefone = contatoMatch ? contatoMatch[1].trim() : ''
   const sacadoEmail = contatoMatch ? contatoMatch[2].trim() : ''
 
+  // ===== Bloco "DADOS DO CLIENTE" isolado e "achatado" (sem quebras de linha) =====
+  // Não dá pra confiar que Endereço/CEP ou Cidade/Estado caiam exatamente na
+  // mesma linha reconstruída pelo pdf.js (a posição Y de cada célula da tabela
+  // pode variar por 1-2px e quebrar o agrupamento de linha). Por isso isolamos
+  // só o trecho entre "Cliente:" e "SERVIÇOS" e removemos toda quebra de linha
+  // antes de aplicar as regex — assim funciona independente de como as células
+  // foram divididas em linhas. Isso também evita pegar o CEP do cabeçalho da
+  // empresa (que aparece antes, ex: "Fortaleza/CE - CEP: 60850-150").
+  const inicioBloco = clienteMatch ? text.indexOf(clienteMatch[0]) : -1
+  const fimBloco = text.search(/SERVI[ÇC]OS/i)
+  const blocoCliente = (inicioBloco > -1 && fimBloco > inicioBloco)
+    ? text.slice(inicioBloco, fimBloco)
+    : text
+  const blocoClienteFlat = blocoCliente.replace(/\s+/g, ' ').trim()
+
+  console.log('[PDF GestãoClick] Bloco cliente (achatado):', blocoClienteFlat)
+
+  // Endereço e CEP: "Endereço: Rua Adalberto Malveira, 7910 - Siqueira CEP: 60732-290"
+  // (pode vir vazio no PDF: "Endereço: CEP:")
+  const enderecoMatch = blocoClienteFlat.match(/Endere[çc]o:\s*(.*?)\s*CEP:\s*([\d.\-]*)/i)
+  const enderecoCompleto = enderecoMatch ? enderecoMatch[1].trim() : ''
+  const sacadoCep = enderecoMatch ? enderecoMatch[2].replace(/\D/g, '') : ''
+
+  // O GestãoClick junta logradouro, número e bairro em um só campo: "Rua X, 123 - Bairro"
+  const enderecoPartes = enderecoCompleto.match(/^(.*?),\s*(\S+)\s*-\s*(.+)$/)
+  const sacadoEndereco = enderecoPartes ? enderecoPartes[1].trim() : enderecoCompleto
+  const sacadoNumero = enderecoPartes ? enderecoPartes[2].trim() : ''
+  const sacadoBairro = enderecoPartes ? enderecoPartes[3].trim() : ''
+
+  // Cidade e Estado: "Cidade: Fortaleza Estado: CE" (também pode vir vazio)
+  // Cuidado: quando Estado vem vazio, o próximo texto do bloco é "Telefone:..."
+  // — por isso validamos que o valor capturado é realmente uma UF (2 letras
+  // MAIÚSCULAS) antes de aceitar; senão ele pegaria "Te" de "Telefone" à toa.
+  const cidadeMatch = blocoClienteFlat.match(/Cidade:\s*(.*?)\s*Estado:\s*(\S{0,2})/i)
+  const sacadoCidade = cidadeMatch ? cidadeMatch[1].trim() : ''
+  const ufCandidato = cidadeMatch ? cidadeMatch[2].trim() : ''
+  const sacadoUf = /^[A-Z]{2}$/.test(ufCandidato) ? ufCandidato : ''
+
   // Itens de serviço (soma tudo em um único boleto): "1 SERV RECUPERAÇÃO (MANCAL) 1,00 3.800,00 3.800,00"
   const itens = []
   const itemRegex = /^\d+\s+(.+?)\s+[\d.,]+\s+[\d.,]+\s+([\d.,]+)$/gm
@@ -1709,6 +1747,12 @@ function parseGestaoClickOrcamentoPDF(text, profileName, profileCIC) {
     SACADO_CIC: sacadoCic,
     SACADO_TELEFONE: sacadoTelefone,
     SACADO_EMAIL: sacadoEmail,
+    SACADO_ENDERECO: sacadoEndereco,
+    SACADO_NUMERO: sacadoNumero,
+    SACADO_BAIRRO: sacadoBairro,
+    SACADO_CIDADE: sacadoCidade,
+    SACADO_UF: sacadoUf,
+    SACADO_CEP: sacadoCep,
     EMISSAO: dataEmissaoBase,
     AVALISTA_NOME: profileName || '',
     AVALISTA_CIC: profileCIC || '',
