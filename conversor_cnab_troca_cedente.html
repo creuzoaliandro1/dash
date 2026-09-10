@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conversor CNAB400 → Troca de Cedente</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171d2b; --panel2:#1e2536; --line:#2b3346;
+    --txt:#e6eaf2; --muted:#9aa5bd; --accent:#4f8cff; --accent2:#28c08a;
+    --warn:#ffb020; --err:#ff5d6c; --chip:#243049;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding-block:24px;padding-inline:16px}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:15px;margin:0 0 12px;color:var(--accent)}
+  .sub{color:var(--muted);margin:0 0 20px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
+  label .req{color:var(--err)}
+  input[type=text],input[type=date]{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:9px 10px;font:13px monospace}
+  input:focus{outline:none;border-color:var(--accent)}
+  .hint{font-size:11px;color:var(--muted);margin-top:4px}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:28px;text-align:center;color:var(--muted);
+    cursor:pointer;transition:.15s;background:var(--panel2)}
+  .drop.drag{border-color:var(--accent);color:var(--txt);background:#1b2740}
+  .drop b{color:var(--accent)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;
+    font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.08)} button:disabled{opacity:.4;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button.ok{background:var(--accent2)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;position:sticky;top:0}
+  td input{width:100%;background:transparent;border:1px solid transparent;color:var(--txt);font:12px monospace;padding:3px 4px;border-radius:5px}
+  td input:focus{background:var(--panel2);border-color:var(--accent);outline:none}
+  .scroll{overflow:auto;max-height:420px;border-radius:8px;border:1px solid var(--line)}
+  .chip{display:inline-block;background:var(--chip);border-radius:20px;padding:3px 11px;font-size:12px;margin:2px 4px 2px 0}
+  .chip b{color:var(--accent2)}
+  .msg{padding:10px 12px;border-radius:8px;margin-top:10px;font-size:13px}
+  .msg.warn{background:#3a2e12;border:1px solid var(--warn);color:#ffd98a}
+  .msg.err{background:#3a1620;border:1px solid var(--err);color:#ffb3bc}
+  .msg.ok{background:#0f2e24;border:1px solid var(--accent2);color:#8ff0cf}
+  pre{background:#0a0e17;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;
+    font-size:11px;line-height:1.45;max-height:300px;color:#c9d4ea}
+  .stepnum{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+    align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-right:8px}
+  .muted{color:var(--muted)}
+  .kv{display:flex;gap:8px;flex-wrap:wrap}
+  small.code{font-family:monospace;color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Conversor CNAB400 — BMP → Troca de Cedente</h1>
+  <p class="sub">Importa o arquivo de remessa padrão BMP (ex.: <small class="code">CB09090000183.REM</small>) e gera um novo <small class="code">.rem</small> no layout <b>Troca de Cedente</b> (ex.: <small class="code">VolanteComercio_…rem</small>). Os títulos são reconhecidos pelo <b>Seu Número</b> / <b>Nosso Número</b>.</p>
+
+  <!-- STEP 1 -->
+  <div class="card">
+    <h2><span class="stepnum">1</span>Dados do beneficiário recebedor (a sua empresa)</h2>
+    <p class="hint" style="margin-top:-4px;margin-bottom:14px">
+      O arquivo importado traz o cedente <b>original</b> no cabeçalho e no campo Sacador. Como esta é uma <b>troca de cedente</b>, você precisa informar a <b>sua conta recebedora</b> — ela vai para o campo 027-046 do novo header. O cedente original é preservado automaticamente no campo Sacador (335-394) de cada título.</p>
+    <div class="grid">
+      <div>
+        <label>Nº da conta recebedora (sem DV) <span class="req">*</span></label>
+        <input type="text" id="cfgConta" placeholder="ex.: 953880" inputmode="numeric">
+        <div class="hint">Sua conta que receberá os boletos (campo 027-046, 20 pos).</div>
+      </div>
+      <div>
+        <label>Nome do beneficiário recebedor</label>
+        <input type="text" id="cfgNome" placeholder="preenchido do arquivo — edite se necessário">
+        <div class="hint">Campo 047-076 (30 pos).</div>
+      </div>
+      <div>
+        <label>Nome do banco</label>
+        <input type="text" id="cfgBanco" value="MONEYPLUS">
+        <div class="hint">Campo 080-094 (15 pos).</div>
+      </div>
+      <div>
+        <label>Data de geração</label>
+        <input type="date" id="cfgData">
+        <div class="hint">Campo 095-100 (DDMMAA). Padrão: hoje.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="card">
+    <h2><span class="stepnum">2</span>Importar arquivo .REM (padrão BMP)</h2>
+    <div class="drop" id="drop">
+      Arraste o arquivo <b>.REM</b> aqui ou <b>clique para selecionar</b>
+      <input type="file" id="file" accept=".rem,.REM,.txt" hidden>
+    </div>
+    <div id="parseMsg"></div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="card" id="previewCard" style="display:none">
+    <h2><span class="stepnum">3</span>Conferência dos títulos</h2>
+    <div id="headerInfo" style="margin-bottom:12px"></div>
+    <p class="hint">O bairro/cidade/UF vêm empacotados no arquivo BMP e foram separados automaticamente — <b>confira e ajuste</b> se necessário antes de gerar.</p>
+    <div class="scroll">
+      <table id="tbl">
+        <thead><tr>
+          <th>Seu Nº</th><th>Nosso Nº</th><th>DV</th><th>Venc.</th><th>Valor</th>
+          <th>Espécie</th><th>Sacado (nome)</th><th>CPF/CNPJ</th>
+          <th>Endereço</th><th>Bairro</th><th>Cidade</th><th>UF</th><th>CEP</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="card" id="genCard" style="display:none">
+    <h2><span class="stepnum">4</span>Gerar arquivo</h2>
+    <div class="row">
+      <button id="btnGen" class="ok">Gerar .rem (Troca de Cedente)</button>
+      <button id="btnDl" class="ghost" disabled>Baixar arquivo</button>
+      <span id="genSummary" class="muted"></span>
+    </div>
+    <div id="genMsg"></div>
+    <pre id="preview" style="display:none"></pre>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- helpers de formatação CNAB ---------- */
+const stripAcc = s => (s||"").normalize("NFD").replace(/[̀-ͯ]/g,"");
+function alpha(v,len){ // alfanumérico: maiúsc, sem especiais/acentos, à esquerda, espaços à direita, truncado
+  let s = stripAcc(String(v??"")).toUpperCase().replace(/[^A-Z0-9 ]/g,"");
+  return (s+" ".repeat(len)).slice(0,len);
+}
+function num(v,len){ // numérico: só dígitos, zeros à esquerda, truncado à direita
+  let s = String(v??"").replace(/\D/g,"");
+  if(s.length>len) s=s.slice(s.length-len);
+  return s.padStart(len,"0");
+}
+function docLeft(v,len){ // nº documento: dígitos à esquerda + espaços à direita
+  let s = String(v??"").replace(/\D/g,"");
+  return (s+" ".repeat(len)).slice(0,len);
+}
+const sub = (l,de,ate)=> (l||"").substring(de-1,ate); // 1-based inclusivo
+
+/* ---------- UFs válidas (para separar bairro/UF/cidade) ---------- */
+const UFS = new Set("AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" "));
+function splitBairroUfCidade(packed){
+  const s = stripAcc(packed).toUpperCase().replace(/\s+/g," ").trim();
+  // formato empacotado: BAIRRO + UF(2) + CIDADE (sem separador) -> ambíguo.
+  // Heurística: dentre os pontos com UF válida (bairro e cidade não-vazios),
+  // escolhe o mais próximo do meio da string (a UF costuma separar bairro e cidade).
+  const cands=[];
+  for(let i=1;i<=s.length-3;i++){
+    const uf = s.substring(i,i+2);
+    if(UFS.has(uf)){
+      const bairro = s.substring(0,i).trim();
+      const cidade = s.substring(i+2).trim();
+      if(bairro && cidade) cands.push({d:Math.abs(i-s.length/2),bairro,uf,cidade});
+    }
+  }
+  if(cands.length){ cands.sort((a,b)=>a.d-b.d); const c=cands[0]; return {bairro:c.bairro,uf:c.uf,cidade:c.cidade}; }
+  return {bairro:s,uf:"",cidade:""};
+}
+
+/* ---------- parser do arquivo BMP (entrada) ---------- */
+let TITULOS=[]; let ORIG={};
+function parseBMP(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.length>=1);
+  TITULOS=[]; ORIG={};
+  let cur=null;
+  for(const l of lines){
+    const t=l[0];
+    if(t==="0"){
+      ORIG = {
+        conta: sub(l,27,46).replace(/^0+/,"")||"0",
+        nome: sub(l,47,76).trim(),
+        banco: sub(l,77,79),
+        data: sub(l,95,100)
+      };
+    } else if(t==="1"){
+      const nosso20 = sub(l,63,82);            // 20 pos (BMP)
+      const nosso12 = nosso20.slice(-12);      // 11 + DV
+      const cnpj = sub(l,221,234).replace(/\D/g,"");
+      cur = {
+        idBenefOrig: sub(l,21,37),             // 0+carteira+ag+conta+DV  (preservado)
+        seuNumero:   sub(l,38,52),             // 15
+        nossoNumero: nosso12.slice(0,11),      // 11
+        nossoDV:     nosso12.slice(11,12),     // 1
+        ocorrencia:  "01",
+        numDoc:      sub(l,111,120),
+        vencimento:  sub(l,121,126),
+        valor:       sub(l,127,139),
+        especie:     sub(l,148,149),
+        emissao:     sub(l,151,156),
+        tipoInsc:    cnpj.length>11?"02":"01",
+        inscricao:   cnpj,
+        nomeSacado:  sub(l,235,274).trim(),
+        endereco:    sub(l,275,314).trim(),
+        cep:         sub(l,327,334).replace(/\D/g,""),
+        sacador:     sub(l,335,394).trim(),    // cedente ORIGINAL (preservado)
+        msg1:"", msg2:"", bairro:"", uf:"", cidade:""
+      };
+      TITULOS.push(cur);
+    } else if(t==="2" && cur){
+      cur.msg1 = sub(l,2,160).replace(/\s+$/,"");
+      cur.msg2 = sub(l,242,321).trim();
+      const packed = sub(l,335,394);
+      const bc = splitBairroUfCidade(packed);
+      cur.bairro=bc.bairro; cur.uf=bc.uf; cur.cidade=bc.cidade;
+    }
+  }
+  return TITULOS.length;
+}
+
+/* ---------- geração do layout Troca de Cedente (saída) ---------- */
+function buildRecords(cfg){
+  const recs=[];
+  let seqCounter=0;
+  const nextSeq = ()=> num(++seqCounter,6);
+  const push = s => { if(s.length!==400) throw new Error("Registro com "+s.length+" pos (esperado 400): "+s.slice(0,40)); recs.push(s); };
+
+  // HEADER tipo 0
+  let h="";
+  h+="0";                               //001
+  h+="1";                               //002
+  h+="REMESSA";                         //003-009
+  h+="01";                              //010-011
+  h+=alpha("COBRANCA",15);              //012-026
+  h+=num(cfg.conta,20);                 //027-046  CONTA RECEBEDORA
+  h+=alpha(cfg.nome,30);                //047-076
+  h+="274";                             //077-079
+  h+=alpha(cfg.banco,15);              //080-094
+  h+=num(cfg.data,6);                   //095-100
+  h+=" ".repeat(8);                     //101-108
+  h+="MX";                              //109-110
+  h+=" ".repeat(284);                   //111-394
+  h+=nextSeq();                         //395-400
+  push(h);
+
+  for(const t of TITULOS){
+    // TIPO 1
+    let r="";
+    r+="1";                              //001
+    r+=" ".repeat(19);                   //002-020
+    r+=alpha(t.idBenefOrig,17);          //021-037
+    r+=(alpha(t.seuNumero,15))+ " ".repeat(10); //038-062 (seu nº + complemento)
+    r+="274";                            //063-065
+    r+="3";                              //066 tipo multa (isenta)
+    r+=num(0,10);                        //067-076 valor/perc multa
+    r+=num(t.nossoNumero,11);            //077-087
+    r+=alpha(t.nossoDV,1);               //088
+    r+=" ".repeat(20);                   //089-108
+    r+="01";                             //109-110 ocorrência
+    r+=docLeft(t.numDoc,10);             //111-120
+    r+=num(t.vencimento,6);              //121-126
+    r+=num(t.valor,13);                  //127-139
+    r+=" ".repeat(8);                    //140-147
+    r+=num(t.especie,2);                 //148-149
+    r+="N";                              //150
+    r+=num(t.emissao,6);                 //151-156
+    r+=num(0,13);                        //157-169 juros
+    r+=" ".repeat(36);                   //170-205
+    r+=num(0,13);                        //206-218 abatimento
+    r+=" ".repeat(116);                  //219-334
+    r+=alpha(t.sacador,60);              //335-394 SACADOR = cedente original
+    r+=nextSeq();                        //395-400
+    push(r);
+
+    // TIPO 2 (mensagens)
+    let full = (t.msg1||"").trim();
+    if(t.msg2) full += (full?" ":"") + t.msg2.trim();
+    let m="";
+    m+="2";                              //001
+    let body="";
+    for(let i=0;i<4;i++) body += alpha(full.substr(i*80,80),80); //002-321
+    m+=body;
+    m+=" ".repeat(73);                   //322-394
+    m+=nextSeq();                        //395-400
+    push(m);
+
+    // TIPO 4 (dados do pagador)
+    let p="";
+    p+="4";                              //001
+    p+=num(t.tipoInsc,2);                //002-003
+    p+=num(t.inscricao,14);             //004-017
+    p+=alpha(t.nomeSacado,40);           //018-057
+    p+=alpha(t.endereco,40);             //058-097
+    p+=" ".repeat(6);                    //098-103 nº endereço
+    p+=alpha(t.bairro,20);               //104-123
+    p+=alpha(t.cidade,30);               //124-153
+    p+=alpha(t.uf,2);                    //154-155
+    p+=num(t.cep,8);                     //156-163
+    p+=" ".repeat(100);                  //164-263 email
+    p+=" ".repeat(11);                   //264-274 telefone
+    p+=" ".repeat(120);                  //275-394
+    p+=nextSeq();                        //395-400
+    push(p);
+  }
+
+  // TRAILER tipo 9
+  let tr="9"+" ".repeat(393)+nextSeq();
+  push(tr);
+  return recs;
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+// data padrão = hoje
+(function(){const d=new Date();$("cfgData").value=d.toISOString().slice(0,10);})();
+
+const drop=$("drop"), fileInput=$("file");
+drop.onclick=()=>fileInput.click();
+["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("drag");}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("drag");}));
+drop.addEventListener("drop",ev=>{ if(ev.dataTransfer.files[0]) readFile(ev.dataTransfer.files[0]); });
+fileInput.onchange=()=>{ if(fileInput.files[0]) readFile(fileInput.files[0]); };
+
+let LAST_FILENAME="arquivo.REM";
+function readFile(f){
+  LAST_FILENAME=f.name;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ handleParsed(rd.result); }catch(e){ setMsg("parseMsg","err","Erro ao ler: "+e.message);} };
+  rd.readAsText(f,"latin1"); // CNAB é ASCII/latin1
+}
+
+function handleParsed(text){
+  const n=parseBMP(text);
+  if(!n){ setMsg("parseMsg","err","Nenhum título (registro tipo 1) encontrado no arquivo."); return; }
+  setMsg("parseMsg","ok","Arquivo lido: <b>"+n+"</b> título(s) encontrado(s).");
+  if(ORIG.nome && !$("cfgNome").value) $("cfgNome").value=ORIG.nome;
+  // header info
+  $("headerInfo").innerHTML =
+    '<div class="kv">'+
+    '<span class="chip">Cedente ORIGINAL (do arquivo): <b>'+(ORIG.nome||"—")+'</b></span>'+
+    '<span class="chip">Cód./conta origem: <b>'+(ORIG.conta||"—")+'</b></span>'+
+    '<span class="chip">Banco: <b>'+(ORIG.banco||"—")+'</b></span>'+
+    '<span class="chip">Data origem: <b>'+(ORIG.data||"—")+'</b></span>'+
+    '</div>';
+  renderTable();
+  $("previewCard").style.display="block";
+  $("genCard").style.display="block";
+}
+
+function renderTable(){
+  const tb=$("tbl").querySelector("tbody"); tb.innerHTML="";
+  TITULOS.forEach((t,i)=>{
+    const tr=document.createElement("tr");
+    const cell=(val,key,w)=>`<td><input data-i="${i}" data-k="${key}" value="${(val||"").replace(/"/g,'&quot;')}" style="min-width:${w||90}px"></td>`;
+    tr.innerHTML =
+      cell(t.seuNumero.replace(/^0+/,''),"_seu",70)+
+      cell(t.nossoNumero.replace(/^0+/,''),"nossoNumero",90)+
+      cell(t.nossoDV,"nossoDV",30)+
+      cell(t.vencimento,"vencimento",60)+
+      cell((parseInt(t.valor||"0",10)/100).toFixed(2),"_valor",80)+
+      cell(t.especie,"especie",50)+
+      cell(t.nomeSacado,"nomeSacado",160)+
+      cell(t.inscricao,"inscricao",120)+
+      cell(t.endereco,"endereco",160)+
+      cell(t.bairro,"bairro",110)+
+      cell(t.cidade,"cidade",120)+
+      cell(t.uf,"uf",40)+
+      cell(t.cep,"cep",80);
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll("input").forEach(inp=>{
+    inp.oninput=()=>{
+      const i=+inp.dataset.i,k=inp.dataset.k;
+      if(k==="_seu"){ TITULOS[i].seuNumero=inp.value; }
+      else if(k==="_valor"){ TITULOS[i].valor=num(Math.round(parseFloat(inp.value||"0")*100),13); }
+      else TITULOS[i][k]=inp.value;
+    };
+  });
+}
+
+let GEN_BLOB=null;
+$("btnGen").onclick=()=>{
+  const conta=$("cfgConta").value.replace(/\D/g,"");
+  if(!conta){ setMsg("genMsg","err","Informe a <b>conta recebedora</b> (passo 1) antes de gerar."); $("cfgConta").focus(); return; }
+  const cfg={
+    conta, nome:$("cfgNome").value||ORIG.nome||"",
+    banco:$("cfgBanco").value||"MONEYPLUS",
+    data:$("cfgData").value ? $("cfgData").value.split("-").reverse().join("").slice(0,6) // AAAA-MM-DD -> DDMMAA
+        : ""
+  };
+  // AAAA-MM-DD -> DDMMAA correto:
+  if($("cfgData").value){ const [y,m,d]=$("cfgData").value.split("-"); cfg.data=d+m+y.slice(2); }
+  try{
+    const recs=buildRecords(cfg);
+    const content=recs.join("\r\n")+"\r\n";
+    GEN_BLOB=new Blob([content],{type:"text/plain"});
+    $("preview").textContent=recs.slice(0,7).join("\n")+(recs.length>7?"\n… ("+recs.length+" registros no total)":"");
+    $("preview").style.display="block";
+    $("genSummary").textContent=recs.length+" registros • "+TITULOS.length+" título(s)";
+    setMsg("genMsg","ok","Arquivo gerado. Confira a prévia e clique em <b>Baixar arquivo</b>.");
+    $("btnDl").disabled=false;
+  }catch(e){ setMsg("genMsg","err","Falha ao gerar: "+e.message); $("btnDl").disabled=true; }
+};
+
+$("btnDl").onclick=()=>{
+  if(!GEN_BLOB) return;
+  const nome=alpha($("cfgNome").value||ORIG.nome||"CEDENTE",15).trim().replace(/\s+/g,"");
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  const fn=(nome||"CEDENTE")+"_"+p(d.getDate())+p(d.getMonth()+1)+d.getFullYear()+p(d.getHours())+p(d.getMinutes())+".rem";
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(GEN_BLOB); a.download=fn; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+};
+
+function setMsg(id,cls,html){ const el=$(id); el.innerHTML='<div class="msg '+cls+'">'+html+'</div>'; }
+</script>
+</body>
+</html>

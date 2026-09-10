@@ -408,6 +408,211 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
 }
 
 // ============================================================
+// CNAB400 - TROCA DE CEDENTE (BMP MoneyPlus)
+// Layout conforme "Manual layout arquivo de remessa CNAB 400
+// para o recebimento de boletos atraves da troca de cedentes"
+// (BMP Money Plus, v1 - 01/2026).
+//
+// Registros: 0 (header) / 1 (dados do boleto) / 2 (mensagens) /
+// 4 (dados do pagador) / 9 (trailer). Todas as linhas com 400 pos.
+//
+// IMPORTANTE (regra de negocio Capt):
+//  - contaRecebedor = dados da CAPT CAPITAL (beneficiario que
+//    RECEBE a troca). Vai no HEADER (conta 027-046 e nome 047-076),
+//    independentemente do perfil logado.
+//  - contaOriginal = cedente ORIGINAL dos boletos (perfil logado):
+//    entra na "Identificacao do beneficiario original" (021-037) e
+//    no campo Sacador (335-394) do registro tipo 1.
+// ============================================================
+
+// HEADER (tipo 0) - beneficiario RECEBEDOR = CAPT CAPITAL
+const buildHeaderTroca = (contaRecebedor) => {
+    // Conta SEM o DV: o ultimo digito de CONTAS.conta e o DV.
+    // Ex.: "09538802" -> "0953880" (953880). "09536939" -> "0953693".
+    const contaDigits = cleanNum(contaRecebedor?.conta || '0')
+    const contaSemDV  = contaDigits.length > 1 ? contaDigits.slice(0, -1) : contaDigits
+    const nomeRecebedor = cleanStr(contaRecebedor?.nome_correntista || 'EMPRESA')
+    const now = new Date()
+    const headerDate = String(now.getDate()).padStart(2, '0') +
+          String(now.getMonth() + 1).padStart(2, '0') +
+          String(now.getFullYear()).substring(2)
+
+    let line = ''
+    line += '0'                                    // 001        - tipo registro
+    line += '1'                                    // 002        - id tipo arquivo
+    line += 'REMESSA'                              // 003-009    - literal
+    line += '01'                                   // 010-011    - codigo servico
+    line += padRight('COBRANCA', 15)               // 012-026    - descricao servico
+    line += padLeft(contaSemDV, 20)                // 027-046    - conta recebedor SEM DV (CAPT)
+    line += padRight(nomeRecebedor, 30)            // 047-076    - nome beneficiario recebedor (CAPT)
+    line += '274'                                  // 077-079    - codigo banco
+    line += padRight('MONEYPLUS', 15)              // 080-094    - nome banco
+    line += headerDate                             // 095-100    - data geracao DDMMAA
+    line += ' '.repeat(8)                          // 101-108    - brancos
+    line += 'MX'                                   // 109-110    - identificacao sistema
+    while (line.length < 394) line += ' '          // 111-394    - brancos
+    line += '000001'                               // 395-400    - sequencial (header e linha 1)
+    return line.substring(0, 400)
+}
+
+// DETALHE tipo 1 - dados do boleto.
+// beneficiario ORIGINAL (021-037) e Sacador (335-394) = contaOriginal (perfil logado).
+const buildTrocaTipo1 = (boleto, contaOriginal, lineSeq) => {
+    // --- Identificacao do beneficiario original no banco (021-037) ---
+    // "0" + carteira(3) + agencia sem DV(5) + conta com DV(8)
+    const carteira    = '009'
+    const agenciaOrig = padLeft(cleanNum(contaOriginal?.agencia || '1'), 5)   // ex.: "0001" -> "00001"
+    const contaOrig   = padLeft(cleanNum(contaOriginal?.conta || '0'), 8)     // conta COM DV
+    const idBenefOrig = '0' + carteira + agenciaOrig + contaOrig              // 17 pos
+
+    // --- Seu numero / numero do titulo ---
+    const seuNumero = cleanNum(boleto.numero_documento || boleto.nosso_numero || '')
+
+    // --- Nosso numero: base (11) + DV. capt_boletos guarda so a base;
+    // o DV e o mesmo com que o titulo foi registrado (algoritmo BMP274). ---
+    const nossoBase = padLeft(cleanNum(boleto.nosso_numero || '0').substring(0, 11), 11)
+    const dvNN      = calcNNDV(cleanNum(boleto.nosso_numero || '0').substring(0, 11))
+
+    // --- Datas / valor ---
+    const dtVenc = fmtDate(boleto.data_vencimento)
+    const dtEmis = fmtDate(boleto.data_emissao)
+    const valorNum = typeof boleto.valor === 'string'
+        ? parseFloat(boleto.valor.replace(/\./g, '').replace(',', '.'))
+        : Number(boleto.valor || 0)
+
+    // --- Especie (default 02-DM) ---
+    const especie = padLeft(cleanNum(boleto.especie || '2'), 2)
+
+    // --- Sacador = cedente ORIGINAL (perfil logado): tipo+cic+" "+nome ---
+    const cedCic  = cleanNum(contaOriginal?.cic || contaOriginal?.cpf_cnpj || '')
+    const cedTipo = cedCic.length > 11 ? '2' : '1'
+    const cedNome = cleanStr(contaOriginal?.nome_correntista || '')
+    const sacador = padRight(cedTipo + padLeft(cedCic, 14) + ' ' + cedNome, 60)
+
+    let line = ''
+    line += '1'                                    // 001        - tipo registro
+    line += ' '.repeat(19)                         // 002-020    - brancos
+    line += idBenefOrig                            // 021-037    - id beneficiario original (17)
+    line += padLeft(seuNumero, 15)                 // 038-052    - seu numero (15)
+    line += ' '.repeat(10)                         // 053-062    - complemento seu numero (brancos)
+    line += '274'                                  // 063-065    - banco original
+    line += '3'                                    // 066        - tipo multa (3-isenta)
+    line += '0'.repeat(10)                         // 067-076    - valor/percentual multa
+    line += nossoBase                              // 077-087    - nosso numero (11)
+    line += dvNN                                   // 088        - DV nosso numero
+    line += ' '.repeat(20)                         // 089-108    - brancos
+    line += '01'                                   // 109-110    - ocorrencia (01-remessa)
+    line += padRight(seuNumero.slice(0, 10), 10)   // 111-120    - numero do documento (10)
+    line += dtVenc                                 // 121-126    - vencimento DDMMAA
+    line += fmtValor(valorNum)                     // 127-139    - valor (13, 2 dec)
+    line += ' '.repeat(8)                          // 140-147    - brancos
+    line += especie                                // 148-149    - especie
+    line += 'N'                                    // 150        - identificacao
+    line += dtEmis                                 // 151-156    - emissao DDMMAA
+    line += '0'.repeat(13)                         // 157-169    - juros diarios
+    line += ' '.repeat(36)                         // 170-205    - brancos
+    line += '0'.repeat(13)                         // 206-218    - abatimento
+    line += ' '.repeat(116)                        // 219-334    - brancos
+    line += sacador                                // 335-394    - sacador (cedente original)
+    line += padLeft(lineSeq, 6)                    // 395-400    - sequencial linha
+    return line.substring(0, 400)
+}
+
+// DETALHE tipo 2 - mensagens (ate 4 linhas de 80)
+const buildTrocaTipo2 = (boleto, lineSeq) => {
+    const partes = [
+        'BOLETO SUJEITO A PROTESTO E NEGATIVACAO APOS O VENCIMENTO DUVIDAS 85 3264 1850',
+        cleanStr(boleto.mensagem1 || boleto.descricao || ''),
+        'O TITULO PODERA SER USADO COMO GARANTIA OU CAUCAO EM OPERACOES DE CREDITO',
+    ].filter(p => p && p.trim().length > 0)
+    const texto = cleanStr(partes.join(' '))
+
+    let corpo = ''
+    for (let i = 0; i < 4; i++) corpo += padRight(texto.substr(i * 80, 80), 80) // 002-321 (4x80)
+
+    let line = ''
+    line += '2'                                    // 001        - tipo registro
+    line += corpo                                  // 002-321    - mensagens (320)
+    line += ' '.repeat(73)                         // 322-394    - brancos
+    line += padLeft(lineSeq, 6)                    // 395-400    - sequencial linha
+    return line.substring(0, 400)
+}
+
+// DETALHE tipo 4 - dados do pagador (sacado)
+const buildTrocaTipo4 = (boleto, lineSeq) => {
+    const sacadoCic = cleanNum(boleto.sacado_cic || '')
+    const tipoInsc  = getTipoPessoa(sacadoCic)             // 01-CPF / 02-CNPJ
+
+    let line = ''
+    line += '4'                                    // 001        - tipo registro
+    line += tipoInsc                               // 002-003    - tipo inscricao pagador
+    line += padLeft(sacadoCic, 14)                 // 004-017    - nº inscricao (14)
+    line += padRight(cleanStr(boleto.sacado_nome || ''), 40)     // 018-057 - nome pagador
+    line += padRight(cleanStr(boleto.sacado_endereco || ''), 40) // 058-097 - endereco
+    line += ' '.repeat(6)                          // 098-103    - nº endereco (brancos)
+    line += padRight(cleanStr(boleto.sacado_bairro || ''), 20)   // 104-123 - bairro
+    line += padRight(cleanStr(boleto.sacado_cidade || ''), 30)   // 124-153 - cidade
+    line += padRight(cleanStr(boleto.sacado_uf || ''), 2)        // 154-155 - UF
+    line += padLeft(cleanNum(boleto.sacado_cep || ''), 8)        // 156-163 - CEP
+    line += ' '.repeat(100)                        // 164-263    - email (brancos)
+    line += ' '.repeat(11)                         // 264-274    - telefone (brancos)
+    line += ' '.repeat(120)                        // 275-394    - brancos
+    line += padLeft(lineSeq, 6)                    // 395-400    - sequencial linha
+    return line.substring(0, 400)
+}
+
+// TRAILER (tipo 9)
+const buildTrocaTrailer = (totalLines) => {
+    let line = '9'
+    while (line.length < 394) line += ' '
+    line += padLeft(totalLines, 6)
+    return line.substring(0, 400)
+}
+
+// ============================================================
+// Funcao principal: gera o arquivo CNAB400 de TROCA DE CEDENTE.
+//  - boletos:        lista de boletos (capt_boletos)
+//  - contaRecebedor: CONTAS da CAPT CAPITAL (header/recebedor)
+//  - contaOriginal:  CONTAS do perfil logado (cedente original)
+// ============================================================
+export const generateCNAB400TrocaCedenteFile = async (boletos, contaRecebedor, contaOriginal, onProgress) => {
+    if (!boletos || boletos.length === 0) {
+        throw new Error('Nenhum boleto fornecido para gerar remessa de troca de cedente')
+    }
+    if (!contaRecebedor) {
+        throw new Error('Dados da conta recebedora (CAPT CAPITAL) nao encontrados')
+    }
+
+    const lines = []
+    let lineSeq = 1
+
+    lines.push(buildHeaderTroca(contaRecebedor))   // header = linha 1 (seq fixo 000001)
+    lineSeq++
+
+    const total = boletos.length
+    const loteYield = Math.max(20, Math.ceil(total / 40))
+    let idx = 0
+    for (const boleto of boletos) {
+        lines.push(buildTrocaTipo1(boleto, contaOriginal, lineSeq)); lineSeq++
+        lines.push(buildTrocaTipo2(boleto, lineSeq));               lineSeq++
+        lines.push(buildTrocaTipo4(boleto, lineSeq));               lineSeq++
+        idx++
+        if (idx % loteYield === 0) {
+            if (typeof onProgress === 'function') onProgress(idx / total)
+            await new Promise((r) => setTimeout(r, 0))
+        }
+    }
+    if (typeof onProgress === 'function') onProgress(1)
+
+    lines.push(buildTrocaTrailer(lineSeq))         // trailer usa o proximo sequencial
+
+    // Padrao BMP: substitui pontos por espacos no conteudo final
+    const content = lines.join('\r\n').replace(/\./g, ' ') + '\r\n'
+    console.log('[CNAB400-Troca] Remessa gerada:', lines.length, 'linhas')
+    return new Blob([content], { type: 'text/plain;charset=utf-8' })
+}
+
+// ============================================================
 // PDF - Helpers para geracao de codigo de barras
 // ============================================================
 

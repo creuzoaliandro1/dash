@@ -2848,6 +2848,31 @@ export const getAllContas = async () => {
     }
 }
 
+// Buscar a conta da CAPT CAPITAL (beneficiario recebedor da Troca de Cedente).
+// Usada na geracao do CNAB400 de Troca de Cedente: independentemente do perfil
+// logado, os dados de conta do HEADER (conta/nome) vem SEMPRE da CAPT CAPITAL.
+// Busca por nome (robusto a mudanca de id entre ambientes).
+export const getContaCaptCapital = async () => {
+    try {
+          const { data, error } = await supabase
+            .from('CONTAS')
+            .select('*')
+            .ilike('nome_correntista', 'CAPT CAPITAL%')
+            .order('id', { ascending: true })
+            .limit(1)
+
+          if (error) throw error
+          const conta = (data && data[0]) || null
+          if (!conta) {
+                return { data: null, error: new Error('Conta CAPT CAPITAL nao encontrada em CONTAS') }
+          }
+          return { data: conta, error: null }
+    } catch (err) {
+          console.error('[getContaCaptCapital] Erro ao buscar conta CAPT CAPITAL:', err)
+          return { data: null, error: err }
+    }
+}
+
 // ===== GERENCIAMENTO DE ANEXOS =====
 
 // Fazer upload de arquivo para um boleto

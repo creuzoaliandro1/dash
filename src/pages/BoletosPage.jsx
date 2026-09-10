@@ -4,8 +4,8 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus } from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
-import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro } from '../services/boletoService'
-import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile } from '../utils/boleto'
+import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
+import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile } from '../utils/boleto'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -988,6 +988,126 @@ export default function BoletosPage() {
     }
   }
 
+  // ============================================================
+  // CNAB400 - TROCA DE CEDENTE
+  // Gera o arquivo no layout de Troca de Cedente (BMP), usando SEMPRE
+  // os dados de conta da CAPT CAPITAL no header (beneficiario recebedor),
+  // independentemente do perfil logado. O cedente original (perfil logado)
+  // vai na identificacao do beneficiario original e no Sacador.
+  // ============================================================
+  const handleGenerateTrocaCedente = async () => {
+    if (efactorActive || contaCaptActive) {
+      alert('A geração de CNAB400 não está disponível nos modos Conta Capt ou Efactor.')
+      return
+    }
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    setShowCnab400Sub(false)
+    setOpenActionsMenu(false)
+
+    await iniciarBarraCnab('Verificando boletos selecionados...')
+
+    const activeId = getActiveContaId()
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows)
+      .map(index => filteredBoletos[index])
+      .filter(b => b)
+
+    // Garante que os boletos existam em capt_boletos (importa os que faltam)
+    const comCapt = selecionados.filter(b => b._hasCapt !== false)
+    const semCapt = selecionados.filter(b => b._hasCapt === false)
+    let boletosParaRemessa = comCapt
+
+    if (semCapt.length > 0) {
+      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
+      if (importErr || !importResult) {
+        fecharBarraCnab()
+        alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
+        return
+      }
+      loadBoletos()
+      boletosParaRemessa = [...comCapt, ...importResult.boletos]
+    }
+
+    if (boletosParaRemessa.length === 0) {
+      fecharBarraCnab()
+      alert('Nenhum boleto disponível para gerar a troca de cedente.')
+      return
+    }
+
+    await doGerarTrocaCedente(boletosParaRemessa)
+  }
+
+  const doGerarTrocaCedente = async (boletosParaRemessa) => {
+    setGeneratingCNAB400(true)
+    let arquivoDisponivel = false
+    await iniciarBarraCnab('Preparando dados da CAPT CAPITAL...')
+    try {
+      // Cedente ORIGINAL = perfil logado
+      const activeId = getActiveContaId()
+      const contaOriginal = contaData || (await getContaInfo(activeId)).data
+
+      // Beneficiario RECEBEDOR = SEMPRE CAPT CAPITAL (independe do perfil logado)
+      const { data: contaRecebedor, error: captErr } = await getContaCaptCapital()
+      if (captErr || !contaRecebedor) {
+        throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
+      }
+
+      rotularBarraCnab(`Formatando ${boletosParaRemessa.length} título(s) no layout de Troca de Cedente...`)
+      const blob = await generateCNAB400TrocaCedenteFile(boletosParaRemessa, contaRecebedor, contaOriginal)
+
+      // Nome do arquivo: <NOMECEDENTE>_DDMMAAAAHHMM.rem (padrao do manual BMP)
+      const now = new Date()
+      const p = (n) => String(n).padStart(2, '0')
+      const nomeArq = String(contaRecebedor.nome_correntista || 'CEDENTE')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 15)
+      const stamp = `${p(now.getDate())}${p(now.getMonth() + 1)}${now.getFullYear()}${p(now.getHours())}${p(now.getMinutes())}`
+      const filename = `${nomeArq}_${stamp}.rem`
+
+      rotularBarraCnab('Gerando arquivo .rem para download...')
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      arquivoDisponivel = true
+      concluirBarraCnab(`Arquivo "${filename}" pronto para salvar ✓`)
+
+      // Best-effort: salva a remessa no Storage e registra (sob a conta CAPT CAPITAL)
+      try {
+        const { data: uploadResult } = await uploadRemessaCNAB400(contaRecebedor.id, filename, blob)
+        const caminhoStorage = uploadResult?.caminho || null
+        const valorTotal = boletosParaRemessa.reduce((s, b) => s + (parseFloat(b.valor) || 0), 0)
+        await createRemessa(contaRecebedor.id, {
+          filename,
+          quantidadeBoletos: boletosParaRemessa.length,
+          valorTotal,
+          caminhoStorage,
+        })
+      } catch (err) {
+        console.warn('[CNAB400-Troca] Aviso ao salvar/registrar remessa (continua mesmo assim):', err)
+      }
+
+      setSelectedRows(new Set())
+    } catch (error) {
+      console.error('[CNAB400-Troca] Erro ao gerar troca de cedente:', error)
+      if (arquivoDisponivel) {
+        fecharBarraCnab()
+      } else {
+        erroBarraCnab('Erro ao gerar troca de cedente: ' + error.message)
+      }
+    } finally {
+      setGeneratingCNAB400(false)
+    }
+  }
+
   const handleGerarRelatorioPDF = () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um boleto')
@@ -1872,6 +1992,13 @@ export default function BoletosPage() {
                             className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                           >
                             Baixa
+                          </button>
+                          <button
+                            onClick={handleGenerateTrocaCedente}
+                            disabled={generatingCNAB400}
+                            className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-t border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Troca de cedente
                           </button>
                         </div>
                       )}
