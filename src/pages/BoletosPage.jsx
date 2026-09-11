@@ -1067,18 +1067,15 @@ export default function BoletosPage() {
       const stamp = `${p(now.getDate())}${p(now.getMonth() + 1)}${now.getFullYear()}${p(now.getHours())}${p(now.getMinutes())}`
       const filename = `${nomeArq}_${stamp}.rem`
 
-      rotularBarraCnab('Gerando arquivo .rem para download...')
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
+      // Nome do .zip: TC + DDMMAAAA + HHMMSS (prefixo "Troca de Cedente")
+      const zipStamp = `${p(now.getDate())}${p(now.getMonth() + 1)}${now.getFullYear()}${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+      const zipFilename = `TC${zipStamp}.zip`
+
+      rotularBarraCnab('Compactando arquivo .rem em .zip para download...')
+      await createAndDownloadZip([{ filename, blob }], zipFilename)
 
       arquivoDisponivel = true
-      concluirBarraCnab(`Arquivo "${filename}" pronto para salvar ✓`)
+      concluirBarraCnab(`Arquivo "${zipFilename}" pronto para salvar ✓`)
 
       // Best-effort: salva a remessa no Storage e registra (sob a conta CAPT CAPITAL)
       try {
