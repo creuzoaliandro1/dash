@@ -1055,28 +1055,17 @@ export default function BoletosPage() {
         throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
       }
 
-      // Numero da remessa: usa o contador cnab400 da CAPT CAPITAL (recebedor)
-      rotularBarraCnab('Calculando numeração da remessa...')
-      const cnab400Num = Number(contaRecebedor?.cnab400)
-      let nextSeq
-      if (!isNaN(cnab400Num) && cnab400Num >= 1) {
-        nextSeq = cnab400Num + 1
-      } else {
-        const { count } = await getContaRemessaCount(contaRecebedor?.cedente || '')
-        nextSeq = count + 1
-      }
-
       rotularBarraCnab(`Formatando ${boletosParaRemessa.length} título(s) no layout de Troca de Cedente...`)
-      const blob = await generateCNAB400TrocaCedenteFile(boletosParaRemessa, contaRecebedor, contaOriginal, nextSeq)
+      const blob = await generateCNAB400TrocaCedenteFile(boletosParaRemessa, contaRecebedor, contaOriginal)
 
-      // Incrementa o contador de remessa da CAPT CAPITAL
-      try { await incrementContaCnab400(contaRecebedor.id, nextSeq) } catch (e) { console.warn('[CNAB400-Troca] Aviso ao incrementar cnab400:', e) }
-
-      // Nome do arquivo: CB[DD][MM][SSSSSSS].REM (padrao BMP274, importavel no sistema)
+      // Nome do arquivo: <NOMECEDENTE>_DDMMAAAAHHMM.rem (padrao do manual BMP troca de cedente)
       const now = new Date()
       const p = (n) => String(n).padStart(2, '0')
-      const sequence = String(nextSeq).padStart(7, '0')
-      const filename = `CB${p(now.getDate())}${p(now.getMonth() + 1)}${sequence}.REM`
+      const nomeArq = String(contaRecebedor.nome_correntista || 'CEDENTE')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 15)
+      const stamp = `${p(now.getDate())}${p(now.getMonth() + 1)}${now.getFullYear()}${p(now.getHours())}${p(now.getMinutes())}`
+      const filename = `${nomeArq}_${stamp}.rem`
 
       rotularBarraCnab('Gerando arquivo .rem para download...')
       const url = URL.createObjectURL(blob)
