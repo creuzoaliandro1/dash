@@ -98,6 +98,19 @@ const fmtValor = (v) => {
     return String(centavos).padStart(13, '0')
 }
 
+// Formata valor/percentual (multa, juros, desconto) para campos CNAB que
+// devem ficar em BRANCO quando o valor e zero/vazio, em vez de "000...0"
+// (regra Capt). Quando ha valor real (> 0), preenche em centavos com
+// zeros a esquerda, no tamanho do campo (tam).
+const fmtValorOuBranco = (v, tam) => {
+    const num = typeof v === 'string'
+      ? parseFloat(v.replace(/\./g, '').replace(',', '.'))
+      : Number(v || 0)
+    if (!num || isNaN(num)) return ' '.repeat(tam)
+    const centavos = Math.round(num * 100)
+    return String(centavos).padStart(tam, '0')
+}
+
 // Preenche a esquerda com char (default '0')
 const padLeft = (text, size, char = '0') => {
     const s = String(text === null || text === undefined ? '' : text)
@@ -447,7 +460,7 @@ const buildHeaderTroca = (contaRecebedor) => {
     line += padLeft(contaSemDV, 20)                // 027-046    - conta recebedor SEM DV (CAPT)
     line += padRight(nomeRecebedor, 30)            // 047-076    - nome beneficiario recebedor (CAPT)
     line += '274'                                  // 077-079    - codigo banco
-    line += padRight('MONEYPLUS', 15)              // 080-094    - nome banco
+    line += padRight('BMP MONEY PLUS', 15)         // 080-094    - nome banco
     line += headerDate                             // 095-100    - data geracao DDMMAA
     line += ' '.repeat(8)                          // 101-108    - brancos
     line += 'MX'                                   // 109-110    - identificacao sistema
@@ -498,7 +511,7 @@ const buildTrocaTipo1 = (boleto, contaOriginal, lineSeq) => {
     line += ' '.repeat(10)                         // 053-062    - complemento seu numero (brancos)
     line += '274'                                  // 063-065    - banco original
     line += '3'                                    // 066        - tipo multa (3-isenta)
-    line += '0'.repeat(10)                         // 067-076    - valor/percentual multa
+    line += fmtValorOuBranco(0, 10)                 // 067-076    - valor/percentual multa (em branco quando 0)
     line += nossoBase                              // 077-087    - nosso numero (11)
     line += dvNN                                   // 088        - DV nosso numero
     line += ' '.repeat(20)                         // 089-108    - brancos
@@ -510,9 +523,9 @@ const buildTrocaTipo1 = (boleto, contaOriginal, lineSeq) => {
     line += especie                                // 148-149    - especie
     line += 'N'                                    // 150        - identificacao
     line += dtEmis                                 // 151-156    - emissao DDMMAA
-    line += '0'.repeat(13)                         // 157-169    - juros diarios
+    line += fmtValorOuBranco(0, 13)                 // 157-169    - juros diarios (em branco quando 0)
     line += ' '.repeat(36)                         // 170-205    - brancos
-    line += '0'.repeat(13)                         // 206-218    - abatimento
+    line += fmtValorOuBranco(0, 13)                 // 206-218    - abatimento (em branco quando 0)
     line += ' '.repeat(116)                        // 219-334    - brancos
     line += sacador                                // 335-394    - sacador (cedente original)
     line += padLeft(lineSeq, 6)                    // 395-400    - sequencial linha
