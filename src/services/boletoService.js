@@ -1941,7 +1941,20 @@ export const getOPEITEByCedente = async (codCedente) => {
 const _digitsOnly = (v) => String(v ?? '').replace(/\D/g, '')
 const _toCents = (v) => Math.round((parseFloat(v) || 0) * 100)
 const _isoDate = (d) => (d ? String(d).slice(0, 10) : '')
-const _matchKey = (valor, venc, cic) => `${_toCents(valor)}|${_isoDate(venc)}|${_digitsOnly(cic)}`
+// Alguns campos de origem (ex.: RET_CONTACAPT.CIC_CORRENTISTA, quando o CPF do
+// pagador começa com zero) chegam sem o zero à esquerda — provavelmente por
+// terem passado por algum ponto que trata o valor como número. Isso faz o CIC
+// "perder" 1 dígito e nunca bater com o CNPJ/CPF de 11 (CPF) ou 14 (CNPJ)
+// dígitos vindo de capt_registrado/capt_boletos/SACADO, quebrando o match.
+// Preenchemos com zeros à esquerda até o tamanho correto (11 ou 14) para que
+// a comparação funcione independente de onde o zero foi perdido. Não altera
+// CICs já corretos (padStart em string do tamanho certo é um no-op).
+const _cicPadded = (v) => {
+  const d = _digitsOnly(v)
+  if (!d) return ''
+  return d.length <= 11 ? d.padStart(11, '0') : d.padStart(14, '0')
+}
+const _matchKey = (valor, venc, cic) => `${_toCents(valor)}|${_isoDate(venc)}|${_cicPadded(cic)}`
 
 // Carrega TODA a capt_registrado (a tabela é registrada sob a conta-mãe CAPT, então o
 // vínculo com um título do perfil é feito pela CHAVE valor+vencimento+cic, e não pelo
