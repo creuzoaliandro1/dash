@@ -167,6 +167,59 @@ export const importExtrato = async (registros) => {
   }
 }
 
+// Cruza uma lista de "Nosso Número" (extraídos da observação do extrato) com nossa base
+// de boletos para descobrir Nº Título, Vencimento e Valor Original de cada um.
+// Prioriza capt_registrado (boletos já registrados no BMP — fonte mais confiável) e usa
+// capt_boletos como respaldo para nossos números ainda não sincronizados no BMP.
+// Retorna um Map: nosso_numero -> { numTitulo, vencimento, valorOriginal }
+export const getBoletosPorNossoNumero = async (nossosNumeros) => {
+  const uniq = [...new Set((nossosNumeros || []).filter(Boolean).map((n) => String(n).trim()))]
+  const map = new Map()
+  if (uniq.length === 0) return { data: map, error: null }
+
+  try {
+    const pageSize = 500
+
+    // 1) capt_registrado — boletos registrados no BMP (fonte primária)
+    for (let i = 0; i < uniq.length; i += pageSize) {
+      const batch = uniq.slice(i, i + pageSize)
+      const { data, error } = await supabase
+        .from('capt_registrado')
+        .select('identd_nosso_num, numero_documento, dt_venc_tit, vlr_tit')
+        .in('identd_nosso_num', batch)
+      if (error) { console.warn('[Extrato] Aviso ao cruzar com capt_registrado:', error.message); continue }
+      data?.forEach((r) => {
+        const key = String(r.identd_nosso_num || '').trim()
+        if (key && !map.has(key)) {
+          map.set(key, { numTitulo: r.numero_documento || '', vencimento: r.dt_venc_tit || '', valorOriginal: r.vlr_tit })
+        }
+      })
+    }
+
+    // 2) capt_boletos — respaldo para nossos números ainda não sincronizados no BMP
+    const faltantes = uniq.filter((n) => !map.has(n))
+    for (let i = 0; i < faltantes.length; i += pageSize) {
+      const batch = faltantes.slice(i, i + pageSize)
+      const { data, error } = await supabase
+        .from('capt_boletos')
+        .select('nosso_numero, numero_documento, data_vencimento, valor')
+        .in('nosso_numero', batch)
+      if (error) { console.warn('[Extrato] Aviso ao cruzar com capt_boletos:', error.message); continue }
+      data?.forEach((r) => {
+        const key = String(r.nosso_numero || '').trim()
+        if (key && !map.has(key)) {
+          map.set(key, { numTitulo: r.numero_documento || '', vencimento: r.data_vencimento || '', valorOriginal: r.valor })
+        }
+      })
+    }
+
+    return { data: map, error: null }
+  } catch (err) {
+    console.error('[Extrato] Erro ao cruzar boletos por nosso número:', err)
+    return { data: map, error: err }
+  }
+}
+
 // Carrega todos os lançamentos (paginação > 1000), ordenado por DATA desc.
 export const getExtratos = async () => {
   try {

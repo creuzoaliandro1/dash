@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { parseExtratoXLSX, importExtrato, getExtratos } from '../services/extratoService'
+import { parseExtratoXLSX, importExtrato, getExtratos, getBoletosPorNossoNumero } from '../services/extratoService'
 
 const formatDataBR = (data) => {
   if (!data) return '—'
@@ -30,6 +30,7 @@ export default function ExtratoPage() {
   const [importResult, setImportResult] = useState(null)
   const [sortColumn, setSortColumn] = useState('DATA')
   const [sortDirection, setSortDirection] = useState('desc')
+  const [boletoInfoMap, setBoletoInfoMap] = useState(new Map())
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -41,6 +42,11 @@ export default function ExtratoPage() {
     const { data } = await getExtratos()
     setExtratos(data || [])
     setLoading(false)
+
+    // Cruza com nossa base (capt_registrado / capt_boletos) via Nosso Número da observação
+    const nossosNumeros = (data || []).map((e) => extrairNossoNumeroExato(e.OBSERVACAO)).filter(Boolean)
+    const { data: map } = await getBoletosPorNossoNumero(nossosNumeros)
+    setBoletoInfoMap(map || new Map())
   }
 
   const handleFiles = async (files) => {
@@ -191,6 +197,14 @@ export default function ExtratoPage() {
     return (String(observacao) || '').substring(0, 30)
   }
 
+  // Igual à anterior, mas retorna null quando não encontra "Nosso Número: xxxx" na
+  // observação (usada para cruzar com a base de boletos, sem o fallback de texto livre)
+  const extrairNossoNumeroExato = (observacao) => {
+    if (!observacao) return null
+    const match = String(observacao).match(/Nosso Número:\s*(\d+)/)
+    return match && match[1] ? match[1] : null
+  }
+
   const handleExportarPDF = () => {
     if (selectedRows.size === 0) {
       alert('Selecione pelo menos um lançamento para exportar')
@@ -198,24 +212,31 @@ export default function ExtratoPage() {
     }
     setOpenActionsMenu(false)
     const filtered = getSorted().filter((e) => selectedRows.has(e.ID))
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     doc.setFontSize(12)
     doc.setFont(undefined, 'bold')
     doc.text('EXTRATO - LANÇAMENTOS SELECIONADOS', 10, 12)
 
     autoTable(doc, {
       startY: 16,
-      head: [['Data', 'Tipo', 'Operação', 'Nome', 'CIC', 'Valor (R$)', 'ID Transação', 'Observação']],
-      body: filtered.map((e) => [
-        formatarDataDDMMAA(e.DATA),
-        e.TIPO || '',
-        mapeadorOperacoes(e.OPERACAO || ''),
-        (e.NOME || '').substring(0, 35),
-        e.CIC || '',
-        formatValorBR(e.VALOR),
-        e.TRANSACAO || '',
-        extrairNossoNumero(e.OBSERVACAO),
-      ]),
+      head: [['Data', 'Tipo', 'Operação', 'Nome', 'CIC', 'Valor (R$)', 'ID Transação', 'Observação', 'Nº Título', 'Vencimento', 'Vr. Original (R$)']],
+      body: filtered.map((e) => {
+        const nn = extrairNossoNumeroExato(e.OBSERVACAO)
+        const info = nn ? boletoInfoMap.get(nn) : null
+        return [
+          formatarDataDDMMAA(e.DATA),
+          e.TIPO || '',
+          mapeadorOperacoes(e.OPERACAO || ''),
+          (e.NOME || '').substring(0, 35),
+          e.CIC || '',
+          formatValorBR(e.VALOR),
+          e.TRANSACAO || '',
+          extrairNossoNumero(e.OBSERVACAO),
+          info?.numTitulo || '—',
+          info ? formatarDataDDMMAA(info.vencimento) : '—',
+          info?.valorOriginal != null ? formatValorBR(info.valorOriginal) : '—',
+        ]
+      }),
       styles: {
         fontSize: 7,
         cellPadding: { top: 0.5, bottom: 0.5, left: 1, right: 1 },
@@ -227,7 +248,8 @@ export default function ExtratoPage() {
       columnStyles: {
         3: { overflow: 'hidden', cellWidth: 30 }, // Nome: não quebra, limite 30mm
         5: { halign: 'right' },
-        7: { overflow: 'hidden' } // Observação: não quebra
+        7: { overflow: 'hidden' }, // Observação: não quebra
+        10: { halign: 'right' }, // Vr. Original
       },
       theme: 'grid',
     })
@@ -408,6 +430,9 @@ export default function ExtratoPage() {
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white">ID Transação</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white">Origem</th>
                 <th className="px-3 py-2 text-left text-xs font-semibold text-white">Observação</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white">Nº Título</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-white">Vencimento</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-white">Vr. Original</th>
               </tr>
             </thead>
             <tbody>
@@ -435,6 +460,17 @@ export default function ExtratoPage() {
                     <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs">{e.TRANSACAO || '—'}</td>
                     <td className="px-3 py-2 text-[#a3a3a3] text-xs">{e.ORIGEM || '—'}</td>
                     <td className="px-3 py-2 text-[#a3a3a3] text-xs truncate max-w-xs">{e.OBSERVACAO || '—'}</td>
+                    {(() => {
+                      const nn = extrairNossoNumeroExato(e.OBSERVACAO)
+                      const info = nn ? boletoInfoMap.get(nn) : null
+                      return (
+                        <>
+                          <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{info?.numTitulo || '—'}</td>
+                          <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{info ? formatDataBR(info.vencimento) : '—'}</td>
+                          <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">{info?.valorOriginal != null ? formatValorBR(info.valorOriginal) : '—'}</td>
+                        </>
+                      )
+                    })()}
                   </tr>
                 )
               })}
