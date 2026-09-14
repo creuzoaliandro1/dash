@@ -1968,6 +1968,38 @@ const getAllRegistrado = async () => {
   return all
 }
 
+// Carrega só o NOSSO_NUMERO de todos os registros do módulo de Retornos
+// (RET_CONTACAPT) — usado para saber se um título já "apareceu nos retornos",
+// independente de qual conta/cedente processou o retorno.
+const getAllRetNossoNumeros = async () => {
+  let all = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const start = page * pageSize
+    const { data, error } = await supabase
+      .from('RET_CONTACAPT')
+      .select('NOSSO_NUMERO')
+      .range(start, start + pageSize - 1)
+    if (error) {
+      console.error('[getAllRetNossoNumeros] erro:', error.message)
+      break
+    }
+    if (!data || data.length === 0) break
+    all = all.concat(data)
+    if (data.length < pageSize) break
+    page++
+  }
+  return all
+}
+
+// Normaliza "Nosso Número" para comparação entre fontes (remove tudo que não é
+// dígito e tira zeros à esquerda — mesmo critério usado no parser de retorno).
+const normNossoNumero = (v) => {
+  const s = String(v == null ? '' : v).replace(/\D/g, '')
+  return s.replace(/^0+/, '') || s
+}
+
 // Indexa um array de registros (já no formato unificado) por _key
 const _indexByKey = (arr) => {
   const m = new Map()
@@ -1984,16 +2016,36 @@ export const getBoletosImportadosUnificados = async (contaData) => {
     const cedenteTxt = contaData?.cedente ? String(contaData.cedente).trim() : ''
     const codCedente = contaData?.cod_cedente ?? null
 
-    // Carrega as 3 fontes em paralelo. capt_registrado é carregada inteira pois o
+    // Carrega as fontes em paralelo. capt_registrado é carregada inteira pois o
     // vínculo é por chave (valor+venc+cic), não por cedente (ver getAllRegistrado).
-    const [boletosRes, registrados, opeiteRes] = await Promise.all([
+    // retNossoNumRows e captCapitalRes alimentam a coluna "Cedente" (troca de cedente).
+    const [boletosRes, registrados, opeiteRes, retNossoNumRows, captCapitalRes] = await Promise.all([
       getBoletos(contaId),
       getAllRegistrado(),
       codCedente != null ? getOPEITEByCedente(codCedente) : Promise.resolve({ data: [] }),
+      getAllRetNossoNumeros(),
+      getContaCaptCapital(),
     ])
 
     const boletos = boletosRes?.data || []
     const opeite = opeiteRes?.data || []
+
+    // Nosso Números presentes no módulo de Retornos (qualquer conta/cedente)
+    const retNossoNumSet = new Set(
+      retNossoNumRows.map((r) => normNossoNumero(r.NOSSO_NUMERO)).filter(Boolean)
+    )
+    // Nosso Números já registrados especificamente sob a CAPT CAPITAL (troca de
+    // cedente concluída) — cruza capt_registrado.cod_cedente_titular com o cedente
+    // da conta CAPT CAPITAL.
+    const captCedente = String(captCapitalRes?.data?.cedente || '').trim()
+    const captCedenteNossoNumSet = new Set(
+      captCedente
+        ? registrados
+            .filter((r) => String(r.cod_cedente_titular || '').trim() === captCedente)
+            .map((r) => normNossoNumero(r.identd_nosso_num))
+            .filter(Boolean)
+        : []
+    )
 
     // --- Normaliza cada fonte para a forma usada pela BoletoTable ---
     const captRecs = boletos.map((b) => ({
@@ -2080,9 +2132,21 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       const captStatusEfactor = C ? C.status_efactor : null
       const captSituacao = C ? String(C.situacao || '').toLowerCase() : ''
 
-      // Registrado: verde se em capt_registrado, amarelo se CNAB400 foi gerado (situacao='Remessa'),
+      // Nosso Número em comum entre as fontes, p/ cruzar com o módulo de Retornos
+      const nnKey = normNossoNumero((C && C.nosso_numero) || (Rreg && Rreg.nosso_numero) || (O && O.nosso_numero) || merged.nosso_numero)
+      const emRetornos = !!(nnKey && retNossoNumSet.has(nnKey))
+      const cedenteCaptRegistrado = !!(nnKey && captCedenteNossoNumSet.has(nnKey))
+      merged._emRetornos = emRetornos
+      merged._cedenteCaptRegistrado = cedenteCaptRegistrado
+      // Cedente (troca de cedente): verde se já registrado sob a CAPT CAPITAL, amarelo
+      // se apareceu no módulo de Retornos mas ainda não sob a CAPT, vermelho caso
+      // não tenha nenhum retorno.
+      merged._cedenteLabel = cedenteCaptRegistrado ? 'Capt' : (emRetornos ? 'Retorno' : 'Não')
+
+      // Registrado: verde se o título aparece no módulo de Retornos (qualquer conta),
+      // amarelo se CNAB400 foi gerado (situacao='Remessa') mas ainda sem retorno,
       // vermelho caso contrário.
-      merged._contaLabel = Rreg
+      merged._contaLabel = emRetornos
         ? 'Sim'
         : (captSituacao === 'remessa' ? 'Remessa' : 'Não')
 

@@ -60,8 +60,18 @@ export const getAntecipaStatus = (boleto) => {
 
 export const getContaStatus = (boleto) => {
   const label = String(boleto._contaLabel ?? boleto.situacao ?? '').toLowerCase()
-  if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado em capt_registrado' }
+  if (label === 'sim' || label === 'registrado') return { color: 'green', title: 'Registrado no módulo de Retornos' }
   if (label === 'remessa') return { color: 'yellow', title: 'CNAB400 enviado — aguardando registro BTG' }
+  return { color: 'red', title: 'Não registrado' }
+}
+
+// Cedente (troca de cedente para CAPT CAPITAL): verde = já registrado sob a CAPT
+// CAPITAL (troca concluída); amarelo = está no módulo de Retornos mas ainda não
+// sob a CAPT (troca pendente); vermelho = ainda não registrado em nenhuma conta.
+export const getCedenteStatus = (boleto) => {
+  const label = String(boleto._cedenteLabel ?? '').toLowerCase()
+  if (label === 'capt') return { color: 'green', title: 'Registrado sob a CAPT CAPITAL (troca de cedente concluída)' }
+  if (label === 'retorno') return { color: 'yellow', title: 'Registrado nos retornos — troca de cedente pendente' }
   return { color: 'red', title: 'Não registrado' }
 }
 
@@ -518,6 +528,7 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
             <SortableHeader column="sacado_cic" label="CIC" flex="0 0 110px" align="text-center" />
             <div style={{ flex: '0 0 60px' }} className="text-center">Antecipa</div>
             <div style={{ flex: '0 0 60px' }} className="text-center">Registro</div>
+            <div style={{ flex: '0 0 60px' }} className="text-center">Cedente</div>
             <div style={{ flex: '0 0 60px' }} className="text-center">Assina</div>
             <div style={{ flex: '0 0 40px' }} className="text-center">Ações</div>
           </div>
@@ -579,6 +590,9 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                 </div>
                 <div style={{ flex: '0 0 60px' }} className="flex justify-center">
                   <StatusDot {...getContaStatus(boleto)} />
+                </div>
+                <div style={{ flex: '0 0 60px' }} className="flex justify-center">
+                  <StatusDot {...getCedenteStatus(boleto)} />
                 </div>
                 <div style={{ flex: '0 0 60px' }} className="flex justify-center">
                   <StatusDot {...getAssinaStatus(boleto)} />
