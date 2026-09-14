@@ -3,7 +3,7 @@ import jsPDF from 'jspdf'
 import JSZip from 'jszip'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, getOpeiteStatusMap, recomputarStatusRet } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -375,6 +375,25 @@ const buscarBoletosDB = async (registros) => {
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 export default function RetornoPage() {
+  // Usuário logado / perfil ativo — controla acesso (só Master anexa retorno) e
+  // filtro por conta na tabela "Gravados em RET_CONTACAPT" (Master vê todas as contas).
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const userType = user.tipo || 'U'
+  const isMaster = userType === 'M'
+  const getActiveContaId = useRef(() => {
+    const stored = localStorage.getItem('activeContaId')
+    if (stored) return stored
+    const u = JSON.parse(localStorage.getItem('user') || '{}')
+    return u.id
+  }).current
+  const [contaDataRet, setContaDataRet] = useState(null)
+  useEffect(() => {
+    if (isMaster) return
+    const activeId = getActiveContaId()
+    if (!activeId) return
+    getContaInfo(activeId).then(({ data }) => setContaDataRet(data || null)).catch(() => {})
+  }, [])
+
   const [isDragging, setIsDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   // Cada elemento: { nome, header, trailer, registros }
@@ -389,17 +408,13 @@ export default function RetornoPage() {
   const [vinculos, setVinculos] = useState({})       // chave -> { numLanca, cic }
   const [processandoRet, setProcessandoRet] = useState(false)
   const [retSalvos, setRetSalvos] = useState([])
+  const [retSalvosAll, setRetSalvosAll] = useState([])   // sem filtro de conta (só usado internamente)
   const [loadingSalvos, setLoadingSalvos] = useState(false)
   const [opeiteStatusMap, setOpeiteStatusMap] = useState({})
   const loadSalvos = async () => {
     setLoadingSalvos(true)
     const { data } = await getRetContacapt()
-    const rows = data || []
-    setRetSalvos(rows)
-    try {
-      const lancas = [...new Set(rows.map(r => r.NUM_LANCA).filter(Boolean))]
-      setOpeiteStatusMap(await getOpeiteStatusMap(lancas))
-    } catch (e) { console.warn('[RetornoPage] getOpeiteStatusMap:', e?.message) }
+    setRetSalvosAll(data || [])
     setLoadingSalvos(false)
   }
   useEffect(() => { loadSalvos() }, [])
@@ -413,6 +428,22 @@ export default function RetornoPage() {
     const hit = allContasRet.find(c => normContaRet(c.conta) === key || normContaRet(c.cedente) === key)
     return hit ? hit.nome_correntista : ''
   }
+
+  // Restringe a tabela "Gravados em RET_CONTACAPT" à conta do perfil logado — Master vê todas.
+  useEffect(() => {
+    let rows = retSalvosAll
+    if (!isMaster) {
+      const contaKey = contaDataRet ? normContaRet(contaDataRet.conta || contaDataRet.cedente) : null
+      rows = contaKey ? rows.filter(r => normContaRet(r.CONTA_CEDENTE) === contaKey) : []
+    }
+    setRetSalvos(rows)
+    ;(async () => {
+      try {
+        const lancas = [...new Set(rows.map(r => r.NUM_LANCA).filter(Boolean))]
+        setOpeiteStatusMap(await getOpeiteStatusMap(lancas))
+      } catch (e) { console.warn('[RetornoPage] getOpeiteStatusMap:', e?.message) }
+    })()
+  }, [retSalvosAll, contaDataRet, isMaster])
 
   // Busca livre + filtros da tabela Gravados em RET_CONTACAPT
   const [buscaSalvos, setBuscaSalvos] = useState('')
@@ -877,7 +908,13 @@ export default function RetornoPage() {
         </div>
       </div>
 
-      {/* Upload */}
+      {/* Upload — restrito a usuários Master */}
+      {!isMaster && (
+        <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-6 py-3 text-xs text-[#666666]">
+          Apenas usuários Master podem anexar/importar arquivos de retorno.
+        </div>
+      )}
+      {isMaster && (
       <div
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
         onDragLeave={(e) => { e.preventDefault(); setIsDragging(false) }}
@@ -947,6 +984,7 @@ export default function RetornoPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Resumo cards */}
       {arquivos.length > 0 && (
