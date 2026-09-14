@@ -1160,17 +1160,6 @@ export default function RetornoPage() {
         </div>
       )}
 
-      {/* Estado vazio */}
-      {!loading && arquivos.length === 0 && !erros.length && (
-        <div className="flex-1 flex flex-col items-center justify-center text-center py-16 md:flex-none md:py-6">
-          <svg className="w-12 h-12 text-[#2a2a2a] mb-4 md:w-8 md:h-8 md:mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <p className="text-[#444444] text-sm">Nenhum arquivo carregado</p>
-          <p className="text-[#333333] text-xs mt-1">Selecione um ou mais arquivos .RET do BMP para processar</p>
-        </div>
-      )}
-
       {loading && (
         <div className="flex-1 flex items-center justify-center py-16">
           <div className="text-center">
