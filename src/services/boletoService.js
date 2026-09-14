@@ -1968,9 +1968,10 @@ const getAllRegistrado = async () => {
   return all
 }
 
-// Carrega VR_TITULO/VENCIMENTO/CIC_CORRENTISTA de todos os registros do módulo
-// de Retornos (RET_CONTACAPT) — usado para saber se um título já "apareceu nos
-// retornos", independente de qual conta/cedente processou o retorno.
+// Carrega VR_TITULO/VENCIMENTO/CIC_CORRENTISTA/OCORRENCIA de todos os registros
+// do módulo de Retornos (RET_CONTACAPT) — usado para saber se um título já
+// "apareceu nos retornos", independente de qual conta/cedente processou o
+// retorno.
 //
 // IMPORTANTE: o cruzamento NÃO pode usar Nosso Número. Quando um título passa
 // por troca de cedente, o BMP atribui um Nosso Número novo (sequencial, sob a
@@ -1988,7 +1989,7 @@ const getAllRetContacaptKeys = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('RET_CONTACAPT')
-      .select('VR_TITULO, VENCIMENTO, CIC_CORRENTISTA')
+      .select('VR_TITULO, VENCIMENTO, CIC_CORRENTISTA, OCORRENCIA')
       .range(start, start + pageSize - 1)
     if (error) {
       console.error('[getAllRetContacaptKeys] erro:', error.message)
@@ -2039,11 +2040,13 @@ export const getBoletosImportadosUnificados = async (contaData) => {
     const boletos = boletosRes?.data || []
     const opeite = opeiteRes?.data || []
 
-    // Chaves (valor+vencimento+cic) presentes no módulo de Retornos (qualquer
-    // conta/cedente) — ver comentário em getAllRetContacaptKeys sobre por que
-    // não usamos Nosso Número aqui.
+    // Chaves (valor+vencimento+cic) presentes no módulo de Retornos com
+    // OCORRENCIA = '02' (entrada confirmada) — qualquer conta/cedente. Uma
+    // ocorrência '03' (rejeitado), por exemplo, NÃO conta como registrado,
+    // mesmo que o título apareça no arquivo de retorno.
     const retMatchKeySet = new Set(
       retKeyRows
+        .filter((r) => String(r.OCORRENCIA || '').trim() === '02')
         .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
         .filter(Boolean)
     )
