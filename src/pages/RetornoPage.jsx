@@ -1162,8 +1162,8 @@ export default function RetornoPage() {
 
       {/* Estado vazio */}
       {!loading && arquivos.length === 0 && !erros.length && (
-        <div className="flex-1 flex flex-col items-center justify-center text-center py-16">
-          <svg className="w-12 h-12 text-[#2a2a2a] mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-16 md:flex-none md:py-6">
+          <svg className="w-12 h-12 text-[#2a2a2a] mb-4 md:w-8 md:h-8 md:mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
           <p className="text-[#444444] text-sm">Nenhum arquivo carregado</p>
@@ -1341,16 +1341,16 @@ export default function RetornoPage() {
           </div>
         </div>
         <div className="overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg max-h-[50vh]">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead className="sticky top-0 bg-[#111111] border-b border-[#2a2a2a] z-10">
               <tr>
-                <th className="px-3 py-2 text-left w-8">
+                <th className="px-1.5 py-1 text-left w-6">
                   <input type="checkbox" checked={allSelSalvos} onChange={toggleSelAllSalvos} className="accent-green-500 cursor-pointer align-middle" />
                 </th>
                 {salvoCols.map(c => (
                   <th key={c.key}
                     onClick={() => toggleSortSalvos(c.key)}
-                    className={`px-3 py-2 text-xs font-semibold text-white whitespace-nowrap cursor-pointer select-none hover:text-green-400 ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
+                    className={`px-1.5 py-1 text-[11px] leading-tight font-semibold text-white whitespace-nowrap cursor-pointer select-none hover:text-green-400 ${c.align === 'right' ? 'text-right' : 'text-left'}`}>
                     {c.label}{sortSalvos.col === c.key ? (sortSalvos.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                   </th>
                 ))}
@@ -1358,42 +1358,42 @@ export default function RetornoPage() {
             </thead>
             <tbody>
               {salvosOrdenados.length === 0 && (
-                <tr><td colSpan={15} className="px-3 py-6 text-center text-[#555555] text-xs">Nenhum registro gravado ainda.</td></tr>
+                <tr><td colSpan={15} className="px-1.5 py-3 text-center text-[#555555] text-[11px]">Nenhum registro gravado ainda.</td></tr>
               )}
               {salvosOrdenados.map((r, i) => {
                 const k = keySalvo(r)
                 return (
                 <tr key={k + '|' + i} className="border-b border-[#1a1a1a] hover:bg-[#111111] transition">
-                  <td className="px-3 py-2">
+                  <td className="px-1.5 py-1 leading-tight">
                     <input type="checkbox" checked={selSalvos.has(k)} onChange={() => toggleSelSalvo(k)} className="accent-green-500 cursor-pointer align-middle" />
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.NUM_LANCA ? <span className="text-green-400">{r.NUM_LANCA}</span> : <span className="text-[#555555]">—</span>}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NOSSO_NUMERO || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.NUM_TITULO || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{formatDataBR(r.VENCIMENTO)}</td>
-                  <td className="px-3 py-2 text-white font-mono text-right text-xs whitespace-nowrap">{r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(r.NOME_CORRENTISTA || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] font-mono text-xs whitespace-nowrap">{(r.CIC_CORRENTISTA || '').trim() || '—'}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{(() => { const oc = (r.OCORRENCIA || '').trim(); return oc ? (OCORRENCIAS[oc] ? `${oc} - ${OCORRENCIAS[oc]}` : oc) : '—' })()}</td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs">
+                  <td className="px-1.5 py-1 leading-tight font-mono text-[11px] whitespace-nowrap">{r.NUM_LANCA ? <span className="text-green-400">{r.NUM_LANCA}</span> : <span className="text-[#555555]">—</span>}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] font-mono text-[11px] whitespace-nowrap">{(r.NOSSO_NUMERO || '').trim() || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] font-mono text-[11px] whitespace-nowrap">{(r.NUM_TITULO || '').trim() || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] whitespace-nowrap">{formatDataBR(r.VENCIMENTO)}</td>
+                  <td className="px-1.5 py-1 leading-tight text-white font-mono text-right text-[11px] whitespace-nowrap">{r.VR_TITULO != null ? formatValorBR(r.VR_TITULO) : '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] font-mono text-[11px] whitespace-nowrap">{(r.CONTA_CEDENTE || '').trim() || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] max-w-[110px] truncate" title={(r.NOME_CORRENTISTA || '').trim() || '—'}>{(r.NOME_CORRENTISTA || '').trim() || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] font-mono text-[11px] whitespace-nowrap">{(r.CIC_CORRENTISTA || '').trim() || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] max-w-[130px] truncate" title={(() => { const oc = (r.OCORRENCIA || '').trim(); return oc ? (OCORRENCIAS[oc] ? `${oc} - ${OCORRENCIAS[oc]}` : oc) : '—' })()}>{(() => { const oc = (r.OCORRENCIA || '').trim(); return oc ? (OCORRENCIAS[oc] ? `${oc} - ${OCORRENCIAS[oc]}` : oc) : '—' })()}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] max-w-[150px]">
                     {(() => {
                       const ms = motivosDeLinha(r.MOTIVO, (r.OCORRENCIA || '').trim())
-                      return ms.length ? ms.map((m, mi) => <div key={mi} className="whitespace-nowrap">{m}</div>) : '—'
+                      return ms.length ? ms.map((m, mi) => <div key={mi} className="truncate" title={m}>{m}</div>) : '—'
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap font-medium">
+                  <td className="px-1.5 py-1 leading-tight text-[11px] whitespace-nowrap font-medium">
                     {(() => {
                       const st = (r.STATUS || '').trim()
                       const cor = st === 'Pago' ? 'text-green-400' : st === 'Cancelado' ? 'text-red-400' : st === 'Registrado' ? 'text-blue-400' : 'text-[#555555]'
                       return <span className={cor}>{st || '—'}</span>
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-[#666666] text-xs whitespace-nowrap">
+                  <td className="px-1.5 py-1 leading-tight text-[#666666] text-[11px] whitespace-nowrap">
                     {r.created_at ? new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-[#a3a3a3] text-xs whitespace-nowrap">{opeiteStatusMap[String(r.NUM_LANCA || '').trim()] || '—'}</td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                  <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] whitespace-nowrap">{opeiteStatusMap[String(r.NUM_LANCA || '').trim()] || '—'}</td>
+                  <td className="px-1.5 py-1 leading-tight text-[11px] whitespace-nowrap">
                     {r.RETORNO
                       ? <button onClick={() => handleDownloadRet(r.RETORNO)} className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer" title={`Baixar ${r.RETORNO}`}>{(r.RETORNO || '').replace(/\.[^.]+$/, '')}</button>
                       : <span className="text-[#555555]">—</span>}
