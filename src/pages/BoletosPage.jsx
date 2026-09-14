@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import BoletoFormModal from '../components/Boletos/BoletoFormModal'
-import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus } from '../components/Boletos/BoletoTable'
+import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus, getCedenteStatus } from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
@@ -146,7 +146,7 @@ export default function BoletosPage() {
   // Filtro de flags por checkbox (Antecipa / Registro / Assina — todos iniciam marcados).
   // Regra: checkbox marcado = não filtra por essa flag (mostra os "sim" e os "não");
   // checkbox desmarcado = mostra somente os que NÃO têm aquela flag confirmada (estado "verde").
-  const [statusFlags, setStatusFlags] = useState({ antecipa: true, registro: true, assina: true })
+  const [statusFlags, setStatusFlags] = useState({ antecipa: true, registro: true, assina: true, cedente: true })
   const [efactorActive, setEfactorActive] = useState(false)
   const [contaCaptActive, setContaCaptActive] = useState(false)
   const [captReloadKey, setCaptReloadKey] = useState(0)
@@ -595,9 +595,11 @@ export default function BoletosPage() {
       const antecipado = getAntecipaStatus(boleto).color === 'green'
       const registrado = getContaStatus(boleto).color === 'green'
       const assinado = getAssinaStatus(boleto).color === 'green'
+      const cedenteVerde = getCedenteStatus(boleto).color === 'green'
       if (!statusFlags.antecipa && antecipado) return false
       if (!statusFlags.registro && registrado) return false
       if (!statusFlags.assina && assinado) return false
+      if (!statusFlags.cedente && cedenteVerde) return false
       return true
     })
 
@@ -2225,6 +2227,15 @@ export default function BoletosPage() {
                       />
                       <span className="text-xs text-white">Assina</span>
                     </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={statusFlags.cedente}
+                        onChange={(e) => setStatusFlags({ ...statusFlags, cedente: e.target.checked })}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Cedente</span>
+                    </label>
                   </div>
 
                   {/* Limpar filtros */}
@@ -2238,7 +2249,7 @@ export default function BoletosPage() {
                       setVrTituloInicio(''); setVrTituloFim('')
                       setCedenteFiltro(''); setOcorrenciaFiltro('')
                       setStatusChecks({ pago: false, cancelado: false, pendente: true })
-                      setStatusFlags({ antecipa: true, registro: true, assina: true })
+                      setStatusFlags({ antecipa: true, registro: true, assina: true, cedente: true })
                     }}
                     className="mt-3 w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
                   >

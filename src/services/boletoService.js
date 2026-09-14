@@ -1968,10 +1968,19 @@ const getAllRegistrado = async () => {
   return all
 }
 
-// Carrega só o NOSSO_NUMERO de todos os registros do módulo de Retornos
-// (RET_CONTACAPT) — usado para saber se um título já "apareceu nos retornos",
-// independente de qual conta/cedente processou o retorno.
-const getAllRetNossoNumeros = async () => {
+// Carrega VR_TITULO/VENCIMENTO/CIC_CORRENTISTA de todos os registros do módulo
+// de Retornos (RET_CONTACAPT) — usado para saber se um título já "apareceu nos
+// retornos", independente de qual conta/cedente processou o retorno.
+//
+// IMPORTANTE: o cruzamento NÃO pode usar Nosso Número. Quando um título passa
+// por troca de cedente, o BMP atribui um Nosso Número novo (sequencial, sob a
+// carteira/cedente da CAPT CAPITAL) — o Nosso Número original do cliente não
+// é reaproveitado. Isso vale para QUALQUER cliente que passe por troca de
+// cedente, não só os que geram Nosso Número "aleatório". Por isso usamos a
+// mesma chave robusta (valor+vencimento+CIC) já usada para cruzar
+// capt_registrado/OPEITE/capt_boletos entre si (_matchKey), que não muda com
+// a troca de cedente.
+const getAllRetContacaptKeys = async () => {
   let all = []
   let page = 0
   const pageSize = 1000
@@ -1979,10 +1988,10 @@ const getAllRetNossoNumeros = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('RET_CONTACAPT')
-      .select('NOSSO_NUMERO')
+      .select('VR_TITULO, VENCIMENTO, CIC_CORRENTISTA')
       .range(start, start + pageSize - 1)
     if (error) {
-      console.error('[getAllRetNossoNumeros] erro:', error.message)
+      console.error('[getAllRetContacaptKeys] erro:', error.message)
       break
     }
     if (!data || data.length === 0) break
@@ -2018,21 +2027,25 @@ export const getBoletosImportadosUnificados = async (contaData) => {
 
     // Carrega as fontes em paralelo. capt_registrado é carregada inteira pois o
     // vínculo é por chave (valor+venc+cic), não por cedente (ver getAllRegistrado).
-    // retNossoNumRows e captCapitalRes alimentam a coluna "Cedente" (troca de cedente).
-    const [boletosRes, registrados, opeiteRes, retNossoNumRows, captCapitalRes] = await Promise.all([
+    // retKeyRows e captCapitalRes alimentam a coluna "Cedente" (troca de cedente).
+    const [boletosRes, registrados, opeiteRes, retKeyRows, captCapitalRes] = await Promise.all([
       getBoletos(contaId),
       getAllRegistrado(),
       codCedente != null ? getOPEITEByCedente(codCedente) : Promise.resolve({ data: [] }),
-      getAllRetNossoNumeros(),
+      getAllRetContacaptKeys(),
       getContaCaptCapital(),
     ])
 
     const boletos = boletosRes?.data || []
     const opeite = opeiteRes?.data || []
 
-    // Nosso Números presentes no módulo de Retornos (qualquer conta/cedente)
-    const retNossoNumSet = new Set(
-      retNossoNumRows.map((r) => normNossoNumero(r.NOSSO_NUMERO)).filter(Boolean)
+    // Chaves (valor+vencimento+cic) presentes no módulo de Retornos (qualquer
+    // conta/cedente) — ver comentário em getAllRetContacaptKeys sobre por que
+    // não usamos Nosso Número aqui.
+    const retMatchKeySet = new Set(
+      retKeyRows
+        .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
+        .filter(Boolean)
     )
     // Nosso Números já registrados especificamente sob a CAPT CAPITAL (troca de
     // cedente concluída) — cruza capt_registrado.cod_cedente_titular com o cedente
@@ -2132,9 +2145,13 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       const captStatusEfactor = C ? C.status_efactor : null
       const captSituacao = C ? String(C.situacao || '').toLowerCase() : ''
 
-      // Nosso Número em comum entre as fontes, p/ cruzar com o módulo de Retornos
+      // Cruza com o módulo de Retornos por valor+vencimento+CIC (não por Nosso
+      // Número — ver comentário em getAllRetContacaptKeys).
+      const emRetornos = retMatchKeySet.has(merged._key)
+      // Nosso Número em comum entre as fontes capt/registrado/OPEITE, usado só
+      // para saber se o título já está registrado sob a própria CAPT CAPITAL
+      // (comparação dentro da mesma família de fontes, sem depender de retornos).
       const nnKey = normNossoNumero((C && C.nosso_numero) || (Rreg && Rreg.nosso_numero) || (O && O.nosso_numero) || merged.nosso_numero)
-      const emRetornos = !!(nnKey && retNossoNumSet.has(nnKey))
       const cedenteCaptRegistrado = !!(nnKey && captCedenteNossoNumSet.has(nnKey))
       merged._emRetornos = emRetornos
       merged._cedenteCaptRegistrado = cedenteCaptRegistrado
@@ -2143,10 +2160,13 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       // não tenha nenhum retorno.
       merged._cedenteLabel = cedenteCaptRegistrado ? 'Capt' : (emRetornos ? 'Retorno' : 'Não')
 
-      // Registrado: verde se o título aparece no módulo de Retornos (qualquer conta),
-      // amarelo se CNAB400 foi gerado (situacao='Remessa') mas ainda sem retorno,
+      // Registrado: verde se o título aparece no módulo de Retornos (qualquer conta)
+      // OU se capt_registrado já mostra o título sob o cedente da CAPT CAPITAL
+      // (troca de cedente concluída junto ao BMP, mesmo antes de um .RET chegar
+      // confirmando — ver cedenteCaptRegistrado). Amarelo se CNAB400 foi gerado
+      // (situacao='Remessa') mas ainda sem nenhuma das duas confirmações acima,
       // vermelho caso contrário.
-      merged._contaLabel = emRetornos
+      merged._contaLabel = (emRetornos || cedenteCaptRegistrado)
         ? 'Sim'
         : (captSituacao === 'remessa' ? 'Remessa' : 'Não')
 
