@@ -2050,6 +2050,17 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
         .filter(Boolean)
     )
+    // Chaves rejeitadas/canceladas no retorno (mesmas ocorrências tratadas como
+    // "Cancelado" em recomputarStatusRet: 03 rejeitado, 09/10/22/32/40 baixa/
+    // cancelamento). Usado só para não deixar o ícone "Registro" amarelo
+    // (aguardando) quando na verdade já veio uma rejeição — nesse caso vira
+    // vermelho, igual a um título nunca enviado.
+    const retRejeitadoKeySet = new Set(
+      retKeyRows
+        .filter((r) => ['03', '09', '10', '22', '32', '40'].includes(String(r.OCORRENCIA || '').trim()))
+        .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
+        .filter(Boolean)
+    )
     // Nosso Números já registrados especificamente sob a CAPT CAPITAL (troca de
     // cedente concluída) — cruza capt_registrado.cod_cedente_titular com o cedente
     // da conta CAPT CAPITAL.
@@ -2168,10 +2179,12 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       // (troca de cedente concluída junto ao BMP, mesmo antes de um .RET chegar
       // confirmando — ver cedenteCaptRegistrado). Amarelo se CNAB400 foi gerado
       // (situacao='Remessa') mas ainda sem nenhuma das duas confirmações acima,
-      // vermelho caso contrário.
+      // vermelho se rejeitado/cancelado no retorno (03/09/10/22/32/40) ou se
+      // simplesmente não há nenhuma confirmação ainda.
+      const rejeitadoNoRetorno = retRejeitadoKeySet.has(merged._key)
       merged._contaLabel = (emRetornos || cedenteCaptRegistrado)
         ? 'Sim'
-        : (captSituacao === 'remessa' ? 'Remessa' : 'Não')
+        : (rejeitadoNoRetorno ? 'Não' : (captSituacao === 'remessa' ? 'Remessa' : 'Não'))
 
       // Antecipado: verde se aparece em OPEITE (confirmado), amarelo se solicitado mas
       // ainda não está em OPEITE, vermelho se não solicitado.
