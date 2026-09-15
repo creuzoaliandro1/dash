@@ -2043,6 +2043,25 @@ const normNossoNumero = (v) => {
   return s.replace(/^0+/, '') || s
 }
 
+// Extrai a CONTA (base, 7 dígitos sem DV) da LINHA DIGITÁVEL (47 dígitos) do BMP 274.
+// O campo livre do código de barras é: agência(4) + "09" + nossoNúmero(11) + conta(8),
+// e a conta usa os 7 primeiros dígitos de CONTAS.conta (o 8º é o DV, gravado como 0).
+// Na linha digitável de 47 dígitos, esses 7 dígitos ficam nas posições 23–29 (0-based).
+// Ex.: 27490.00101 90038.640000 43096.046701 1 15400001901331 -> "0960467" (conta 09604679).
+// Usado para descobrir de qual PERFIL é um registro de capt_registrado (que é sempre
+// gravado sob a conta-mãe CAPT CAPITAL no cod_cedente_titular, logo esse campo não serve).
+const _contaBaseFromLinha = (linha) => {
+  const d = String(linha == null ? '' : linha).replace(/\D/g, '')
+  if (d.length < 30) return ''
+  return d.substring(23, 30)
+}
+
+// Situações de capt_registrado que DEVEM aparecer no modo Importados: apenas os
+// títulos ativos ("A Vencer" e "Vencido"). Pagos e cancelados (pelo cedente ou por
+// data limite) não entram como linha de registrado avulso.
+const _REG_SITUACAO_VISIVEL = new Set(['a vencer', 'vencido'])
+const _regSituacaoAtiva = (s) => _REG_SITUACAO_VISIVEL.has(String(s == null ? '' : s).trim().toLowerCase())
+
 // Motivos da ocorrência 03 (entrada rejeitada) que PROVAM que o título já está
 // registrado (rejeição por duplicidade): 09 (nosso número duplicado), 63 (entrada
 // para título já cadastrado) e 97 (código de barras já utilizado). O campo MOTIVO
@@ -2071,6 +2090,9 @@ export const getBoletosImportadosUnificados = async (contaData) => {
   try {
     const contaId = contaData?.id ?? null
     const cedenteTxt = contaData?.cedente ? String(contaData.cedente).trim() : ''
+    // Conta (base, 7 dígitos sem DV) do PERFIL ativo — usada para filtrar os registros
+    // avulsos de capt_registrado por perfil (via linha digitável, ver _contaBaseFromLinha).
+    const perfilContaBase = String(contaData?.conta || '').replace(/\D/g, '').substring(0, 7)
     const codCedente = contaData?.cod_cedente ?? null
 
     // Carrega as fontes em paralelo. capt_registrado é carregada inteira pois o
@@ -2190,6 +2212,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       id: `reg_${r.id}`,
       _ORIGEM: 'REGISTRADO',
       // NUM_LANCAMENTO só na duplicata mais antiga (as demais ficam sem LANC).
+      // Quando há duas vezes em capt_registrado, ambas aparecem (cada uma sua linha).
       num_lancamento: (_info && _info.oldestId === r.id) ? _info.lanca : null,
       created_at: r.created_at || r.dt_inclusao || null,
       data_emissao: r.dt_ems_tit || null,
@@ -2206,6 +2229,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       num_linha_digtvl: r.num_linha_digtvl || '',
       _situacaoReg: r.situacao_boleto || '',
       _cedenteTitular: String(r.cod_cedente_titular ?? '').trim(),
+      _contaLinha: _contaBaseFromLinha(r.num_linha_digtvl), // conta do perfil, extraída da linha digitável
       _key: _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr),
       }
     })
@@ -2322,25 +2346,47 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       const R = regByKey.get(k) || []
       const O = opeByKey.get(k) || []
       const C = captByKey.get(k) || []
-      const n = Math.max(R.length, O.length, C.length)
-      for (let i = 0; i < n; i++) {
-        const Ri = R[i] || null
-        const Oi = O[i] || null
-        const Ci = C[i] || null
 
-        // Visibilidade (regra do modo Importados): mostra a linha se
-        //  - está em capt_boletos, OU
-        //  - está em OPEITE (já filtrado DO/IN/PR), OU
-        //  - é um registrado AVULSO (sem capt/OPEITE), em QUALQUER situação
-        //    (Pago, A Vencer, Vencido, Cancelado…) e de QUALQUER cedente.
-        // O modo Importados é uma visão COMPLETA das três fontes (capt_boletos +
-        // OPEITE + capt_registrado). Como capt_registrado é registrada toda sob a
-        // conta-mãe (cod_cedente_titular único = CAPT CAPITAL), não dá para filtrar por
-        // cedente do perfil sem esconder tudo; então mostramos todos os registros
-        // (igual ao modo "Conta Capt"). As duplicatas aparecem todas — cada uma vira
-        // sua própria linha (o NUM_LANCAMENTO fica só na mais antiga, ver acima).
+      // Dentro de uma mesma chave (valor+vencimento+CIC), parear cada capt_boletos
+      // com o capt_registrado do MESMO NOSSO NÚMERO. Só assim os dois viram UMA
+      // linha (o título que foi gerado e depois apareceu registrado). Se o nosso
+      // número não bater (ex.: título re-registrado com nosso novo), boleto e
+      // registrado ficam em LINHAS SEPARADAS.
+      const triples = [] // cada item: { R, O, C } (qualquer um pode faltar)
+      const usedR = new Array(R.length).fill(false)
+      for (const c of C) {
+        const cn = normNossoNumero(c.nosso_numero)
+        let idx = -1
+        if (cn) idx = R.findIndex((r, i) => !usedR[i] && normNossoNumero(r.nosso_numero) === cn)
+        if (idx >= 0) { usedR[idx] = true; triples.push({ R: R[idx], O: null, C: c }) }
+        else triples.push({ R: null, O: null, C: c }) // boleto sem registrado de mesmo nosso
+      }
+      // capt_registrado que não casou com nenhum boleto (avulsos e duplicatas) — cada um vira linha.
+      R.forEach((r, i) => { if (!usedR[i]) triples.push({ R: r, O: null, C: null }) })
+
+      // OPEITE (Efactor) não tem nosso número: casa pela própria chave (valor+venc+CIC = k).
+      // Mescla no primeiro par existente ainda sem OPEITE; o que sobrar vira linha própria
+      // (OPEITE sempre aparece, tendo ou não correspondência).
+      let oi = 0
+      for (const t of triples) { if (oi < O.length) { t.O = O[oi]; oi++ } }
+      for (; oi < O.length; oi++) triples.push({ R: null, O: O[oi], C: null })
+
+      for (const t of triples) {
+        const Ri = t.R || null
+        const Oi = t.O || null
+        const Ci = t.C || null
+
+        // Visibilidade: mostra a linha se está em capt_boletos, OU em OPEITE, OU é um
+        // registrado AVULSO (sem capt/OPEITE) DO PERFIL ATIVO. Como capt_registrado é
+        // gravada sob a conta-mãe, o perfil dono do registro é descoberto pela CONTA
+        // embutida na linha digitável (_contaLinha) comparada à conta do perfil
+        // (perfilContaBase). Registrado de OUTRO perfil não vira linha (só entra se
+        // casar com um capt_boletos/OPEITE do perfil, aí serve p/ marcar CONTA=Sim).
+        // Só entra o registrado avulso ATIVO (A Vencer/Vencido) do perfil dono.
+        // Pago e Cancelado (pelo cedente/por data limite) não aparecem.
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
-
+          && !!perfilContaBase && Ri._contaLinha === perfilContaBase
+          && _regSituacaoAtiva(Ri._situacaoReg)
         if (!(Ci || Oi || registradoAvulsoVisivel)) continue
 
         rows.push(buildMerged(Ri, Oi, Ci))
