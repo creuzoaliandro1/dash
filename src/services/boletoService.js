@@ -1167,14 +1167,30 @@ export const uploadRemessaCNAB400 = async (contaId, filename, blobOuTexto) => {
 }
 
 // ── Arquivos de RETORNO (.ret) no Storage (bucket 'retornos') ────────────────
-// Chave determinística a partir do nome do arquivo (para casar upload/download).
+// Sanitiza um identificador para uso como caminho no Storage.
 export const retStorageKey = (nome) => String(nome || '').trim().replace(/[^\w.\-]+/g, '_') || 'retorno.ret'
 
-// Salva o conteúdo bruto de um .ret no bucket 'retornos' (upsert por nome).
-export const uploadRetFile = async (filename, texto) => {
+// Hash curto (FNV-1a, 8 hex) do conteúdo — usado para diferenciar arquivos.
+const _hash8Ret = (s) => {
+  let h = 0x811c9dc5
+  const str = String(s == null ? '' : s)
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+// Chave de storage ÚNICA POR CONTEÚDO: "<nome sanitizado>__<hash8>.ret". Assim,
+// dois arquivos de MESMO NOME mas conteúdo diferente são gravados SEPARADAMENTE
+// (não se sobrescrevem); conteúdo idêntico gera a mesma chave (dedup real).
+export const retFileStorageKey = (nome, texto) =>
+  retStorageKey(String(nome || 'retorno.ret').replace(/\.ret$/i, '')) + '__' + _hash8Ret(texto) + '.ret'
+
+// Salva o conteúdo bruto de um .ret no bucket 'retornos'. `chave` já deve ser a
+// chave de storage final (ex.: retFileStorageKey). upsert só sobrescreve quando a
+// chave é a mesma — e a chave inclui o hash do conteúdo, então só reescreve idêntico.
+export const uploadRetFile = async (chave, texto) => {
   try {
     if (!texto) throw new Error('Conteúdo do arquivo .ret não informado')
-    const key = retStorageKey(filename)
+    const key = retStorageKey(chave)
     const blob = texto instanceof Blob ? texto : new Blob([texto], { type: 'text/plain' })
     const { error } = await supabase.storage.from('retornos').upload(key, blob, { upsert: true, contentType: 'text/plain' })
     if (error) throw error
@@ -1185,22 +1201,26 @@ export const uploadRetFile = async (filename, texto) => {
   }
 }
 
-// Sobe vários .ret de uma vez: entradas = [{ nome, text }]
+// Sobe vários .ret de uma vez: entradas = [{ key, nome, text }] (key = chave de storage por conteúdo).
 export const uploadRetFiles = async (entradas) => {
   let ok = 0, falhas = 0
   for (const e of (entradas || [])) {
-    if (!e || !e.nome || !e.text) continue
-    const { error } = await uploadRetFile(e.nome, e.text)
+    const chave = e && (e.key || e.nome)
+    if (!chave || !e.text) continue
+    const { error } = await uploadRetFile(chave, e.text)
     if (error) falhas++; else ok++
   }
   return { ok, falhas }
 }
 
-// Gera URL assinada de download para um .ret salvo (por nome de arquivo).
-export const getDownloadUrlRet = async (filename) => {
+// Gera URL assinada de download. `storageKey` = chave no bucket (ARQUIVO_KEY do
+// registro; para linhas antigas cai no nome sanitizado). `downloadName` = nome
+// mostrado ao usuário no arquivo baixado.
+export const getDownloadUrlRet = async (storageKey, downloadName) => {
   try {
-    const key = retStorageKey(filename)
-    const { data, error } = await supabase.storage.from('retornos').createSignedUrl(key, 3600, { download: filename || key })
+    const key = retStorageKey(storageKey)
+    const nome = downloadName || String(storageKey || key).replace(/__[0-9a-f]{8}\.ret$/i, '.ret')
+    const { data, error } = await supabase.storage.from('retornos').createSignedUrl(key, 3600, { download: nome })
     if (error) throw error
     return { data: data.signedUrl, error: null }
   } catch (err) {
@@ -4188,7 +4208,7 @@ export const getRetContacapt = async () => {
     const ps = 1000; let from = 0; let all = []
     while (true) {
       const { data, error } = await supabase.from('RET_CONTACAPT')
-        .select('RETORNO, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, DT_OCORRENCIA, MOTIVO, VENCIMENTO, VR_TITULO, NUM_LANCA, NOME_CORRENTISTA, CIC_CORRENTISTA, STATUS, created_at, hash_dedup')
+        .select('RETORNO, ARQUIVO_KEY, CONTA_CEDENTE, NOSSO_NUMERO, NUM_TITULO, OCORRENCIA, DT_OCORRENCIA, MOTIVO, VENCIMENTO, VR_TITULO, NUM_LANCA, NOME_CORRENTISTA, CIC_CORRENTISTA, STATUS, created_at, hash_dedup')
         .order('created_at', { ascending: false, nullsFirst: false })
         .range(from, from + ps - 1)
       if (error) { console.warn('[getRetContacapt]', error.message); break }

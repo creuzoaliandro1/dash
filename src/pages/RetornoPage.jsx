@@ -3,7 +3,7 @@ import jsPDF from 'jspdf'
 import JSZip from 'jszip'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, retFileStorageKey, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -51,7 +51,7 @@ const normalizarLinhaBug = (line) => {
   return line.substring(0, 17) + novoBloco + line.substring(37)
 }
 
-const parseTipo1 = (line, arquivoNome) => {
+const parseTipo1 = (line, arquivoNome, arquivoKey) => {
   const linhaOriginal = line
   line = normalizarLinhaBug(line)
   const motivosRaw = g(line, 319, 328)
@@ -107,6 +107,10 @@ const parseTipo1 = (line, arquivoNome) => {
     isCaptCap: (line || '').startsWith('10259849652000148'),
     linhaRaw: linhaOriginal,
     arquivoNome,
+    arquivoKey: arquivoKey || arquivoNome,
+    // Identidade única da linha entre arquivos (inclui a chave de conteúdo do
+    // arquivo, então arquivos de mesmo nome não colidem nos maps internos).
+    _rid: (arquivoKey || arquivoNome) + '|' + g(line, 395, 400),
   }
 }
 
@@ -117,7 +121,7 @@ const parseHeader = (line) => ({
   dataGravacao: g(line, 95, 100),
 })
 
-const parseCNAB400Retorno = (text, arquivoNome) => {
+const parseCNAB400Retorno = (text, arquivoNome, arquivoKey) => {
   const lines = text.split(/\r?\n/).filter(l => l.length >= 100)
   let header = null
   let trailer = null
@@ -128,7 +132,7 @@ const parseCNAB400Retorno = (text, arquivoNome) => {
     if (tipo === '0') {
       header = parseHeader(line)
     } else if (tipo === '1') {
-      registros.push(parseTipo1(line, arquivoNome))
+      registros.push(parseTipo1(line, arquivoNome, arquivoKey))
     } else if (tipo === '9') {
       trailer = { tipo: '9' }
     }
@@ -287,7 +291,7 @@ const moneyDash = (v) => (v && Number(v) > 0) ? formatValorBR(v) : '—'
 const txtDash = (v) => (String(v ?? '').trim() || '—')
 
 // Monta a linha completa da RET_CONTACAPT a partir de um registro do .ret
-const montarLinhaRet = (reg, arquivoNome, numLanca, metodo) => {
+const montarLinhaRet = (reg, arquivoNome, numLanca, metodo, arquivoKey) => {
   const nn = (reg.nossoNumeroRaw || '').trim().slice(0, 12)
   const dtOco = parseDDMMAA(reg.dataOcorrencia)
   const venc = parseDDMMAA(reg.dataVencimento)
@@ -295,6 +299,7 @@ const montarLinhaRet = (reg, arquivoNome, numLanca, metodo) => {
   const num = numLanca != null ? String(numLanca) : null
   return {
     RETORNO: arquivoNome || null,
+    ARQUIVO_KEY: arquivoKey || reg.arquivoKey || null,
     TIPO_SACADO: reg.tipoSacado || null,
     CONTA_CEDENTE: reg.contaCedente || null,
     CARTEIRA: reg.carteiraRet || null,
@@ -631,10 +636,13 @@ export default function RetornoPage() {
     const novosArquivos = []
     for (const ent of entradas) {
       try {
-        const { header, trailer, registros } = parseCNAB400Retorno(ent.text, ent.nome)
+        // Chave ÚNICA POR CONTEÚDO: arquivos de mesmo nome mas conteúdo diferente
+        // recebem chaves diferentes e são tratados/gravados SEPARADAMENTE.
+        const key = retFileStorageKey(ent.nome, ent.text)
+        const { header, trailer, registros } = parseCNAB400Retorno(ent.text, ent.nome, key)
         if (!header) throw new Error('Header não encontrado')
         if (!registros.length) throw new Error('Sem registros de transação')
-        novosArquivos.push({ nome: ent.nome, text: ent.text, header, trailer, registros })
+        novosArquivos.push({ nome: ent.nome, key, text: ent.text, header, trailer, registros })
       } catch (e) {
         errosLista.push(`${ent.nome}: ${e.message}`)
       }
@@ -642,9 +650,11 @@ export default function RetornoPage() {
 
     if (errosLista.length) setErros(errosLista)
 
-    // Acumula com arquivos já carregados, ignorando duplicatas pelo nome
-    const nomeExistentes = new Set(arquivos.map(a => a.nome))
-    const novosUnicos = novosArquivos.filter(a => !nomeExistentes.has(a.nome))
+    // Acumula com arquivos já carregados, ignorando duplicatas apenas por CONTEÚDO
+    // (mesma chave = mesmo nome E mesmo conteúdo). Arquivos homônimos com conteúdo
+    // diferente têm chaves diferentes e ambos permanecem.
+    const keysExistentes = new Set(arquivos.map(a => a.key || a.nome))
+    const novosUnicos = novosArquivos.filter(a => !keysExistentes.has(a.key))
     const listaFinal = [...arquivos, ...novosUnicos]
     setArquivos(listaFinal)
     setSelectedRows(new Set())
@@ -668,11 +678,11 @@ export default function RetornoPage() {
     e.target.value = ''
   }
 
-  const removerArquivo = (nome) => {
-    const novo = arquivos.filter(a => a.nome !== nome)
+  const removerArquivo = (chave) => {
+    const novo = arquivos.filter(a => (a.key || a.nome) !== chave)
     setArquivos(novo)
     setSelectedRows(new Set())
-    if (filtroArquivo === nome) setFiltroArquivo('todos')
+    if (filtroArquivo === chave) setFiltroArquivo('todos')
     // Recalcula mapa
     const regs = novo.flatMap(a => a.registros)
     buscarBoletosDB(regs).then(setBoletosDB)
@@ -706,7 +716,7 @@ export default function RetornoPage() {
 
   const getLista = () => {
     let list = todosRegistros.map(enriquecer)
-    if (filtroArquivo !== 'todos') list = list.filter(r => r.arquivoNome === filtroArquivo)
+    if (filtroArquivo !== 'todos') list = list.filter(r => r.arquivoKey === filtroArquivo)
     if (filtroOcorrencia !== 'todos') list = list.filter(r => r.codigoOcorrencia === filtroOcorrencia)
     const term = searchTerm.trim().toLowerCase()
     if (term) list = list.filter(r =>
@@ -728,7 +738,7 @@ export default function RetornoPage() {
   const toggleAll = () => {
     const lista = getLista()
     if (selectedRows.size === lista.length && lista.length > 0) setSelectedRows(new Set())
-    else setSelectedRows(new Set(lista.map(r => r.arquivoNome + r.sequencial)))
+    else setSelectedRows(new Set(lista.map(r => r._rid)))
   }
 
   // ─── Contadores globais ──────────────────────────────────────────────────────
@@ -742,7 +752,7 @@ export default function RetornoPage() {
   const handleExportarPDF = () => {
     const lista = getLista()
     const paraExportar = selectedRows.size > 0
-      ? lista.filter(r => selectedRows.has(r.arquivoNome + r.sequencial))
+      ? lista.filter(r => selectedRows.has(r._rid))
       : lista
     if (!paraExportar.length) { alert('Nenhum registro para exportar'); return }
     setOpenActionsMenu(false)
@@ -813,13 +823,13 @@ export default function RetornoPage() {
     setOpenActionsMenu(false)
     const base = getLista()
     const alvo = selectedRows.size > 0
-      ? base.filter(r => selectedRows.has(r.arquivoNome + r.sequencial))
+      ? base.filter(r => selectedRows.has(r._rid))
       : base
     if (!alvo.length) { alert('Nenhum registro para processar.'); return }
     // Descarta linhas iguais entre RETs (mesmas posicoes 19-395), mantendo a da CAPT CAPITAL
     const vistos = new Map()
     for (const r of alvo) {
-      const k = r.dedupKey || (r.arquivoNome + r.sequencial)
+      const k = r.dedupKey || r._rid
       const atual = vistos.get(k)
       if (!atual) { vistos.set(k, r); continue }
       if (r.isCaptCap && !atual.isCaptCap) vistos.set(k, r)   // prioridade CAPT CAPITAL
@@ -829,7 +839,7 @@ export default function RetornoPage() {
     setProcessandoRet(true)
     try {
       const registros = alvoUnico.map(r => ({
-        chave: r.arquivoNome + r.sequencial,
+        chave: r._rid,
         nossoNumeroBD: r.nossoNumeroBD,
         nossoNumeroRaw: (r.nossoNumeroRaw || r.nossoNumero || '').trim(),
         valorCents: Math.round((r.valorTitulo || 0) * 100),
@@ -843,20 +853,26 @@ export default function RetornoPage() {
       let comLanc = 0
       res.forEach(x => { novo[x.chave] = { numLanca: x.numLanca, cic: x.cic, metodo: x.metodo }; numByChave[x.chave] = x.numLanca; metByChave[x.chave] = x.metodo; if (x.numLanca != null) comLanc++ })
       setVinculos(novo)
-      const rows = alvoUnico.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r.arquivoNome + r.sequencial], metByChave[r.arquivoNome + r.sequencial]))
+      const rows = alvoUnico.map(r => montarLinhaRet(r, r.arquivoNome, numByChave[r._rid], metByChave[r._rid], r.arquivoKey))
       // Resolve NOME_CORRENTISTA / CIC_CORRENTISTA cruzando OPEITE+SACADO / capt_boletos / capt_registrado / REGISTRADOS / REMESSAS
       try {
-        const itens = alvoUnico.map(r => ({ key: r.arquivoNome + r.sequencial, nosso: r.nossoNumeroBD, numLanca: numByChave[r.arquivoNome + r.sequencial] }))
+        const itens = alvoUnico.map(r => ({ key: r._rid, nosso: r.nossoNumeroBD, numLanca: numByChave[r._rid] }))
         const corr = await resolverCorrentistaRet(itens)
         rows.forEach((row, idx) => {
-          const c = corr[alvoUnico[idx].arquivoNome + alvoUnico[idx].sequencial]
+          const c = corr[alvoUnico[idx]._rid]
           if (c) { row.NOME_CORRENTISTA = c.nome; row.CIC_CORRENTISTA = c.cic; row.LINHA_DIGITAVEL = c.barcode }
         })
       } catch (e) { console.warn('[RetornoPage] resolverCorrentistaRet:', e?.message) }
-      // Salva os arquivos .ret no Storage (bucket 'retornos') para download posterior
+      // Salva os arquivos .ret no Storage (bucket 'retornos') para download posterior.
+      // Chaveado por CONTEÚDO (arquivoKey): arquivos homônimos ficam separados.
       try {
-        const nomes = [...new Set(alvoUnico.map(r => r.arquivoNome))]
-        const entradas = nomes.map(n => ({ nome: n, text: (arquivos.find(a => a.nome === n) || {}).text })).filter(e => e.text)
+        const porChave = new Map()
+        for (const r of alvoUnico) {
+          if (porChave.has(r.arquivoKey)) continue
+          const f = arquivos.find(a => (a.key || a.nome) === r.arquivoKey)
+          if (f && f.text) porChave.set(r.arquivoKey, { key: r.arquivoKey, nome: r.arquivoNome, text: f.text })
+        }
+        const entradas = [...porChave.values()]
         if (entradas.length) await uploadRetFiles(entradas)
       } catch (e) { console.warn('[RetornoPage] uploadRetFiles:', e?.message) }
       const grav = await gravarRetContacapt(rows)
@@ -885,12 +901,15 @@ export default function RetornoPage() {
     }
   }
 
-  const handleDownloadRet = async (nome) => {
-    if (!nome) return
+  // storageKey = ARQUIVO_KEY do registro (chave por conteúdo); para registros
+  // antigos sem ARQUIVO_KEY, cai no próprio nome (RETORNO). nome = rótulo do download.
+  const handleDownloadRet = async (storageKey, nome) => {
+    const chave = storageKey || nome
+    if (!chave) return
     try {
-      const { data, error } = await getDownloadUrlRet(nome)
+      const { data, error } = await getDownloadUrlRet(chave, nome)
       if (error || !data) { alert('Arquivo .ret não encontrado no armazenamento. Ele passa a ser salvo a partir de novos processamentos.'); return }
-      const a = document.createElement('a'); a.href = data; a.download = nome
+      const a = document.createElement('a'); a.href = data; a.download = nome || chave
       document.body.appendChild(a); a.click(); a.remove()
     } catch (e) { alert('Erro ao baixar o .ret: ' + (e?.message || e)) }
   }
@@ -953,14 +972,14 @@ export default function RetornoPage() {
         {arquivos.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2 max-h-[50vh] overflow-y-auto">
             {arquivos.map((a) => (
-              <div key={a.nome} className="flex items-center gap-2 bg-[#111111] border border-[#2a2a2a] rounded px-2.5 py-1">
+              <div key={a.key || a.nome} className="flex items-center gap-2 bg-[#111111] border border-[#2a2a2a] rounded px-2.5 py-1">
                 <svg className="w-3 h-3 text-[#666666]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
                 <span className="text-white text-xs">{a.nome}</span>
                 <span className="text-[#555555] text-xs">({a.registros.length} reg.)</span>
                 <button
-                  onClick={() => removerArquivo(a.nome)}
+                  onClick={() => removerArquivo(a.key || a.nome)}
                   className="text-[#555555] hover:text-white transition ml-1"
                   title="Remover"
                 >
@@ -990,7 +1009,7 @@ export default function RetornoPage() {
       {arquivos.length > 0 && (
         <div className="flex flex-wrap gap-3 max-h-[25vh] overflow-y-auto">
           {arquivos.map((a) => (
-            <div key={a.nome} className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-4 py-2 flex flex-col min-w-0">
+            <div key={a.key || a.nome} className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-4 py-2 flex flex-col min-w-0">
               <span className="text-[10px] text-[#666666] uppercase tracking-wider truncate max-w-[160px]" title={a.nome}>{a.nome}</span>
               <div className="flex items-center gap-3 mt-0.5">
                 <span className="text-white text-xs font-medium">{a.registros.length} registros</span>
@@ -1040,7 +1059,11 @@ export default function RetornoPage() {
               className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-sm focus:border-white outline-none"
             >
               <option value="todos">Todos os arquivos</option>
-              {arquivos.map(a => <option key={a.nome} value={a.nome}>{a.nome}</option>)}
+              {arquivos.map(a => {
+                const dup = arquivos.filter(x => x.nome === a.nome).length > 1
+                const suf = dup ? ` · #${(a.key || '').slice(-12, -8)}` : ''
+                return <option key={a.key || a.nome} value={a.key || a.nome}>{a.nome}{suf}</option>
+              })}
             </select>
           )}
 
@@ -1127,7 +1150,7 @@ export default function RetornoPage() {
             </thead>
             <tbody>
               {lista.map((r) => {
-                const key = r.arquivoNome + r.sequencial
+                const key = r._rid
                 const sel = selectedRows.has(key)
                 const nl = vinculos[key]?.numLanca
                 return (
@@ -1422,7 +1445,7 @@ export default function RetornoPage() {
                   <td className="px-1.5 py-1 leading-tight text-[#a3a3a3] text-[11px] whitespace-nowrap">{opeiteStatusMap[String(r.NUM_LANCA || '').trim()] || '—'}</td>
                   <td className="px-1.5 py-1 leading-tight text-[11px] whitespace-nowrap">
                     {r.RETORNO
-                      ? <button onClick={() => handleDownloadRet(r.RETORNO)} className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer" title={`Baixar ${r.RETORNO}`}>{(r.RETORNO || '').replace(/\.[^.]+$/, '')}</button>
+                      ? <button onClick={() => handleDownloadRet(r.ARQUIVO_KEY || r.RETORNO, r.RETORNO)} className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer" title={`Baixar ${r.RETORNO}`}>{(r.RETORNO || '').replace(/\.[^.]+$/, '')}</button>
                       : <span className="text-[#555555]">—</span>}
                   </td>
                 </tr>
