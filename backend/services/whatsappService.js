@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState } from '@whiskeysockets/baileys'
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -44,29 +44,49 @@ export const iniciarWhatsApp = async () => {
 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder)
 
+    // Fixa a versão do protocolo do WhatsApp (evita a conexão fechar com 405/515
+    // antes de emitir o QR). Se a busca falhar (rede), o Baileys usa a versão padrão.
+    let waVersion
+    try {
+      const info = await fetchLatestBaileysVersion()
+      waVersion = info?.version
+      console.log('[WhatsApp] Versão do WhatsApp:', Array.isArray(waVersion) ? waVersion.join('.') : waVersion)
+    } catch (e) {
+      console.warn('[WhatsApp] Não foi possível obter a versão do WhatsApp (usando padrão):', e?.message)
+    }
+
     sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
+      // NÃO usar printQRInTerminal (obsoleto no Baileys novo e exige o pacote
+      // qrcode-terminal). O QR é gerado aqui via 'qrcode' e servido para o front.
+      browser: ['Capt', 'Chrome', '120.0.0'],
+      ...(waVersion ? { version: waVersion } : {}),
     })
 
     sock.ev.on('creds.update', saveCreds)
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
+      console.log('[WhatsApp] connection.update →', connection || '(sem status)', '| qr?', !!qr)
 
       if (qr) {
         qrCode = qr
-        try { qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 }) }
-        catch { qrDataUrl = null }
+        try {
+          qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 })
+          console.log('[WhatsApp] QR Code gerado (dataURL pronto) - escaneie para conectar')
+        } catch (e) {
+          qrDataUrl = null
+          console.error('[WhatsApp] Falha ao gerar imagem do QR:', e?.message)
+        }
         conectado = false
-        console.log('[WhatsApp] QR Code gerado - escaneie para conectar')
       }
 
       if (connection === 'close') {
         conectado = false
         const statusCode = (lastDisconnect?.error)?.output?.statusCode
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-        console.log('[WhatsApp] Conexão fechada. Reconectando:', shouldReconnect)
+        console.log('[WhatsApp] Conexão fechada. statusCode:', statusCode,
+          '| motivo:', lastDisconnect?.error?.message, '| Reconectando:', shouldReconnect)
         iniciando = false
         if (shouldReconnect) {
           iniciarWhatsApp()

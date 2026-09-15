@@ -2147,26 +2147,50 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       _key: _matchKey(o.valor, o.data_vencimento, o.sacado_cic),
     }))
 
-    // LANC das linhas de capt_registrado: usa o NUM_LANCAMENTO (num_lanca) da
-    // própria tabela. Quando há DUPLICIDADE (várias linhas de capt_registrado com o
-    // mesmo valor+vencimento+CIC), todas devem exibir o MESMO lançamento — o mais
-    // antigo (menor num_lanca) do grupo. Assim as duplicatas aparecem todas, cada
-    // uma como sua própria linha, mas amarradas ao lançamento original.
-    const regOldestLancaByKey = new Map()
-    for (const r of registrados) {
-      const ln = (r.num_lanca == null || r.num_lanca === '') ? null : Number(r.num_lanca)
-      if (ln == null || isNaN(ln)) continue
-      const key = _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)
-      const cur = regOldestLancaByKey.get(key)
-      if (cur == null || ln < cur) regOldestLancaByKey.set(key, ln)
+    // LANC das linhas de capt_registrado. Quando há DUPLICIDADE (várias linhas de
+    // capt_registrado com o mesmo valor+vencimento+CIC), TODAS as duplicatas aparecem
+    // (cada uma como sua própria linha), mas o NUM_LANCAMENTO fica APENAS na linha do
+    // registro MAIS ANTIGO (o primeiro incluído). As demais duplicatas aparecem sem
+    // LANC. "Mais antigo" = menor dt_inclusao; desempate por created_at e nosso número.
+    // Registro único (sem duplicidade) é o próprio "mais antigo" e exibe seu num_lanca.
+    const _lancaNum = (v) => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v)
+    const _regOrd = (r) => [
+      String(r.dt_inclusao || '9999-12-31'),
+      String(r.created_at || '9999-12-31T23:59:59Z'),
+      String(r.identd_nosso_num || '').padStart(24, '0'),
+      String(r.id || ''),
+    ].join('|')
+    const _regLancaInfoByKey = new Map() // key -> { oldestId, lanca }
+    {
+      const byKey = new Map()
+      for (const r of registrados) {
+        const key = _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)
+        if (!byKey.has(key)) byKey.set(key, [])
+        byKey.get(key).push(r)
+      }
+      for (const [key, arr] of byKey) {
+        const oldest = arr.reduce((a, b) => (_regOrd(b) < _regOrd(a) ? b : a))
+        // Lançamento do grupo: o do mais antigo; se ele não tiver, usa o menor
+        // num_lanca não-nulo entre as duplicatas (o lançamento pertence ao mais antigo).
+        let lanca = _lancaNum(oldest.num_lanca)
+        if (lanca == null) {
+          for (const r of arr) {
+            const ln = _lancaNum(r.num_lanca)
+            if (ln != null && (lanca == null || ln < lanca)) lanca = ln
+          }
+        }
+        _regLancaInfoByKey.set(key, { oldestId: oldest.id, lanca })
+      }
     }
 
-    const regRecs = registrados.map((r) => ({
+    const regRecs = registrados.map((r) => {
+      const _info = _regLancaInfoByKey.get(_matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr))
+      return {
       _registrado_id: r.id,
       id: `reg_${r.id}`,
       _ORIGEM: 'REGISTRADO',
-      num_lancamento: regOldestLancaByKey.get(_matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr))
-        ?? ((r.num_lanca == null || r.num_lanca === '' || isNaN(Number(r.num_lanca))) ? null : Number(r.num_lanca)),
+      // NUM_LANCAMENTO só na duplicata mais antiga (as demais ficam sem LANC).
+      num_lancamento: (_info && _info.oldestId === r.id) ? _info.lanca : null,
       created_at: r.created_at || r.dt_inclusao || null,
       data_emissao: r.dt_ems_tit || null,
       numero_documento: r.numero_documento || r.num_doc_tit || '',
@@ -2183,7 +2207,8 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       _situacaoReg: r.situacao_boleto || '',
       _cedenteTitular: String(r.cod_cedente_titular ?? '').trim(),
       _key: _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr),
-    }))
+      }
+    })
 
     const regByKey = _indexByKey(regRecs)
     const opeByKey = _indexByKey(opeiteRecs)
@@ -2306,13 +2331,15 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         // Visibilidade (regra do modo Importados): mostra a linha se
         //  - está em capt_boletos, OU
         //  - está em OPEITE (já filtrado DO/IN/PR), OU
-        //  - é um registrado AVULSO (sem capt/OPEITE) do cedente do perfil ativo,
-        //    em QUALQUER situação (Pago, A Vencer, Vencido, Cancelado…). As duplicatas
-        //    de capt_registrado aparecem todas — cada linha é sua própria linha.
-        // capt_registrado de OUTRO cedente só entra quando casa com um título do perfil
-        // (capt/OPEITE) — aí serve apenas para marcar CONTA=Sim, sem virar linha própria.
+        //  - é um registrado AVULSO (sem capt/OPEITE), em QUALQUER situação
+        //    (Pago, A Vencer, Vencido, Cancelado…) e de QUALQUER cedente.
+        // O modo Importados é uma visão COMPLETA das três fontes (capt_boletos +
+        // OPEITE + capt_registrado). Como capt_registrado é registrada toda sob a
+        // conta-mãe (cod_cedente_titular único = CAPT CAPITAL), não dá para filtrar por
+        // cedente do perfil sem esconder tudo; então mostramos todos os registros
+        // (igual ao modo "Conta Capt"). As duplicatas aparecem todas — cada uma vira
+        // sua própria linha (o NUM_LANCAMENTO fica só na mais antiga, ver acima).
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
-          && Ri._cedenteTitular === cedenteTxt
 
         if (!(Ci || Oi || registradoAvulsoVisivel)) continue
 

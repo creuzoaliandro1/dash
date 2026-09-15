@@ -53,6 +53,17 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() })
 })
 
+// Raiz: página simples de status (evita 404 confuso ao abrir http://localhost:3001/).
+// As funcionalidades ficam nas rotas /api/... — em especial /api/whatsapp/status.
+app.get('/', (req, res) => {
+  res.type('html').send(
+    '<h2>Capt backend • online</h2>' +
+    '<p>Servidor rodando na porta ' + PORT + '.</p>' +
+    '<p>Status do WhatsApp: <a href="/api/whatsapp/status">/api/whatsapp/status</a></p>' +
+    '<p>O QR code para conectar aparece na <b>página WhatsApp dentro do app</b> (botão Conectar), não aqui.</p>'
+  )
+})
+
 // ==================
 // ROUTES: BOLETOS EXISTENTES
 // ==================
