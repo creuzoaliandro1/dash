@@ -15,6 +15,7 @@ import CadastroPage from './pages/CadastroPage'
 import ContaBmpPage from './pages/ContaBmpPage'
 import BoletosBmpPage from './pages/BoletosBmpPage'
 import SincronizarPage from './pages/SincronizarPage'
+import WhatsAppPage from './pages/WhatsAppPage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -86,6 +87,7 @@ export default function App() {
       {currentPage === 'cadastro' && isMaster && <CadastroPage />}
       {currentPage === 'conta-bmp' && isMaster && <ContaBmpPage />}
       {currentPage === 'boletos-bmp' && isMaster && <BoletosBmpPage />}
+      {currentPage === 'whatsapp' && isMaster && <WhatsAppPage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>

@@ -17,6 +17,7 @@ import {
 import {
   iniciarWhatsApp,
   enviarMensagemWhatsApp,
+  enviarDocumentoWhatsApp,
   obterStatusWhatsApp,
   desconectarWhatsApp,
 } from './services/whatsappService.js'
@@ -395,6 +396,22 @@ app.post('/api/whatsapp/enviar', express.json(), async (req, res) => {
   }
 })
 
+// Enviar documento (PDF) via WhatsApp — usado por TODOS os usuários (envio sai do
+// único WhatsApp master conectado no backend). Body: { telefone, base64, filename, caption }
+app.post('/api/whatsapp/enviar-documento', express.json({ limit: '25mb' }), async (req, res) => {
+  try {
+    const { telefone, base64, filename, caption } = req.body
+    if (!telefone || !base64) {
+      return res.status(400).json({ sucesso: false, erro: 'Telefone e documento (base64) são obrigatórios' })
+    }
+    const resultado = await enviarDocumentoWhatsApp(telefone, base64, filename, caption)
+    res.json({ sucesso: true, resultado })
+  } catch (error) {
+    console.error('[WhatsApp SendDoc] Erro:', error)
+    res.status(500).json({ sucesso: false, erro: error.message })
+  }
+})
+
 app.post('/api/whatsapp/desconectar', async (req, res) => {
   try {
     await desconectarWhatsApp()
@@ -445,6 +462,7 @@ app.listen(PORT, () => {
     - POST   /api/whatsapp/iniciar              (autenticar via QR)
     - GET    /api/whatsapp/status               (verificar conexão)
     - POST   /api/whatsapp/enviar               (enviar mensagem)
+    - POST   /api/whatsapp/enviar-documento     (enviar PDF)
     - POST   /api/whatsapp/desconectar          (desconectar)
 
   Teste com curl:

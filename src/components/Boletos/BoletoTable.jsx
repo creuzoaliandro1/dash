@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { generateSingleBoletoPDF } from '../../utils/boleto'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../../utils/duplicata'
 import { generateBorderoPDF } from '../../utils/bordero'
+import EnviarDocumentoModal from './EnviarDocumentoModal'
 import { generateNotaFiscalPdfFromXML } from '../../utils/notaFiscal'
 import { getContaInfo, getBorderoData, getAnexosBoleto, getDownloadUrlAnexo, getBoletosComXMLAnexado } from '../../services/boletoService'
 import { supabase } from '../../lib/supabase'
@@ -92,6 +93,8 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
   const setRows = isControlled ? onSelectedRowsChange : setLocalSelectedRows
 
   const [openMenu, setOpenMenu] = useState(null)
+  // Boleto selecionado para envio (E-mail/WhatsApp) via modal
+  const [enviarBoleto, setEnviarBoleto] = useState(null)
   const menuRef = useRef(null)
 
   // Estado para o modal de detalhes
@@ -627,6 +630,12 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
                           2ª via do boleto
                         </button>
                         <button
+                          onClick={() => { setEnviarBoleto(boleto); setOpenMenu(null) }}
+                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                        >
+                          📤 Enviar
+                        </button>
+                        <button
                           onClick={() => handleGenerateDuplicata(boleto)}
                           className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
                         >
@@ -835,6 +844,14 @@ export default function BoletoTable({ boletos, onEdit, onDelete, selectedRows: p
               </div>
             </div>
           </div>
+        )}
+
+        {enviarBoleto && (
+          <EnviarDocumentoModal
+            boleto={enviarBoleto}
+            contaData={contaData}
+            onClose={() => setEnviarBoleto(null)}
+          />
         )}
     </div>
   )

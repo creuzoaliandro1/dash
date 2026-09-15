@@ -13,6 +13,7 @@ import { buildDuplicatasBoletosBlob, buildBorderoBlobs, buildPdfCompletoSemBolet
 import { enviarLinkBorderoWhatsApp } from '../utils/whatsappUtils'
 import ZapsignModal from '../components/Boletos/ZapsignModal'
 import ContaRegistradoTable from '../components/Boletos/ContaRegistradoTable'
+import EnviarDocumentoModal from '../components/Boletos/EnviarDocumentoModal'
 
 // Codigos de ocorrencia do retorno CNAB400 (BMP) — usados no filtro de Ocorrencia.
 const OCORRENCIAS = {
@@ -74,6 +75,8 @@ export default function BoletosPage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  // Boleto selecionado para envio (E-mail/WhatsApp) via menu Ações
+  const [enviarBoleto, setEnviarBoleto] = useState(null)
   const [generatingZip, setGeneratingZip] = useState(false)
   const [generatingCNAB400, setGeneratingCNAB400] = useState(false)
   const [cnab400Confirm, setCnab400Confirm] = useState(null) // { titulos, tipoOperacao, boletosParaRemessa }
@@ -682,6 +685,20 @@ export default function BoletosPage() {
     // Recarregar dados
     loadBoletos()
     loadContaData()
+  }
+
+  // Enviar (E-mail/WhatsApp) — abre o modal para UM boleto selecionado.
+  const handleEnviarSelecionado = () => {
+    if (selectedRows.size !== 1) {
+      alert('Selecione exatamente um boleto para enviar.')
+      return
+    }
+    const filteredBoletos = getFilteredBoletos()
+    const idx = Array.from(selectedRows)[0]
+    const boleto = filteredBoletos[idx]
+    if (!boleto) { alert('Boleto não encontrado.'); return }
+    setOpenActionsMenu(false)
+    setEnviarBoleto(boleto)
   }
 
   const handleGenerateSecondViaZip = async () => {
@@ -1924,6 +1941,12 @@ export default function BoletosPage() {
                     {generatingZip ? '⏳ Gerando ZIP...' : '📥 Gerar segunda via (ZIP)'}
                   </button>
                   <button
+                    onClick={handleEnviarSelecionado}
+                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a]"
+                  >
+                    📤 Enviar (E-mail / WhatsApp)
+                  </button>
+                  <button
                     onClick={handleAntecipacao}
                     disabled={processandoAntecipacao}
                     className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition border-b border-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2568,6 +2591,14 @@ export default function BoletosPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {enviarBoleto && (
+        <EnviarDocumentoModal
+          boleto={enviarBoleto}
+          contaData={contaData}
+          onClose={() => setEnviarBoleto(null)}
+        />
       )}
     </div>
   )
