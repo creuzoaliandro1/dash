@@ -2063,14 +2063,15 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
         .filter(Boolean)
     )
-    // Chaves rejeitadas/canceladas no retorno (mesmas ocorrências tratadas como
-    // "Cancelado" em recomputarStatusRet: 03 rejeitado, 09/10/22/32/40 baixa/
-    // cancelamento). Usado só para não deixar o ícone "Registro" amarelo
-    // (aguardando) quando na verdade já veio uma rejeição — nesse caso vira
-    // vermelho, igual a um título nunca enviado.
+    // Chaves canceladas no retorno (baixa/estorno: 09/10/22/32/40). A ocorrência
+    // 03 (entrada rejeitada) NÃO entra aqui: ela é informativa — diz apenas se o
+    // registro DAQUELA remessa foi aceito — e não interfere num título que já foi
+    // registrado por um 02 (ex.: 03 "código de barras já utilizado" ao reenviar um
+    // título já registrado). Usado só para não deixar o ícone "Registro" amarelo
+    // (aguardando) quando na verdade já veio uma baixa/cancelamento — vira vermelho.
     const retRejeitadoKeySet = new Set(
       retKeyRows
-        .filter((r) => ['03', '09', '10', '22', '32', '40'].includes(String(r.OCORRENCIA || '').trim()))
+        .filter((r) => ['09', '10', '22', '32', '40'].includes(String(r.OCORRENCIA || '').trim()))
         .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
         .filter(Boolean)
     )
@@ -2192,8 +2193,9 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       // (troca de cedente concluída junto ao BMP, mesmo antes de um .RET chegar
       // confirmando — ver cedenteCaptRegistrado). Amarelo se CNAB400 foi gerado
       // (situacao='Remessa') mas ainda sem nenhuma das duas confirmações acima,
-      // vermelho se rejeitado/cancelado no retorno (03/09/10/22/32/40) ou se
-      // simplesmente não há nenhuma confirmação ainda.
+      // vermelho se baixado/cancelado no retorno (09/10/22/32/40) ou se
+      // simplesmente não há nenhuma confirmação ainda. A ocorrência 03 (entrada
+      // rejeitada) é informativa e NÃO derruba um título já registrado por um 02.
       const rejeitadoNoRetorno = retRejeitadoKeySet.has(merged._key)
       merged._contaLabel = (emRetornos || cedenteCaptRegistrado)
         ? 'Sim'
@@ -3911,19 +3913,25 @@ export const getOpeiteStatusMap = async (lancas) => {
   return map
 }
 
-// STATUS do registro (fluxo dos .ret): 02=Registrado; 06/17=Pago; 03/09/10/22/32/40=Cancelado; demais=informativa (não define).
+// STATUS do registro (fluxo dos .ret): 02=Registrado; 06/17=Pago; 09/10/22/32/40=Cancelado; demais=informativa (não define).
+// A ocorrência 03 (entrada rejeitada) é INFORMATIVA: diz apenas se o registro DAQUELA
+// remessa foi aceito ou não, e NÃO altera estado — não cancela um título já registrado
+// por um 02 nem registra por si (ex.: 03 "código de barras já utilizado" ao reenviar um
+// título que já estava registrado). Quem define "Registrado" é sempre a ocorrência 02.
 const _catStatusOcorrencia = (oc) => {
   const c = String(oc == null ? '' : oc).trim()
   if (c === '02') return 'Registrado'
   if (c === '06' || c === '17') return 'Pago'
-  if (['03','09','10','22','32','40'].includes(c)) return 'Cancelado'
+  if (['09','10','22','32','40'].includes(c)) return 'Cancelado'
   return null
 }
 
 // Recalcula RET_CONTACAPT.STATUS de TODOS os registros com base no fluxo dos .ret.
 // Agrupa por NOSSO_NUMERO + CONTA_CEDENTE; STATUS = categoria da ocorrência mais
 // recente (DT_OCORRENCIA, desempate created_at) que define estado. Registros sem
-// nosso número (ex.: 03 rejeitada) usam a própria ocorrência. Atualiza só o que mudou.
+// nosso número usam a própria ocorrência. A 03 (rejeitada) é informativa e não
+// define estado (ver _catStatusOcorrencia), então um grupo só com 03 fica sem STATUS.
+// Atualiza só o que mudou.
 export const recomputarStatusRet = async () => {
   const ps = 1000; let from = 0; let rows = []
   while (true) {
