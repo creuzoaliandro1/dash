@@ -1987,7 +1987,7 @@ const getAllRegistrado = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('capt_registrado')
-      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular')
+      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular, num_lanca')
       .range(start, start + pageSize - 1)
     if (error) {
       console.error('[getAllRegistrado] erro:', error.message)
@@ -2147,11 +2147,26 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       _key: _matchKey(o.valor, o.data_vencimento, o.sacado_cic),
     }))
 
+    // LANC das linhas de capt_registrado: usa o NUM_LANCAMENTO (num_lanca) da
+    // própria tabela. Quando há DUPLICIDADE (várias linhas de capt_registrado com o
+    // mesmo valor+vencimento+CIC), todas devem exibir o MESMO lançamento — o mais
+    // antigo (menor num_lanca) do grupo. Assim as duplicatas aparecem todas, cada
+    // uma como sua própria linha, mas amarradas ao lançamento original.
+    const regOldestLancaByKey = new Map()
+    for (const r of registrados) {
+      const ln = (r.num_lanca == null || r.num_lanca === '') ? null : Number(r.num_lanca)
+      if (ln == null || isNaN(ln)) continue
+      const key = _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)
+      const cur = regOldestLancaByKey.get(key)
+      if (cur == null || ln < cur) regOldestLancaByKey.set(key, ln)
+    }
+
     const regRecs = registrados.map((r) => ({
       _registrado_id: r.id,
       id: `reg_${r.id}`,
       _ORIGEM: 'REGISTRADO',
-      num_lancamento: null,
+      num_lancamento: regOldestLancaByKey.get(_matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr))
+        ?? ((r.num_lanca == null || r.num_lanca === '' || isNaN(Number(r.num_lanca))) ? null : Number(r.num_lanca)),
       created_at: r.created_at || r.dt_inclusao || null,
       data_emissao: r.dt_ems_tit || null,
       numero_documento: r.numero_documento || r.num_doc_tit || '',
@@ -2181,7 +2196,12 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       // não pode ditar exibição/status nem mascarar um capt_boletos/OPEITE que
       // precisa ser gerado (registrado) novamente. Tratamos como se não houvesse
       // registrado, deixando o boleto ativo reaparecer com CONTA="Não".
-      const Rreg = (R && String(R._situacaoReg || '').toLowerCase() === 'cancelado') ? null : R
+      // Só "anula" um registrado cancelado quando há uma fonte alternativa (OPEITE
+      // ou capt_boletos) para assumir a exibição — evitando que um cancelado mascare
+      // um título ativo que precisa ser re-registrado. Se o registrado for AVULSO
+      // (sem OPEITE/capt), ele é exibido em qualquer situação (inclusive cancelado),
+      // conforme a regra do modo Importados.
+      const Rreg = (R && String(R._situacaoReg || '').toLowerCase() === 'cancelado' && (O || C)) ? null : R
       const primary = Rreg || O || C     // fonte dos campos de exibição (prioridade)
       const base = C || primary          // base p/ identidade e ações (capt é editável)
       const merged = { ...base }
@@ -2286,12 +2306,13 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         // Visibilidade (regra do modo Importados): mostra a linha se
         //  - está em capt_boletos, OU
         //  - está em OPEITE (já filtrado DO/IN/PR), OU
-        //  - é um registrado AVULSO (sem capt/OPEITE) "A Vencer" do cedente do perfil ativo.
+        //  - é um registrado AVULSO (sem capt/OPEITE) do cedente do perfil ativo,
+        //    em QUALQUER situação (Pago, A Vencer, Vencido, Cancelado…). As duplicatas
+        //    de capt_registrado aparecem todas — cada linha é sua própria linha.
         // capt_registrado de OUTRO cedente só entra quando casa com um título do perfil
         // (capt/OPEITE) — aí serve apenas para marcar CONTA=Sim, sem virar linha própria.
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
           && Ri._cedenteTitular === cedenteTxt
-          && Ri._situacaoReg === 'A Vencer'
 
         if (!(Ci || Oi || registradoAvulsoVisivel)) continue
 
