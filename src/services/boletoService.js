@@ -2002,7 +2002,7 @@ const getAllRetContacaptKeys = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('RET_CONTACAPT')
-      .select('VR_TITULO, VENCIMENTO, CIC_CORRENTISTA, OCORRENCIA')
+      .select('VR_TITULO, VENCIMENTO, CIC_CORRENTISTA, OCORRENCIA, MOTIVO')
       .range(start, start + pageSize - 1)
     if (error) {
       console.error('[getAllRetContacaptKeys] erro:', error.message)
@@ -2021,6 +2021,20 @@ const getAllRetContacaptKeys = async () => {
 const normNossoNumero = (v) => {
   const s = String(v == null ? '' : v).replace(/\D/g, '')
   return s.replace(/^0+/, '') || s
+}
+
+// Motivos da ocorrência 03 (entrada rejeitada) que PROVAM que o título já está
+// registrado (rejeição por duplicidade): 09 (nosso número duplicado), 63 (entrada
+// para título já cadastrado) e 97 (código de barras já utilizado). O campo MOTIVO
+// vem como até 5 códigos de 2 dígitos concatenados (ex.: "9700000000" = 97);
+// testamos cada par de 2 dígitos, não substring. Retorna true se algum for de duplicidade.
+const _MOTIVOS_JA_REGISTRADO = new Set(['09', '63', '97'])
+const _motivoJaRegistrado = (motivo) => {
+  const s = String(motivo == null ? '' : motivo)
+  for (let i = 0; i + 2 <= s.length; i += 2) {
+    if (_MOTIVOS_JA_REGISTRADO.has(s.substring(i, i + 2))) return true
+  }
+  return false
 }
 
 // Indexa um array de registros (já no formato unificado) por _key
@@ -2054,12 +2068,24 @@ export const getBoletosImportadosUnificados = async (contaData) => {
     const opeite = opeiteRes?.data || []
 
     // Chaves (valor+vencimento+cic) presentes no módulo de Retornos com
-    // OCORRENCIA = '02' (entrada confirmada) — qualquer conta/cedente. Uma
-    // ocorrência '03' (rejeitado), por exemplo, NÃO conta como registrado,
-    // mesmo que o título apareça no arquivo de retorno.
+    // OCORRENCIA = '02' (entrada confirmada) — qualquer conta/cedente. Quem define
+    // "Registrado" é sempre o 02; um 03 (rejeitado) de motivo comum NÃO registra.
     const retMatchKeySet = new Set(
       retKeyRows
         .filter((r) => String(r.OCORRENCIA || '').trim() === '02')
+        .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
+        .filter(Boolean)
+    )
+    // Chaves cujo retorno PROVA que o título já está registrado, mesmo sem um 02 na
+    // base (o 02 original pode não ter sido importado e o título pode não estar no
+    // relatório BTG — cliente que não fez troca de cedente). São ocorrências 03
+    // (entrada rejeitada) cujo MOTIVO é de duplicidade: 09 (nosso número duplicado),
+    // 63 (entrada para título já cadastrado) ou 97 (código de barras já utilizado).
+    // Contam como registrado (verde), igual a um 02. Demais motivos de 03 (ex.: 95
+    // saldo insuficiente, erros de dados) são rejeição real e NÃO entram aqui.
+    const retJaRegistradoKeySet = new Set(
+      retKeyRows
+        .filter((r) => String(r.OCORRENCIA || '').trim() === '03' && _motivoJaRegistrado(r.MOTIVO))
         .map((r) => _matchKey(r.VR_TITULO, r.VENCIMENTO, r.CIC_CORRENTISTA))
         .filter(Boolean)
     )
@@ -2175,7 +2201,9 @@ export const getBoletosImportadosUnificados = async (contaData) => {
 
       // Cruza com o módulo de Retornos por valor+vencimento+CIC (não por Nosso
       // Número — ver comentário em getAllRetContacaptKeys).
-      const emRetornos = retMatchKeySet.has(merged._key)
+      // Registrado pelo retorno: tem um 02 (retMatchKeySet) OU uma 03 de duplicidade
+      // que prova registro prévio (retJaRegistradoKeySet: motivos 09/63/97).
+      const emRetornos = retMatchKeySet.has(merged._key) || retJaRegistradoKeySet.has(merged._key)
       // Nosso Número em comum entre as fontes capt/registrado/OPEITE, usado só
       // para saber se o título já está registrado sob a própria CAPT CAPITAL
       // (comparação dentro da mesma família de fontes, sem depender de retornos).
@@ -3914,29 +3942,32 @@ export const getOpeiteStatusMap = async (lancas) => {
 }
 
 // STATUS do registro (fluxo dos .ret): 02=Registrado; 06/17=Pago; 09/10/22/32/40=Cancelado; demais=informativa (não define).
-// A ocorrência 03 (entrada rejeitada) é INFORMATIVA: diz apenas se o registro DAQUELA
-// remessa foi aceito ou não, e NÃO altera estado — não cancela um título já registrado
-// por um 02 nem registra por si (ex.: 03 "código de barras já utilizado" ao reenviar um
-// título que já estava registrado). Quem define "Registrado" é sempre a ocorrência 02.
-const _catStatusOcorrencia = (oc) => {
+// A ocorrência 03 (entrada rejeitada) NUNCA cancela — ela diz só se o registro DAQUELA
+// remessa foi aceito. Porém, quando o MOTIVO da 03 é de duplicidade (09 nosso número
+// duplicado, 63 título já cadastrado, 97 código de barras já utilizado), ela PROVA que o
+// título já está registrado → conta como Registrado (mesmo sem um 02 na base). Os demais
+// motivos de 03 (ex.: 95 saldo insuficiente) são rejeição real e ficam informativos.
+const _catStatusOcorrencia = (oc, motivo) => {
   const c = String(oc == null ? '' : oc).trim()
   if (c === '02') return 'Registrado'
   if (c === '06' || c === '17') return 'Pago'
   if (['09','10','22','32','40'].includes(c)) return 'Cancelado'
+  if (c === '03' && _motivoJaRegistrado(motivo)) return 'Registrado'
   return null
 }
 
 // Recalcula RET_CONTACAPT.STATUS de TODOS os registros com base no fluxo dos .ret.
 // Agrupa por NOSSO_NUMERO + CONTA_CEDENTE; STATUS = categoria da ocorrência mais
 // recente (DT_OCORRENCIA, desempate created_at) que define estado. Registros sem
-// nosso número usam a própria ocorrência. A 03 (rejeitada) é informativa e não
-// define estado (ver _catStatusOcorrencia), então um grupo só com 03 fica sem STATUS.
+// nosso número usam a própria ocorrência. A 03 (rejeitada) nunca cancela; só define
+// estado quando o motivo é de duplicidade (09/63/97 → Registrado, ver
+// _catStatusOcorrencia). Grupo só com 03 de motivo comum fica sem STATUS.
 // Atualiza só o que mudou.
 export const recomputarStatusRet = async () => {
   const ps = 1000; let from = 0; let rows = []
   while (true) {
     const { data, error } = await supabase.from('RET_CONTACAPT')
-      .select('hash_dedup, NOSSO_NUMERO, CONTA_CEDENTE, OCORRENCIA, DT_OCORRENCIA, created_at, STATUS')
+      .select('hash_dedup, NOSSO_NUMERO, CONTA_CEDENTE, OCORRENCIA, MOTIVO, DT_OCORRENCIA, created_at, STATUS')
       .range(from, from + ps - 1)
     if (error) { console.warn('[recomputarStatusRet]', error.message); break }
     if (!data || !data.length) break
@@ -3956,7 +3987,7 @@ export const recomputarStatusRet = async () => {
   for (const k of Object.keys(grupos)) {
     let best = null
     for (const r of grupos[k]) {
-      const cat = _catStatusOcorrencia(r.OCORRENCIA); if (!cat) continue
+      const cat = _catStatusOcorrencia(r.OCORRENCIA, r.MOTIVO); if (!cat) continue
       const dto = String(r.DT_OCORRENCIA || ''); const cr = String(r.created_at || '')
       if (!best || dto > best.dto || (dto === best.dto && cr > best.cr)) best = { cat, dto, cr }
     }
@@ -3995,7 +4026,9 @@ export const recomputarStatusRet = async () => {
   let atualizados = 0
   for (const key of Object.keys(porNovo)) {
     const val = key === '__NULL__' ? null : key
-    for (const c of _cnabChunk(porNovo[key], 150)) {
+    // chunk pequeno: hash_dedup é a linha inteira (~400 chars) e vai no filtro
+    // in.(...) da URL — muitos de uma vez estouram o limite de tamanho (400 Bad Request).
+    for (const c of _cnabChunk(porNovo[key], 15)) {
       const { error } = await supabase.from('RET_CONTACAPT').update({ STATUS: val }).in('hash_dedup', c)
       if (error) console.warn('[recomputarStatusRet] update', error.message)
       else atualizados += c.length
@@ -4112,33 +4145,41 @@ export const vincularRetornoOpeite = async (registros) => {
 export const gravarRetContacapt = async (linhas) => {
   const rows = (linhas || []).filter(Boolean)
   if (!rows.length) return { inseridos: 0, pulados: 0, error: null }
-  const hashes = [...new Set(rows.map(l => l.hash_dedup).filter(Boolean))]
-  const existentes = new Set()
-  for (const c of _cnabChunk(hashes, 300)) {
-    const { data, error } = await supabase.from('RET_CONTACAPT').select('hash_dedup').in('hash_dedup', c)
-    if (!error) (data || []).forEach(x => existentes.add(x.hash_dedup))
-  }
+  // Dedup DENTRO do próprio lote (linhas idênticas no mesmo arquivo). A dedup
+  // contra o que já está no banco é feita pelo próprio UPSERT abaixo — NÃO por um
+  // GET .in() prévio: hash_dedup é a linha inteira do .ret (~400 chars) e um
+  // in.(centenas dessas) estoura o tamanho da URL (400 Bad Request), o erro era
+  // engolido e o app acabava reinserindo tudo (→ 409 duplicate key em cada linha).
   const seen = new Set(); const inserir = []
   for (const l of rows) {
     const h = l.hash_dedup
-    if (h && (existentes.has(h) || seen.has(h))) continue
+    if (h && seen.has(h)) continue
     if (h) seen.add(h)
     inserir.push(l)
   }
-  const jaExistiam = rows.length - inserir.length
-  if (!inserir.length) return { inseridos: 0, pulados: jaExistiam, falhas: 0, error: null }
   let ins = 0, falhas = 0, primeiroErro = null
   for (const c of _cnabChunk(inserir, 500)) {
-    const { error } = await supabase.from('RET_CONTACAPT').insert(c)
-    if (!error) { ins += c.length; continue }
-    // 1 registro ruim nao deve derrubar o lote inteiro: tenta linha a linha
+    // UPSERT ignoreDuplicates: o banco pula o que já existe (unique
+    // ux_ret_contacapt_hash_dedup) via ON CONFLICT DO NOTHING; o .select() traz
+    // só as linhas REALMENTE inseridas (as puladas não voltam).
+    const { data, error } = await supabase
+      .from('RET_CONTACAPT')
+      .upsert(c, { onConflict: 'hash_dedup', ignoreDuplicates: true })
+      .select('hash_dedup')
+    if (!error) { ins += (data ? data.length : 0); continue }
+    // erro que NÃO é duplicidade (ex.: dado inválido): tenta linha a linha p/ não
+    // perder o lote inteiro por causa de um registro ruim.
     for (const row of c) {
-      const { error: e1 } = await supabase.from('RET_CONTACAPT').insert(row)
+      const { data: d1, error: e1 } = await supabase
+        .from('RET_CONTACAPT')
+        .upsert(row, { onConflict: 'hash_dedup', ignoreDuplicates: true })
+        .select('hash_dedup')
       if (e1) { falhas++; if (!primeiroErro) primeiroErro = e1; console.warn('[gravarRetContacapt] falha NOSSO', row.NOSSO_NUMERO, ':', e1.message) }
-      else ins++
+      else ins += (d1 ? d1.length : 0)
     }
   }
-  return { inseridos: ins, pulados: jaExistiam, falhas, error: (ins === 0 ? primeiroErro : null) }
+  const pulados = rows.length - ins - falhas
+  return { inseridos: ins, pulados: (pulados < 0 ? 0 : pulados), falhas, error: (ins === 0 && falhas > 0 ? primeiroErro : null) }
 }
 
 // Lê os registros já gravados em RET_CONTACAPT (mais recentes primeiro).
