@@ -153,6 +153,9 @@ export default function BoletosPage() {
   const [efactorActive, setEfactorActive] = useState(false)
   const [contaCaptActive, setContaCaptActive] = useState(false)
   const [captReloadKey, setCaptReloadKey] = useState(0)
+  // Filtro "Devolvidos": inicia desmarcado; marcado, exibe também os títulos
+  // devolvidos ao cedente (capt_registrado.status = 'devolvido').
+  const [showDevolvidos, setShowDevolvidos] = useState(false)
 
   // Obter tipo de usuário e conta selecionada
   const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -588,6 +591,10 @@ export default function BoletosPage() {
       if (s === 'cancelado') return statusChecks.cancelado
       return statusChecks.pendente
     })
+
+    // Filtro Devolvidos: por padrão oculta títulos devolvidos ao cedente de origem.
+    // Marcado, os devolvidos aparecem junto dos demais.
+    filtered = filtered.filter(boleto => showDevolvidos || !boleto._devolvido)
 
     // Filtro por flags via checkboxes (Antecipa / Registro / Assina)
     // Cada flag é "confirmada" (verde) ou não (amarelo/vermelho) — mesma regra usada
@@ -2261,6 +2268,20 @@ export default function BoletosPage() {
                     </label>
                   </div>
 
+                  {/* Devolvidos */}
+                  <div className="pt-3 mt-3 border-t border-[#2a2a2a]">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showDevolvidos}
+                        onChange={(e) => setShowDevolvidos(e.target.checked)}
+                        className="w-4 h-4 cursor-pointer accent-white"
+                      />
+                      <span className="text-xs text-white">Devolvidos</span>
+                    </label>
+                    <p className="text-[10px] text-[#666666] mt-1">Títulos devolvidos ao cedente de origem (sumiram do relatório da Conta Capt).</p>
+                  </div>
+
                   {/* Limpar filtros */}
                   <button
                     onClick={() => {
@@ -2273,6 +2294,7 @@ export default function BoletosPage() {
                       setCedenteFiltro(''); setOcorrenciaFiltro('')
                       setStatusChecks({ pago: false, cancelado: false, pendente: true })
                       setStatusFlags({ antecipa: true, registro: true, assina: true, cedente: true })
+                      setShowDevolvidos(false)
                     }}
                     className="mt-3 w-full px-3 py-1.5 text-xs text-[#666666] border border-[#2a2a2a] rounded hover:text-white hover:border-[#444444] transition"
                   >

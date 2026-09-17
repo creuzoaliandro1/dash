@@ -134,8 +134,10 @@ const padRight = (text, size, char = ' ') => {
 export const calcNNDV = (nossoNumero) => {
     const num = String(nossoNumero || '').replace(/\D/g, '')
 
-    // Prefixar com "0900" para o cálculo
-    const prefixado = '0900' + num.padStart(9, '0')  // Garante 13 dígitos total
+    // Prefixo BMP274: "09" + nosso número em 11 dígitos (13 no total).
+    // Para nossos de até 9 dígitos o resultado é idêntico ao "0900"+9;
+    // para nossos de 10-11 dígitos usa todos os dígitos (antes truncava em 9).
+    const prefixado = '09' + num.slice(-11).padStart(11, '0')
 
     // Usar TODOS os 13 dígitos (não usar slice!)
     const base13 = prefixado
@@ -173,7 +175,7 @@ const getTipoPessoa = (cic) => {
 // ============================================================
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
 // ============================================================
-const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
+const buildHeader = (conta, nextSeq, tipoOperacao = '01', multiplasContas = false) => {
     // Dados do beneficiario/cedente vindos de CONTAS
     const nomeEmpresa  = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
     const cpfCnpjConta = cleanNum(conta.cpf_cnpj || conta.cic || '0')
@@ -200,6 +202,7 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
     line += '        '                             // pos 101-108 - brancos (8 espacos)
     line += 'MX'                                   // pos 109-110 - identificador sistema
     line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
+    line += (multiplasContas ? '1 ' : '  ')        // pos 118 - indicador de registro múltiplas contas (dígito 1)
 
     // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '
@@ -334,7 +337,7 @@ const buildDetalhe2 = (boleto, lineSeq) => {
     line += msgImportado                           // pos 082-161 - mensagem1 80
     line += '                                                                                ' // pos 162-241 - brancos 80
     line += msgGarantia                            // pos 242-321 - mensagem garantia 80
-    line += '      '                               // pos 322-327 - brancos 6
+    line += padLeft(cleanStr(boleto.sacado_numero || ''), 6, ' ') // pos 322-327 - numero do pagador
     line += sBairro                                // pos 328-347 - bairro 20
     line += sUf                                    // pos 348-349 - UF 2
     line += sCidade                                // pos 350-379 - cidade 30
@@ -362,7 +365,7 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress) => {
+export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, multiplasContas = false) => {
     console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
@@ -384,8 +387,8 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     let lines = []
         let lineSeq = 1
 
-    // Header
-    lines.push(buildHeader(contaInfo, seq, tipoOperacao))
+    // Header (pode ser uma conta diferente da do detalhe: header=CAPT, detalhe=cedente original)
+    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao, multiplasContas))
     lineSeq++
 
     // Detalhe (2 linhas por boleto). Libera a thread principal periodicamente

@@ -569,6 +569,8 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       if (b.SACADO_NOME !== undefined) row.nom_rz_soc_pagdr = txt(b.SACADO_NOME)
       // Linha digitável sempre só dígitos (chave de deduplicação)
       row.num_linha_digtvl = String(b.CODIGO_BARRAS || src['Linha digitável'] || '').replace(/\D/g, '') || null
+      // Presente no relatório atual => título ativo (reativa devolvidos que reaparecem)
+      row.status = 'ativo'
       return row
     }
 
@@ -582,13 +584,16 @@ export const importContaCaptToRegistrado = async (boletosData) => {
     //    ou só dígitos — por isso normalizamos os dois lados para comparar.
     //    existingMap: digits-only → { id, storedValue }
     const existingMap = new Map()
+    // Registros que já estavam em capt_registrado mas NÃO vieram no relatório atual
+    // (a lista é sempre completa) => devolvidos ao cedente de origem.
+    const devolvidoIds = []
     {
       const pageSize = 1000
       let from = 0
       while (true) {
         const { data, error } = await supabase
           .from('capt_registrado')
-          .select('id, num_linha_digtvl')
+          .select('id, num_linha_digtvl, status')
           .range(from, from + pageSize - 1)
         if (error) { console.warn('[importContaCaptToRegistrado] Erro ao ler capt_registrado:', error.message); break }
         if (!data || data.length === 0) break
@@ -596,6 +601,8 @@ export const importContaCaptToRegistrado = async (boletosData) => {
           const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
           if (norm && linhasSet.has(norm)) {
             existingMap.set(norm, r.id)
+          } else if (norm && String(r.status || '') !== 'devolvido') {
+            devolvidoIds.push(r.id)
           }
         })
         if (data.length < pageSize) break
@@ -686,8 +693,20 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       })
     }
 
-    console.log(`[importContaCaptToRegistrado] ${inserted} inserido(s), ${updated} atualizado(s), ${deletedFromBoletos} removido(s) de capt_boletos, ${errors} erro(s)`)
-    return { data: { inserted, updated, deletedFromBoletos, errors }, error: null }
+    // 6) Marcar como "devolvido" os registros que sumiram do relatório atual.
+    let devolvidos = 0
+    {
+      const DEV_BATCH = 100
+      for (let i = 0; i < devolvidoIds.length; i += DEV_BATCH) {
+        const chunk = devolvidoIds.slice(i, i + DEV_BATCH)
+        const { error } = await supabase.from('capt_registrado').update({ status: 'devolvido' }).in('id', chunk)
+        if (error) console.warn('[importContaCaptToRegistrado] Erro ao marcar devolvidos:', error.message)
+        else devolvidos += chunk.length
+      }
+    }
+
+    console.log(`[importContaCaptToRegistrado] ${inserted} inserido(s), ${updated} atualizado(s), ${devolvidos} devolvido(s), ${deletedFromBoletos} removido(s) de capt_boletos, ${errors} erro(s)`)
+    return { data: { inserted, updated, devolvidos, deletedFromBoletos, errors }, error: null }
   } catch (err) {
     console.error('[importContaCaptToRegistrado] Erro geral:', err)
     return { data: null, error: err }
@@ -1987,7 +2006,7 @@ const getAllRegistrado = async () => {
     const start = page * pageSize
     const { data, error } = await supabase
       .from('capt_registrado')
-      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular, num_lanca')
+      .select('id, created_at, dt_inclusao, dt_ems_tit, numero_documento, num_doc_tit, vlr_tit, dt_venc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, situacao_boleto, identd_nosso_num, num_linha_digtvl, cod_cedente_titular, num_lanca, status')
       .range(start, start + pageSize - 1)
     if (error) {
       console.error('[getAllRegistrado] erro:', error.message)
@@ -2228,6 +2247,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       nosso_numero: r.identd_nosso_num || '',
       num_linha_digtvl: r.num_linha_digtvl || '',
       _situacaoReg: r.situacao_boleto || '',
+      _devolvido: String(r.status || '').toLowerCase() === 'devolvido',
       _cedenteTitular: String(r.cod_cedente_titular ?? '').trim(),
       _contaLinha: _contaBaseFromLinha(r.num_linha_digtvl), // conta do perfil, extraída da linha digitável
       _key: _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr),
@@ -2279,6 +2299,8 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       merged._ORIGEM = Rreg ? 'REGISTRADO' : (O ? 'OPEITE' : 'CAPT')
       merged._hasCapt = !!C
       merged._fontes = [R && 'REGISTRADO', O && 'OPEITE', C && 'CAPT'].filter(Boolean)
+      // Devolvido ao cedente: propriedade do registrado (R), independente de Rreg
+      merged._devolvido = !!(R && R._devolvido)
 
       // Rótulos das colunas (regras do modo Importados, baseadas na presença em cada fonte):
       // CONTA   = "Sim" se está em capt_registrado, senão "Não"
@@ -2386,7 +2408,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         // Pago e Cancelado (pelo cedente/por data limite) não aparecem.
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
           && !!perfilContaBase && Ri._contaLinha === perfilContaBase
-          && _regSituacaoAtiva(Ri._situacaoReg)
+          && (_regSituacaoAtiva(Ri._situacaoReg) || Ri._devolvido)
         if (!(Ci || Oi || registradoAvulsoVisivel)) continue
 
         rows.push(buildMerged(Ri, Oi, Ci))
