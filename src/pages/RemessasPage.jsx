@@ -14,6 +14,12 @@ const formatDataHora = (v) => {
 // YYYY-MM-DD (para comparar com os inputs de data)
 const soData = (v) => (v ? String(v).slice(0, 10) : '')
 
+// timestamp para ordenar por data (NaN -> 0)
+const toTs = (v) => {
+  const t = new Date(String(v || '').replace(' ', 'T')).getTime()
+  return isNaN(t) ? 0 : t
+}
+
 export default function RemessasPage() {
   const [remessas, setRemessas] = useState([])
   const [contasMap, setContasMap] = useState({})
@@ -21,10 +27,13 @@ export default function RemessasPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [dataIni, setDataIni] = useState('')
   const [dataFim, setDataFim] = useState('')
+  const [cedenteFilter, setCedenteFilter] = useState('')
+  const [sortConfig, setSortConfig] = useState({ key: 'data', dir: 'desc' })
   const [page, setPage] = useState(1)
   const [baixando, setBaixando] = useState(null)
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  const [openFilterMenu, setOpenFilterMenu] = useState(false)
   const [zipping, setZipping] = useState(false)
   const [zipProgress, setZipProgress] = useState(null)
   const pageSize = 50
@@ -51,6 +60,29 @@ export default function RemessasPage() {
 
   const nomeCedente = (cod) => contasMap[String(cod || '').trim()] || null
 
+  // Lista de cedentes presentes nas remessas (para o combobox)
+  const cedenteOptions = useMemo(() => {
+    const seen = new Map()
+    ;(remessas || []).forEach((r) => {
+      const cod = String(r.CONTA || '').trim()
+      if (cod && !seen.has(cod)) seen.set(cod, nomeCedente(cod) || cod)
+    })
+    return [...seen.entries()]
+      .map(([cod, nome]) => ({ cod, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [remessas, contasMap])
+
+  // valor usado para ordenar cada linha conforme a coluna
+  const sortValue = (r, key) => {
+    switch (key) {
+      case 'arquivo': return String(r.ARQUIVO_REMESSA || '').toLowerCase()
+      case 'cedente': return String(nomeCedente(r.CONTA) || r.CONTA || '').toLowerCase()
+      case 'status': return String(r.STATUS || '').toLowerCase()
+      case 'data':
+      default: return toTs(r.DATA_ENVIO || r.DATA_REMESSA)
+    }
+  }
+
   const filtradas = useMemo(() => {
     let list = remessas
     const term = searchTerm.trim().toLowerCase()
@@ -62,12 +94,23 @@ export default function RemessasPage() {
         return arq.includes(term) || cod.includes(term) || nome.includes(term)
       })
     }
+    if (cedenteFilter) list = list.filter((r) => String(r.CONTA || '').trim() === cedenteFilter)
     if (dataIni) list = list.filter((r) => soData(r.DATA_ENVIO || r.DATA_REMESSA) >= dataIni)
     if (dataFim) list = list.filter((r) => soData(r.DATA_ENVIO || r.DATA_REMESSA) <= dataFim)
-    return list
-  }, [remessas, searchTerm, dataIni, dataFim, contasMap])
 
-  useEffect(() => { setPage(1) }, [searchTerm, dataIni, dataFim])
+    // ordenação
+    const dir = sortConfig.dir === 'asc' ? 1 : -1
+    list = [...list].sort((a, b) => {
+      const va = sortValue(a, sortConfig.key)
+      const vb = sortValue(b, sortConfig.key)
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+    return list
+  }, [remessas, searchTerm, cedenteFilter, dataIni, dataFim, sortConfig, contasMap])
+
+  useEffect(() => { setPage(1) }, [searchTerm, cedenteFilter, dataIni, dataFim])
 
   const totalPages = Math.max(1, Math.ceil(filtradas.length / pageSize))
   const pagina = filtradas.slice((page - 1) * pageSize, page * pageSize)
@@ -92,6 +135,14 @@ export default function RemessasPage() {
       }
       return n
     })
+  }
+
+  const toggleSort = (key) => {
+    setSortConfig((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'data' ? 'desc' : 'asc' }
+    )
   }
 
   const handleDownload = async (r) => {
@@ -184,11 +235,29 @@ export default function RemessasPage() {
     }
   }
 
-  const handleLimpar = () => { setSearchTerm(''); setDataIni(''); setDataFim('') }
+  const handleLimpar = () => { setSearchTerm(''); setDataIni(''); setDataFim(''); setCedenteFilter('') }
+
+  const activeFilters = (cedenteFilter ? 1 : 0) + (dataIni ? 1 : 0) + (dataFim ? 1 : 0)
 
   const acoesLabel = zipping
     ? `Gerando ZIP...${zipProgress ? ` (${zipProgress.done}/${zipProgress.total})` : ''}`
     : `Ações${selectedRows.size ? ` (${selectedRows.size})` : ''}`
+
+  // cabeçalho de coluna clicável (ordenação)
+  const SortTh = ({ label, sortKey, align }) => (
+    <th
+      onClick={() => toggleSort(sortKey)}
+      className={`px-4 py-3 font-medium cursor-pointer select-none hover:text-[#a3a3a3] transition ${align === 'right' ? 'text-right' : ''}`}
+      title="Ordenar por esta coluna"
+    >
+      <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
+        {label}
+        <span className={`text-[10px] leading-none ${sortConfig.key === sortKey ? 'text-white' : 'text-[#3a3a3a]'}`}>
+          {sortConfig.key === sortKey ? (sortConfig.dir === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </span>
+    </th>
+  )
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
@@ -207,8 +276,8 @@ export default function RemessasPage() {
         </button>
       </div>
 
-      {/* Filtros */}
-      <div className="flex gap-3 items-end flex-wrap">
+      {/* Barra: busca + Filtrar + Ações */}
+      <div className="flex gap-3 items-center flex-wrap">
         <div className="flex-1 relative min-w-[220px]">
           <input
             type="text"
@@ -221,46 +290,94 @@ export default function RemessasPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-[#666666]">Período:</span>
-          <input
-            type="date" value={dataIni} onChange={(e) => setDataIni(e.target.value)}
-            className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-36"
-            title="Data início"
-          />
-          <input
-            type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)}
-            className="px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-36"
-            title="Data fim"
-          />
-          {(searchTerm || dataIni || dataFim) && (
-            <button onClick={handleLimpar} className="px-3 py-2 text-xs text-[#a3a3a3] hover:text-white transition">Limpar</button>
-          )}
 
-          {/* Ações */}
-          <div className="relative">
-            <button
-              onClick={() => setOpenActionsMenu((o) => !o)}
-              disabled={selectedRows.size === 0 || zipping}
-              className="px-4 py-2 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition disabled:opacity-40 whitespace-nowrap"
-            >
-              {acoesLabel}
-            </button>
-            {openActionsMenu && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setOpenActionsMenu(false)} />
-                <div className="absolute right-0 mt-1 w-60 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg shadow-lg z-20 py-1">
-                  <button
-                    onClick={handleBaixarZip}
-                    disabled={selectedRows.size === 0}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#111111] transition disabled:opacity-40"
-                  >
-                    Baixar .zip das selecionadas ({selectedRows.size})
-                  </button>
-                </div>
-              </>
+        {/* Filtrar */}
+        <div className="relative">
+          <button
+            onClick={() => setOpenFilterMenu((o) => !o)}
+            className={`px-4 py-2 border text-xs rounded transition flex items-center gap-1.5 whitespace-nowrap ${activeFilters > 0 ? 'border-white text-white bg-[#111111]' : 'border-[#2a2a2a] text-[#e5e5e5] hover:bg-[#111111]'}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M6 10h12M10 16h4" />
+            </svg>
+            Filtrar
+            {activeFilters > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white text-black text-[10px] leading-none font-medium">{activeFilters}</span>
             )}
-          </div>
+          </button>
+          {openFilterMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setOpenFilterMenu(false)} />
+              <div className="absolute right-0 mt-1 w-72 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg shadow-lg z-20 p-3 flex flex-col gap-3">
+                <div>
+                  <label className="block text-[11px] text-[#666666] mb-1">Cedente</label>
+                  <select
+                    value={cedenteFilter}
+                    onChange={(e) => setCedenteFilter(e.target.value)}
+                    className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                  >
+                    <option value="">Todos os cedentes</option>
+                    {cedenteOptions.map((o) => (
+                      <option key={o.cod} value={o.cod}>{o.nome}{o.nome !== o.cod ? ` (${o.cod})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-[#666666] mb-1">Período (data de envio)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date" value={dataIni} onChange={(e) => setDataIni(e.target.value)}
+                      className="flex-1 px-2 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                      title="Data início"
+                    />
+                    <span className="text-[#666666] text-xs">até</span>
+                    <input
+                      type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)}
+                      className="flex-1 px-2 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+                      title="Data fim"
+                    />
+                  </div>
+                </div>
+                {activeFilters > 0 && (
+                  <button
+                    onClick={() => { setCedenteFilter(''); setDataIni(''); setDataFim('') }}
+                    className="self-start px-2 py-1 text-xs text-[#a3a3a3] hover:text-white transition"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {(searchTerm || activeFilters > 0) && (
+          <button onClick={handleLimpar} className="px-3 py-2 text-xs text-[#a3a3a3] hover:text-white transition whitespace-nowrap">Limpar tudo</button>
+        )}
+
+        {/* Ações */}
+        <div className="relative">
+          <button
+            onClick={() => setOpenActionsMenu((o) => !o)}
+            disabled={selectedRows.size === 0 || zipping}
+            className="px-4 py-2 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition disabled:opacity-40 whitespace-nowrap"
+          >
+            {acoesLabel}
+          </button>
+          {openActionsMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setOpenActionsMenu(false)} />
+              <div className="absolute right-0 mt-1 w-60 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg shadow-lg z-20 py-1">
+                <button
+                  onClick={handleBaixarZip}
+                  disabled={selectedRows.size === 0}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-[#111111] transition disabled:opacity-40"
+                >
+                  Baixar .zip das selecionadas ({selectedRows.size})
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -284,10 +401,10 @@ export default function RemessasPage() {
                   title="Selecionar todas (filtradas)"
                 />
               </th>
-              <th className="px-4 py-3 font-medium">Arquivo</th>
-              <th className="px-4 py-3 font-medium">Cedente</th>
-              <th className="px-4 py-3 font-medium">Data / Hora</th>
-              <th className="px-4 py-3 font-medium">Status</th>
+              <SortTh label="Arquivo" sortKey="arquivo" />
+              <SortTh label="Cedente" sortKey="cedente" />
+              <SortTh label="Data / Hora" sortKey="data" />
+              <SortTh label="Status" sortKey="status" />
               <th className="px-4 py-3 font-medium text-right">Ação</th>
             </tr>
           </thead>

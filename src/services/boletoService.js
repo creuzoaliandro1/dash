@@ -2856,22 +2856,56 @@ export const autoImportarParaCapt = async (contaId, records) => {
     let imported = 0
     let skipped = 0
     let errors = 0
+    let relinked = 0
     const boletos = []
+    const onlyDigits = (v) => String(v || '').replace(/\D/g, '')
 
     for (const rec of records) {
       // Checar dedup por num_lancamento
       const numLanc = Number(rec.num_lancamento)
+      let vincularNumLanc = true
       if (!isNaN(numLanc) && numLanc > 0 && existentes.has(numLanc)) {
-        // Já existe em capt_boletos — buscar e usar o existente
+        // Já existe um capt_boletos com este num_lancamento — buscar o existente
         const { data: existente } = await supabase
           .from('capt_boletos')
           .select('*')
           .eq('conta_id', contaId)
           .eq('num_lancamento', numLanc)
           .single()
-        if (existente) boletos.push(existente)
-        skipped++
-        continue
+
+        // Comparar o sacado (CIC/CPF-CNPJ, só dígitos). Se o sacado foi TROCADO no
+        // OPEITE (difere do capt_boletos linkado), o título antigo será cancelado no
+        // banco: NÃO reusar seus dados. Desvincula o num_lancamento do boleto antigo
+        // e gera um boleto NOVO (nosso número novo) com os dados atuais do OPEITE,
+        // que herda o lançamento.
+        const sacExist     = sacadoMap[rec._COD_SACADO] || {}
+        const cicOpeite    = onlyDigits(sacExist.CIC || rec.sacado_cic)
+        const cicExistente = onlyDigits(existente && existente.sacado_cic)
+        const sacadoTrocado = !!existente && !!cicOpeite && !!cicExistente && cicOpeite !== cicExistente
+
+        if (!sacadoTrocado) {
+          // Mesmo sacado — reusa o existente (comportamento padrão de dedup)
+          if (existente) boletos.push(existente)
+          skipped++
+          continue
+        }
+
+        console.log(`[autoImportarParaCapt] Sacado alterado no OPEITE (LANC ${numLanc}): ` +
+          `${cicExistente} -> ${cicOpeite}. Desvinculando boleto antigo ${existente.id} e gerando novo.`)
+        const { error: unlinkErr } = await supabase
+          .from('capt_boletos')
+          .update({ num_lancamento: null })
+          .eq('id', existente.id)
+        if (unlinkErr) {
+          // Não conseguiu liberar o lançamento do antigo: cria o novo SEM vínculo
+          // para não arriscar conflito, e avisa no log.
+          console.warn('[autoImportarParaCapt] Falha ao desvincular boleto antigo, criando novo sem num_lancamento:', unlinkErr.message)
+          vincularNumLanc = false
+        } else {
+          existentes.delete(numLanc)
+          relinked++
+        }
+        // segue o fluxo abaixo para criar o boleto novo com os dados do OPEITE
       }
 
       // Para registros OPEITE: preferir dados completos do SACADO (com endereço).
@@ -2895,7 +2929,7 @@ export const autoImportarParaCapt = async (contaId, records) => {
         STATUS:           'pendente',
         SITUACAO:         'Gravado',
         STATUS_EFACTOR:   rec.status_efactor || (rec._ORIGEM === 'OPEITE' ? 'Registrado' : ''),
-        NUM_LANCAMENTO:   (!isNaN(numLanc) && numLanc > 0) ? numLanc : '',
+        NUM_LANCAMENTO:   (vincularNumLanc && !isNaN(numLanc) && numLanc > 0) ? numLanc : '',
         DESCRICAO:        '',
       }
 
@@ -2910,8 +2944,8 @@ export const autoImportarParaCapt = async (contaId, records) => {
       }
     }
 
-    console.log(`[autoImportarParaCapt] Concluído: ${imported} criados, ${skipped} já existiam, ${errors} erros`)
-    return { data: { imported, skipped, errors, boletos }, error: null }
+    console.log(`[autoImportarParaCapt] Concluído: ${imported} criados, ${skipped} já existiam, ${relinked} relinkados (sacado trocado), ${errors} erros`)
+    return { data: { imported, skipped, errors, relinked, boletos }, error: null }
   } catch (err) {
     console.error('[autoImportarParaCapt] Erro geral:', err)
     return { data: null, error: err }

@@ -378,6 +378,11 @@ const buscarBoletosDB = async (registros) => {
   return { mapaTriple, mapaDual, mapaSingle, total: (data || []).length }
 }
 
+// Cache em memória (sobrevive à navegação entre páginas e à remontagem do
+// componente): os dados capturados dos .RET continuam aparecendo ao voltar à tela.
+let _retArquivosCache = []
+let _retBoletosDBCache = { mapaTriple: {}, mapaDual: {}, mapaSingle: {}, total: 0 }
+
 // ─── Componente ───────────────────────────────────────────────────────────────
 export default function RetornoPage() {
   // Usuário logado / perfil ativo — controla acesso (só Master anexa retorno) e
@@ -402,8 +407,11 @@ export default function RetornoPage() {
   const [isDragging, setIsDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   // Cada elemento: { nome, header, trailer, registros }
-  const [arquivos, setArquivos] = useState([])
-  const [boletosDB, setBoletosDB] = useState({ mapaTriple: {}, mapaDual: {}, mapaSingle: {}, total: 0 })
+  const [arquivos, setArquivos] = useState(_retArquivosCache)
+  const [boletosDB, setBoletosDB] = useState(_retBoletosDBCache)
+  // Mantém o cache em memória sincronizado, para reidratar ao remontar a tela.
+  useEffect(() => { _retArquivosCache = arquivos }, [arquivos])
+  useEffect(() => { _retBoletosDBCache = boletosDB }, [boletosDB])
   const [dbDebug, setDbDebug] = useState('')   // info de debug do lookup
   const [searchTerm, setSearchTerm] = useState('')
   const [filtroOcorrencia, setFiltroOcorrencia] = useState('todos')
