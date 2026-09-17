@@ -239,63 +239,13 @@ const MOTIVOS_03 = {
 }
 const MOTIVOS_GENERICO = {
   '00': 'Aceita', '10': 'Baixa comandada pelo cliente',
-  '15': 'Crédito indisponível',
+  '14': 'Título protestado', '15': 'Crédito indisponível',
   '16': 'Baixa por decurso prazo', '18': 'Pagamento parcial',
-}
-
-// Motivos de rejeição da ocorrência 32 (BMP MoneyPlus 274) — posições 319-328.
-// Fonte: layout BMP CNAB400 (bmpdocs.moneyp.com.br) + layout 274 Grafeno.
-// Obs.: '14' aqui NÃO é protesto; é rejeição por título já cedido a outro cedente.
-const MOTIVOS_32 = {
-  '00': 'Ocorrência aceita',
-  '01': 'Código do banco inválido',
-  '02': 'Código registro detalhe inválido',
-  '04': 'Código de ocorrência não permitido para a carteira',
-  '05': 'Código da ocorrência não numérico',
-  '07': 'Agência/conta/DV inválido',
-  '08': 'Nosso número inválido',
-  '09': 'Nosso número duplicado',
-  '10': 'Carteira inválida',
-  '14': 'Boleto cedido para outro cedente',
-  '15': 'Características da cobrança incompatíveis',
-  '16': 'Data de vencimento inválida',
-  '17': 'Data de vencimento anterior à data de emissão',
-  '18': 'Vencimento fora do prazo de operação',
-  '19': 'Título não protestável',
-  '20': 'Valor do título inválido',
-  '21': 'Espécie do título inválida',
-  '22': 'Espécie não permitida para a carteira',
-  '23': 'Tipo de pagamento não contratado',
-  '24': 'Data de emissão inválida',
-  '26': 'Código juros de mora inválido',
-  '27': 'Valor/taxa juros de mora inválido',
-  '28': 'Código de desconto inválido',
-  '29': 'Valor do desconto maior/igual ao valor do título',
-  '30': 'Desconto a conceder não confere',
-  '31': 'Concessão de desconto — já existe desconto anterior',
-  '33': 'Valor do abatimento inválido',
-  '34': 'Valor do abatimento maior/igual ao valor do título',
-  '36': 'Concessão de abatimento — já existe abatimento anterior',
-  '41': 'Título com ordem de protesto emitida',
-  '43': 'Título em cartório',
-  '45': 'Nome do pagador não informado',
-  '46': 'Tipo/número de inscrição do pagador inválidos',
-  '47': 'Endereço do pagador não informado',
-  '48': 'CEP inválido',
-  '50': 'CEP referente a um banco correspondente',
-  '52': 'Unidade da Federação inválida',
-  '53': 'Tipo de inscrição do pagador/avalista inválidos',
-  '60': 'Movimento para título não cadastrado',
-  '65': 'Limite excedido',
-  '66': 'Número de autorização inexistente',
-  '85': 'Título com pagamento vinculado',
-  '86': 'Seu número inválido',
-  '99': 'Erro genérico',
 }
 
 const getMotivoDesc = (ocorrencia, motivo) => {
   if (!motivo) return ''
-  const t = ocorrencia === '02' ? MOTIVOS_02 : ocorrencia === '03' ? MOTIVOS_03 : ocorrencia === '32' ? MOTIVOS_32 : MOTIVOS_GENERICO
+  const t = ocorrencia === '02' ? MOTIVOS_02 : ocorrencia === '03' ? MOTIVOS_03 : MOTIVOS_GENERICO
   return t[motivo] || `Motivo ${motivo}`
 }
 
