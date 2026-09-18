@@ -1036,24 +1036,39 @@ export const updateCaptAssinaStatus = async (docToken, status, signedFile) => {
 
 export const deletarBoletosJaRegistrados = async (contaId) => {
   try {
-    // 1. Busca todos os identd_nosso_num de capt_registrado
-    const { data: regRows, error: regErr } = await supabase
-      .from('capt_registrado')
-      .select('identd_nosso_num')
-      .not('identd_nosso_num', 'is', null)
-    if (regErr) return { excluidos: 0, error: regErr }
+    // 1. Boletos do perfil ativo (valor+vencimento+CIC para o cruzamento)
+    const { data: boletos, error: bErr } = await supabase
+      .from('capt_boletos')
+      .select('id, valor, data_vencimento, sacado_cic')
+      .eq('conta_id', contaId)
+    if (bErr) return { excluidos: 0, error: bErr }
+    if (!boletos || boletos.length === 0) return { excluidos: 0, error: null }
 
-    const nossoNumerosRegistrados = [...new Set(
-      (regRows || []).map(r => String(r.identd_nosso_num || '').trim()).filter(Boolean)
-    )]
-    if (nossoNumerosRegistrados.length === 0) return { excluidos: 0, error: null }
+    // 2. Chaves (valor+vencimento+CIC) dos titulos JA registrados. Cruza por
+    //    CHAVE, nao por Nosso Numero: na troca de cedente o BMP atribui um Nosso
+    //    Numero novo, entao o do cliente nunca bateria. Mesma _matchKey usada na
+    //    coloracao "Registrado" da tabela (getBoletosImportadosUnificados).
+    const _valida = (valor, venc, cic) =>
+      _toCents(valor) > 0 && !!_isoDate(venc) && !!_cicPadded(cic)
+    const registrados = await getAllRegistrado()
+    const registradoKeys = new Set(
+      (registrados || [])
+        .filter(r => _valida(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr))
+        .map(r => _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr))
+    )
+    if (registradoKeys.size === 0) return { excluidos: 0, error: null }
 
-    // 2. Deleta de capt_boletos onde nosso_numero bate com algum identd_nosso_num
+    // 3. IDs de capt_boletos cujo titulo ja consta em capt_registrado
+    const idsParaExcluir = boletos
+      .filter(b => _valida(b.valor, b.data_vencimento, b.sacado_cic) &&
+                   registradoKeys.has(_matchKey(b.valor, b.data_vencimento, b.sacado_cic)))
+      .map(b => b.id)
+    if (idsParaExcluir.length === 0) return { excluidos: 0, error: null }
+
     const { data: deleted, error: delErr } = await supabase
       .from('capt_boletos')
       .delete()
-      .eq('conta_id', contaId)
-      .in('nosso_numero', nossoNumerosRegistrados)
+      .in('id', idsParaExcluir)
       .select('id')
     if (delErr) return { excluidos: 0, error: delErr }
 
