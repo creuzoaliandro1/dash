@@ -239,8 +239,10 @@ export default function ExtratoPage() {
       }),
       styles: {
         fontSize: 7,
-        cellPadding: { top: 0.5, bottom: 0.5, left: 1, right: 1 },
+        cellPadding: { top: 0.2, bottom: 0.2, left: 1, right: 1 },
         minCellHeight: 0,
+        lineWidth: 0.05,
+        valign: 'middle',
         overflow: 'hidden',
         cellWidth: 'wrap'
       },
