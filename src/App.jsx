@@ -10,6 +10,7 @@ import ExtratoPage from './pages/ExtratoPage'
 import ContabilPage from './pages/ContabilPage'
 import RetornoPage from './pages/RetornoPage'
 import RemessasPage from './pages/RemessasPage'
+import TrocaCedentePage from './pages/TrocaCedentePage'
 import AcessosPage from './pages/AcessosPage'
 import CadastroPage from './pages/CadastroPage'
 import ContaBmpPage from './pages/ContaBmpPage'
@@ -82,6 +83,7 @@ export default function App() {
       {currentPage === 'efactor' && isMaster && <EfactorPage />}
       {currentPage === 'retorno' && <RetornoPage />}
       {currentPage === 'remessas' && isMaster && <RemessasPage />}
+      {currentPage === 'troca-cedente' && isMaster && <TrocaCedentePage />}
       {currentPage === 'acessos' && isMaster && <AcessosPage />}
       {currentPage === 'sincronizar' && isMaster && <SincronizarPage />}
       {currentPage === 'cadastro' && isMaster && <CadastroPage />}

@@ -254,6 +254,18 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
                   Remessas
                 </button>
               )}
+              {isMaster && (
+                <button
+                  onClick={() => setCurrentPage('troca-cedente')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'troca-cedente'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  Troca Cedente
+                </button>
+              )}
             </div>
           )}
         </div>
