@@ -79,7 +79,7 @@ export const getBoletos = async (contaId) => {
 
       let query = supabase
         .from('capt_boletos')
-        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
+        .select('id, numero_documento, sacado_nome, sacado_cic, sacado_endereco, sacado_bairro, sacado_cidade, sacado_uf, sacado_cep, sacado_numero, sacado_complemento, sacado_telefone, sacado_email, data_emissao, data_vencimento, valor, nosso_numero, codigo_barras, status, situacao, created_at, num_lancamento, descricao, avalista_nome, avalista_cic, status_efactor, zapsign_status, zapsign_sign_url, zapsign_doc_token')
         .order('created_at', { ascending: false })
         .range(start, end)
 
@@ -544,6 +544,7 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       'Conta do beneficiário 5 de cobrança compartilhada': 'benef5_conta',
       'Percentual para beneficiário 5': 'benef5_percentual',
       'Status de negociação': 'status_negociacao',
+      'Status da negociação': 'status_negociacao', // Relatório de Boletos Negociados
       'Data da última instrução': 'data_ultima_instrucao',
       'Canal de instrução': 'canal_instrucao',
       'Última instrução': 'ultima_instrucao',
@@ -569,8 +570,10 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       if (b.SACADO_NOME !== undefined) row.nom_rz_soc_pagdr = txt(b.SACADO_NOME)
       // Linha digitável sempre só dígitos (chave de deduplicação)
       row.num_linha_digtvl = String(b.CODIGO_BARRAS || src['Linha digitável'] || '').replace(/\D/g, '') || null
-      // Presente no relatório atual => título ativo (reativa devolvidos que reaparecem)
-      row.status = 'ativo'
+      // Presente no relatório atual => título ativo (reativa devolvidos que reaparecem),
+      // exceto quando a negociação foi devolvida ao cedente anterior: grava o título,
+      // mas como 'devolvido' (não aparece na tela de Boletos).
+      row.status = /devolvid/i.test(String(row.status_negociacao || '')) ? 'devolvido' : 'ativo'
       return row
     }
 
@@ -2421,6 +2424,10 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         // casar com um capt_boletos/OPEITE do perfil, aí serve p/ marcar CONTA=Sim).
         // Só entra o registrado avulso ATIVO (A Vencer/Vencido) do perfil dono.
         // Pago e Cancelado (pelo cedente/por data limite) não aparecem.
+        // Cancelado PELO CEDENTE: o título foi cancelado de propósito no banco e
+        // não deve aparecer na listagem, mesmo que ainda exista em OPEITE/capt_boletos.
+        if (Ri && /cancelado pelo cedente/i.test(String(Ri._situacaoReg || ''))) continue
+
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
           && !!perfilContaBase && Ri._contaLinha === perfilContaBase
           && (_regSituacaoAtiva(Ri._situacaoReg) || Ri._devolvido)

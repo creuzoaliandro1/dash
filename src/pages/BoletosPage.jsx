@@ -588,7 +588,8 @@ export default function BoletosPage() {
     filtered = filtered.filter(boleto => {
       const s = (boleto.status || '').toLowerCase()
       if (s === 'pago') return statusChecks.pago
-      if (s === 'cancelado') return statusChecks.cancelado
+      // Qualquer variação de cancelamento (pelo cedente, por data limite...) conta como Cancelado
+      if (s.startsWith('cancelado')) return statusChecks.cancelado
       return statusChecks.pendente
     })
 

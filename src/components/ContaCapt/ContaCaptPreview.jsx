@@ -52,12 +52,27 @@ export default function ContaCaptPreview({ previewData, onCancel }) {
       if (cancelado) return
 
       // Remover apenas duplicados internos do arquivo (mesma linha digitável)
-      const vistosCB = new Set()
-      const processados = (previewData || []).filter(row => {
+      // Duplicados internos (mesma linha digitável): no relatório de Boletos Negociados o
+      // mesmo título pode aparecer mais de uma vez (ex.: devolvido e depois aceito de novo).
+      // Mantém a negociação MAIS RECENTE (data de envio para negociação).
+      const dataNegociacao = (row) => {
+        const v = String(row?.__raw?.['Data do envio dos boletos para negociação'] || '').trim()
+        const m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/)
+        if (!m) return ''
+        return `${m[3]}${m[2]}${m[1]}${m[4] || '00'}${m[5] || '00'}${m[6] || '00'}`
+      }
+      const melhorPorCB = new Map() // cb -> índice da linha escolhida
+      ;(previewData || []).forEach((row, idx) => {
         const cb = String(row?.CODIGO_BARRAS || '').replace(/\D/g, '')
-        if (cb && vistosCB.has(cb)) return false
-        if (cb) vistosCB.add(cb)
-        return true
+        if (!cb) return
+        const atual = melhorPorCB.get(cb)
+        if (atual === undefined || dataNegociacao(row) > dataNegociacao(previewData[atual])) {
+          melhorPorCB.set(cb, idx)
+        }
+      })
+      const processados = (previewData || []).filter((row, idx) => {
+        const cb = String(row?.CODIGO_BARRAS || '').replace(/\D/g, '')
+        return !cb || melhorPorCB.get(cb) === idx
       })
 
       // Classificar cada linha: inserir ou atualizar

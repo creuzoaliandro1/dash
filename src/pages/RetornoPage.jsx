@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import jsPDF from 'jspdf'
-import JSZip from 'jszip'
+import { lerEntradasZip } from '../utils/zipEntries'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, retFileStorageKey, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
@@ -681,12 +681,15 @@ export default function RetornoPage() {
     }
     for (const zf of zips) {
       try {
-        const zip = await JSZip.loadAsync(await zf.arrayBuffer())
-        const retEntries = Object.values(zip.files).filter(e => !e.dir && /\.ret$/i.test(e.name))
+        // Lê entrada por entrada do diretório central: o banco envia zips com
+        // arquivos de MESMO NOME e conteúdo diferente (o JSZip indexava por nome
+        // e descartava os repetidos). Aqui todos são mantidos.
+        const retEntries = lerEntradasZip(await zf.arrayBuffer()).filter(e => /\.ret$/i.test(e.name))
         if (!retEntries.length) { errosLista.push(`${zf.name}: nenhum arquivo .RET dentro do .zip`); continue }
+        const dec = new TextDecoder('utf-8')
         for (const e of retEntries) {
           const base = e.name.split('/').pop()
-          entradas.push({ nome: base, text: await e.async('string') })
+          entradas.push({ nome: base, text: dec.decode(e.data) })
         }
       } catch (e) { errosLista.push(`${zf.name}: falha ao abrir o .zip — ${e.message}`) }
     }
@@ -711,8 +714,14 @@ export default function RetornoPage() {
     // Acumula com arquivos já carregados, ignorando duplicatas apenas por CONTEÚDO
     // (mesma chave = mesmo nome E mesmo conteúdo). Arquivos homônimos com conteúdo
     // diferente têm chaves diferentes e ambos permanecem.
+    // O Set também deduplica DENTRO do próprio lote (mesmo nome + mesmo conteúdo
+    // repetido no zip ou entre zips), evitando linhas duplicadas na grade.
     const keysExistentes = new Set(arquivos.map(a => a.key || a.nome))
-    const novosUnicos = novosArquivos.filter(a => !keysExistentes.has(a.key))
+    const novosUnicos = novosArquivos.filter(a => {
+      if (keysExistentes.has(a.key)) return false
+      keysExistentes.add(a.key)
+      return true
+    })
     const listaFinal = [...arquivos, ...novosUnicos]
     setArquivos(listaFinal)
     setSelectedRows(new Set())

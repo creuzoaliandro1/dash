@@ -337,7 +337,9 @@ const buildDetalhe2 = (boleto, lineSeq) => {
     line += msgImportado                           // pos 082-161 - mensagem1 80
     line += '                                                                                ' // pos 162-241 - brancos 80
     line += msgGarantia                            // pos 242-321 - mensagem garantia 80
-    line += padLeft(cleanStr(boleto.sacado_numero || ''), 6, ' ') // pos 322-327 - numero do pagador
+    // Numero do pagador: obrigatorio no BMP. capt_boletos.sacado_numero e preenchido
+    // pela trigger do banco a partir do endereco (parse_endereco_sacado); 'SN' se vazio.
+    line += padLeft(cleanStr(boleto.sacado_numero || '') || 'SN', 6, ' ') // pos 322-327 - numero do pagador
     line += sBairro                                // pos 328-347 - bairro 20
     line += sUf                                    // pos 348-349 - UF 2
     line += sCidade                                // pos 350-379 - cidade 30
