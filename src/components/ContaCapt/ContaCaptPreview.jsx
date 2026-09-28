@@ -151,9 +151,10 @@ export default function ContaCaptPreview({ previewData, onCancel }) {
       return
     }
 
-    const { inserted = 0, updated = 0, deletedFromBoletos = 0, errors = 0 } = data || {}
+    const { inserted = 0, updated = 0, deletedFromBoletos = 0, errors = 0, trocaCedente = null } = data || {}
     let message = `Importação concluída!\n${inserted} inserido(s) em capt_registrado.\n${updated} atualizado(s) em capt_registrado.`
     if (deletedFromBoletos > 0) message += `\n${deletedFromBoletos} removido(s) de capt_boletos (migrado para capt_registrado).`
+    if (trocaCedente) message += `\nRET_CONTACAPT: ${trocaCedente.troca_true} retorno(s) marcado(s) como Troca de Cedente.`
     if (errors > 0) message += `\n${errors} erro(s) durante o processo.`
     alert(message)
     onCancel()

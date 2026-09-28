@@ -708,8 +708,20 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       }
     }
 
+    // 7) Marca RET_CONTACAPT.TROCA_CEDENTE = 'true' quando a LINHA_DIGITAVEL do retorno
+    //    existe em capt_registrado.num_linha_digtvl. Um 'true' NUNCA volta a 'false'
+    //    (mesmo que o título depois seja devolvido/removido). Feito no banco via RPC.
+    let trocaCedente = null
+    try {
+      const { data: tc, error: tcErr } = await supabase.rpc('sync_troca_cedente_ret_contacapt')
+      if (tcErr) console.warn('[importContaCaptToRegistrado] Erro ao atualizar TROCA_CEDENTE:', tcErr.message)
+      else trocaCedente = tc
+    } catch (e) {
+      console.warn('[importContaCaptToRegistrado] Falha ao atualizar TROCA_CEDENTE:', e.message)
+    }
+
     console.log(`[importContaCaptToRegistrado] ${inserted} inserido(s), ${updated} atualizado(s), ${devolvidos} devolvido(s), ${deletedFromBoletos} removido(s) de capt_boletos, ${errors} erro(s)`)
-    return { data: { inserted, updated, devolvidos, deletedFromBoletos, errors }, error: null }
+    return { data: { inserted, updated, devolvidos, deletedFromBoletos, errors, trocaCedente }, error: null }
   } catch (err) {
     console.error('[importContaCaptToRegistrado] Erro geral:', err)
     return { data: null, error: err }
