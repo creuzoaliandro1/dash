@@ -143,7 +143,7 @@ export default function SincronizarPage() {
         const todas = []
         for (let p = 0; p < 600; p++) {
           const { data, error } = await smartFrom('OPEITE')
-            .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, DT_LANCA, COD_SACADO, COD_CEDENTE, STATUS')
+            .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, DT_LANCA, COD_SACADO, COD_CEDENTE, STATUS, TIPO_TITULO')
             .range(p * API_PAGE, p * API_PAGE + API_PAGE - 1)
           if (error) throw error
           const lote = data || []
@@ -613,6 +613,7 @@ export default function SincronizarPage() {
     const base = rawRows.filter((o) => {
       const st = String(o.STATUS || '').trim().toUpperCase()
       if (st === 'DC' || st === 'CO') return false
+      if (String(o.TIPO_TITULO || '').trim().toUpperCase() !== 'DUP') return false
       const v = o.DT_VENCI ? String(o.DT_VENCI).slice(0, 10) : ''
       const n = o.DT_VENCI_NOVO ? String(o.DT_VENCI_NOVO).slice(0, 10) : ''
       return v >= hoje || n >= hoje

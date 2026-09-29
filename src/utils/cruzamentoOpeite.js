@@ -1,7 +1,7 @@
 // Cruzamento OPEITE x capt_registrado (Sincronizar · Ações).
 //
 // Gera os 7 conjuntos usados no relatório Excel e na tela "Sincronizar":
-//   1. OPEITE          — vencimento (DT_VENCI ou DT_VENCI_NOVO) de hoje em diante,
+//   1. OPEITE          — TIPO_TITULO = DUP, vencimento (DT_VENCI ou DT_VENCI_NOVO) de hoje em diante,
 //                         STATUS diferente de DC e CO; ordem vencimento, valor.
 //   2. capt_registrado — status_ret diferente de Pago e Cancelado (vazio entra).
 //   3. OPEITE + capt   — CIC idêntico + mesmo valor + mesmo vencimento
@@ -29,22 +29,22 @@ const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
 // ---------- Colunas de cada visão ----------
 const C = {
-  lanc: { key: 'lanc', label: 'Nº Lançamento', type: 'int' },
-  titulo: { key: 'titulo', label: 'Nº Título', type: 'text' },
+  lanc: { key: 'lanc', label: 'Nº Lançamento (OPEITE.NUM_LANCAMENTO)', type: 'int' },
+  titulo: { key: 'titulo', label: 'Nº Título (OPEITE.NUM_TITULO)', type: 'text' },
   dtVenci: { key: 'dtVenci', label: 'Dt Venci', type: 'date' },
   dtNovo: { key: 'dtNovo', label: 'Dt Novo', type: 'date' },
   vrFace: { key: 'vrFace', label: 'Vr Face', type: 'money' },
   nome: { key: 'nome', label: 'Nome Sacado', type: 'text' },
   cic: { key: 'cic', label: 'CIC Sacado', type: 'text' },
-  numDoc: { key: 'numDoc', label: 'Nº Documento', type: 'text' },
+  numDoc: { key: 'numDoc', label: 'Nº Documento (capt.numero_documento)', type: 'text' },
   dtVencTit: { key: 'dtVencTit', label: 'Dt Venc Tít', type: 'date' },
   vlrTit: { key: 'vlrTit', label: 'Vlr Tít', type: 'money' },
   pagador: { key: 'pagador', label: 'Nome/Razão Pagador', type: 'text' },
   cnpjCpf: { key: 'cnpjCpf', label: 'CNPJ/CPF Pagador', type: 'text' },
   dtVencCapt: { key: 'dtVencCapt', label: 'Dt Venc Tít (capt)', type: 'date' },
   vlrTitCapt: { key: 'vlrTitCapt', label: 'Vlr Tít (capt)', type: 'money' },
-  numDocTit: { key: 'numDocTit', label: 'Nº Doc Tít (capt)', type: 'text' },
-  numDocCapt: { key: 'numDocCapt', label: 'Nº Documento (capt)', type: 'text' },
+  numDocTit: { key: 'numDocTit', label: 'Nº Doc Tít (capt.num_doc_tit)', type: 'text' },
+  numDocCapt: { key: 'numDocCapt', label: 'Nº Documento (capt.numero_documento)', type: 'text' },
   correntista: { key: 'nome', label: 'Nome Correntista', type: 'text' },
   cicPar: { key: 'cic', label: 'CIC', type: 'text' },
 }
@@ -52,7 +52,7 @@ const COLS_OPEITE = [C.lanc, C.titulo, C.dtVenci, C.dtNovo, C.vrFace, C.nome, C.
 const COLS_CAPT = [C.numDoc, C.dtVencTit, C.vlrTit, C.pagador, C.cnpjCpf]
 
 export const CRUZ_VIEWS = [
-  { key: 't1', n: 1, label: 'OPEITE', sheet: '1 OPEITE', desc: 'Vencimento de hoje em diante · STATUS ≠ DC/CO', cols: COLS_OPEITE },
+  { key: 't1', n: 1, label: 'OPEITE', sheet: '1 OPEITE', desc: 'TIPO_TITULO = DUP · vencimento de hoje em diante · STATUS ≠ DC/CO', cols: COLS_OPEITE },
   { key: 't2', n: 2, label: 'capt_registrado', sheet: '2 capt_registrado', desc: 'status_ret ≠ Pago/Cancelado', cols: COLS_CAPT },
   { key: 't3', n: 3, label: 'OPEITE + capt_registrado', sheet: '3 OPEITE+capt', desc: 'CIC, valor e vencimento iguais', cols: [C.lanc, C.titulo, C.numDocCapt, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.correntista, C.cicPar] },
   { key: 't4', n: 4, label: 'OPEITE sem capt_registrado', sheet: '4 OPEITE sem capt', desc: 'Não encontrados em capt_registrado', cols: COLS_OPEITE },
@@ -62,13 +62,14 @@ export const CRUZ_VIEWS = [
 ]
 
 // ---------- Cálculo ----------
-// opeite: [{ NUM_LANCAMENTO, NUM_TITULO, DT_VENCI, DT_VENCI_NOVO, VR_FACE, STATUS, nome, cic }]
+// opeite: [{ NUM_LANCAMENTO, NUM_TITULO, TIPO_TITULO, DT_VENCI, DT_VENCI_NOVO, VR_FACE, STATUS, nome, cic }]
 // capt:   [{ id, numero_documento, num_doc_tit, dt_venc_tit, vlr_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, status_ret }]
 export function calcularCruzamento({ opeite, capt, hoje }) {
   const t1 = opeite
     .filter((o) => {
       const st = up(o.STATUS)
       if (st === 'DC' || st === 'CO') return false
+      if (up(o.TIPO_TITULO) !== 'DUP') return false
       return iso(o.DT_VENCI) >= hoje || iso(o.DT_VENCI_NOVO) >= hoje
     })
     .map((o, i) => ({
@@ -87,7 +88,7 @@ export function calcularCruzamento({ opeite, capt, hoje }) {
     .filter((c) => { const s = up(c.status_ret); return s !== 'PAGO' && s !== 'CANCELADO' })
     .map((c) => ({
       id: `c:${c.id}`,
-      numDoc: String(c.numero_documento || c.num_doc_tit || '').trim(),
+      numDoc: String(c.numero_documento ?? '').trim(),
       numDocTit: String(c.num_doc_tit ?? '').trim(),
       dtVencTit: iso(c.dt_venc_tit),
       vlrTit: parseFloat(c.vlr_tit) || 0,
@@ -100,7 +101,7 @@ export function calcularCruzamento({ opeite, capt, hoje }) {
     id: `${o.id}|${c.id}`,
     lanc: o.lanc, titulo: o.titulo, dtVenci: o.dtVenci, dtNovo: o.dtNovo,
     dtVencCapt: c.dtVencTit, vrFace: o.vrFace, vlrTitCapt: c.vlrTit,
-    numDocCapt: c.numDoc, numDocTit: c.numDocTit || c.numDoc, nome: o.nome || c.pagador, cic: o.cic,
+    numDocCapt: c.numDoc, numDocTit: c.numDocTit, nome: o.nome || c.pagador, cic: o.cic,
   })
 
   // 3) CIC + valor + vencimento (DT_VENCI, depois DT_VENCI_NOVO)
@@ -195,7 +196,7 @@ function montarAba(cols, rows) {
       else if (c.type === 'money') cell.z = '#,##0.00'
     })
   }
-  ws['!cols'] = cols.map((c) => ({ wch: c.type === 'date' ? 12 : c.type === 'money' ? 14 : c.key === 'nome' || c.key === 'pagador' ? 38 : 18 }))
+  ws['!cols'] = cols.map((c) => ({ wch: c.type === 'date' ? 12 : c.type === 'money' ? 14 : c.key === 'nome' || c.key === 'pagador' ? 38 : Math.max(18, c.label.length + 2) }))
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(aoa.length - 1, 0), c: cols.length - 1 } }) }
   return ws
 }
