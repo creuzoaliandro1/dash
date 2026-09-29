@@ -44,6 +44,7 @@ const C = {
   dtVencCapt: { key: 'dtVencCapt', label: 'Dt Venc Tít (capt)', type: 'date' },
   vlrTitCapt: { key: 'vlrTitCapt', label: 'Vlr Tít (capt)', type: 'money' },
   numDocTit: { key: 'numDocTit', label: 'Nº Doc Tít (capt)', type: 'text' },
+  numDocCapt: { key: 'numDocCapt', label: 'Nº Documento (capt)', type: 'text' },
   correntista: { key: 'nome', label: 'Nome Correntista', type: 'text' },
   cicPar: { key: 'cic', label: 'CIC', type: 'text' },
 }
@@ -53,11 +54,11 @@ const COLS_CAPT = [C.numDoc, C.dtVencTit, C.vlrTit, C.pagador, C.cnpjCpf]
 export const CRUZ_VIEWS = [
   { key: 't1', n: 1, label: 'OPEITE', sheet: '1 OPEITE', desc: 'Vencimento de hoje em diante · STATUS ≠ DC/CO', cols: COLS_OPEITE },
   { key: 't2', n: 2, label: 'capt_registrado', sheet: '2 capt_registrado', desc: 'status_ret ≠ Pago/Cancelado', cols: COLS_CAPT },
-  { key: 't3', n: 3, label: 'OPEITE + capt_registrado', sheet: '3 OPEITE+capt', desc: 'CIC, valor e vencimento iguais', cols: [C.lanc, C.titulo, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.correntista, C.cicPar] },
+  { key: 't3', n: 3, label: 'OPEITE + capt_registrado', sheet: '3 OPEITE+capt', desc: 'CIC, valor e vencimento iguais', cols: [C.lanc, C.titulo, C.numDocCapt, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.correntista, C.cicPar] },
   { key: 't4', n: 4, label: 'OPEITE sem capt_registrado', sheet: '4 OPEITE sem capt', desc: 'Não encontrados em capt_registrado', cols: COLS_OPEITE },
   { key: 't5', n: 5, label: 'capt_registrado sem OPEITE', sheet: '5 capt sem OPEITE', desc: 'Não encontrados em OPEITE', cols: COLS_CAPT },
-  { key: 't6', n: 6, label: 'Mesmo CIC e valor · datas divergentes', sheet: '6 Datas divergentes', desc: 'Entre os não encontrados', cols: [C.lanc, C.titulo, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.cicPar] },
-  { key: 't7', n: 7, label: 'Mesmo CIC e data · valores divergentes', sheet: '7 Valores divergentes', desc: 'Entre os não encontrados', cols: [C.lanc, C.titulo, C.numDocTit, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.cicPar] },
+  { key: 't6', n: 6, label: 'Mesmo CIC e valor · datas divergentes', sheet: '6 Datas divergentes', desc: 'Entre os não encontrados', cols: [C.lanc, C.titulo, C.numDocCapt, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.cicPar] },
+  { key: 't7', n: 7, label: 'Mesmo CIC e data · valores divergentes', sheet: '7 Valores divergentes', desc: 'Entre os não encontrados', cols: [C.lanc, C.titulo, C.numDocCapt, C.numDocTit, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.vlrTitCapt, C.cicPar] },
 ]
 
 // ---------- Cálculo ----------
@@ -99,7 +100,7 @@ export function calcularCruzamento({ opeite, capt, hoje }) {
     id: `${o.id}|${c.id}`,
     lanc: o.lanc, titulo: o.titulo, dtVenci: o.dtVenci, dtNovo: o.dtNovo,
     dtVencCapt: c.dtVencTit, vrFace: o.vrFace, vlrTitCapt: c.vlrTit,
-    numDocTit: c.numDocTit || c.numDoc, nome: o.nome || c.pagador, cic: o.cic,
+    numDocCapt: c.numDoc, numDocTit: c.numDocTit || c.numDoc, nome: o.nome || c.pagador, cic: o.cic,
   })
 
   // 3) CIC + valor + vencimento (DT_VENCI, depois DT_VENCI_NOVO)
