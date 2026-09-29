@@ -7,6 +7,7 @@ import { smartFrom } from '../services/firebirdQuery'
 import { firebirdConfig } from '../config/firebird'
 import { generateCNAB400RemittanceFile } from '../utils/boleto'
 import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa } from '../services/boletoService'
+import { CRUZ_VIEWS, calcularCruzamento, exportarCruzamentoExcel, exportarVisaoExcel, exportarVisaoPdf, fmtCel } from '../utils/cruzamentoOpeite'
 
 // Sincronizar (Operações · Master): TODA a OPEITE (sem paginar, exceto STATUS='DC'),
 // lida do Firebird (com fallback Supabase). Colunas:
@@ -123,6 +124,14 @@ export default function SincronizarPage() {
   const toggleSort = (c) => setSort((x) => x.col === c ? { col: c, dir: x.dir === 'asc' ? 'desc' : 'asc' } : { col: c, dir: 'asc' })
   const sacadoCache = useRef({})
   const regIdx = useRef({})
+  // Cruzamento OPEITE x capt_registrado (relatório Excel + tela Sincronizar)
+  const [cruzando, setCruzando] = useState(false)
+  const [showCruz, setShowCruz] = useState(false)
+  const [cruzRes, setCruzRes] = useState(null)
+  const [cruzView, setCruzView] = useState('')          // '' = nenhuma opção (tela em branco)
+  const [cruzSel, setCruzSel] = useState({})            // { t1: Set(ids), ... }
+  const [showCruzFiltro, setShowCruzFiltro] = useState(false)
+  const [showCruzAcoes, setShowCruzAcoes] = useState(false)
 
   // Carga inicial: índice do capt_registrado + TODA a OPEITE (menos DC).
   useEffect(() => {
@@ -564,6 +573,124 @@ export default function SincronizarPage() {
     }
   }
 
+  // ---------- Cruzamento OPEITE x capt_registrado ----------
+  // Garante nome/CIC (SACADO) no cache para os COD_SACADO informados.
+  const garantirSacados = async (cods) => {
+    const faltantes = [...new Set(cods.filter((v) => v != null && !(v in sacadoCache.current)))]
+    for (let i = 0; i < faltantes.length; i += 300) {
+      const chunk = faltantes.slice(i, i + 300)
+      const { data: sac, error } = await smartFrom('SACADO')
+        .select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', chunk)
+      if (error) throw error
+      ;(sac || []).forEach((sx) => { sacadoCache.current[sx.COD_SACADO] = { nome: sx.NOME_CORRENTISTA, cic: sx.CIC } })
+      chunk.forEach((c) => { if (!(c in sacadoCache.current)) sacadoCache.current[c] = { nome: '', cic: '' } })
+    }
+  }
+
+  // Carrega capt_registrado (todas as linhas; o filtro de status_ret é feito no cálculo).
+  const carregarCaptParaCruzamento = async () => {
+    const out = []
+    let from = 0
+    const ps = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('capt_registrado')
+        .select('id, numero_documento, num_doc_tit, dt_venc_tit, vlr_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, status_ret')
+        .order('id')
+        .range(from, from + ps - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      out.push(...data)
+      if (data.length < ps) break
+      from += ps
+    }
+    return out
+  }
+
+  // Monta os 7 conjuntos do cruzamento a partir da OPEITE já carregada.
+  const obterCruzamento = async () => {
+    const hoje = hojeISO()
+    const base = rawRows.filter((o) => {
+      const st = String(o.STATUS || '').trim().toUpperCase()
+      if (st === 'DC' || st === 'CO') return false
+      const v = o.DT_VENCI ? String(o.DT_VENCI).slice(0, 10) : ''
+      const n = o.DT_VENCI_NOVO ? String(o.DT_VENCI_NOVO).slice(0, 10) : ''
+      return v >= hoje || n >= hoje
+    })
+    const [capt] = await Promise.all([carregarCaptParaCruzamento(), garantirSacados(base.map((o) => o.COD_SACADO))])
+    const opeite = base.map((o) => ({
+      ...o,
+      nome: sacadoCache.current[o.COD_SACADO]?.nome || '',
+      cic: sacadoCache.current[o.COD_SACADO]?.cic || '',
+    }))
+    return calcularCruzamento({ opeite, capt, hoje })
+  }
+
+  // Ações › Cruzamento OPEITE x capt_registrado: baixa o Excel com as 7 abas.
+  const exportarCruzamento = async () => {
+    if (loading || rawRows.length === 0) {
+      alert('Aguarde o carregamento da OPEITE antes de gerar o cruzamento.')
+      return
+    }
+    setShowAcoes(false)
+    setCruzando(true)
+    try {
+      const res = await obterCruzamento()
+      exportarCruzamentoExcel(res, `Cruzamento_OPEITE_capt_registrado_${hojeISO()}.xlsx`)
+    } catch (e) {
+      alert('Erro ao gerar o cruzamento: ' + (e?.message || String(e)))
+    } finally {
+      setCruzando(false)
+    }
+  }
+
+  // Ações › Sincronizar: abre a tela de títulos (em branco até escolher um filtro).
+  const abrirCruzamentoTela = async () => {
+    if (loading || rawRows.length === 0) {
+      alert('Aguarde o carregamento da OPEITE antes de abrir a sincronização.')
+      return
+    }
+    setShowAcoes(false)
+    setCruzView('')
+    setCruzSel({})
+    setShowCruzFiltro(false)
+    setShowCruzAcoes(false)
+    setCruzRes(null)
+    setShowCruz(true)
+    setCruzando(true)
+    try {
+      setCruzRes(await obterCruzamento())
+    } catch (e) {
+      alert('Erro ao carregar a sincronização: ' + (e?.message || String(e)))
+      setShowCruz(false)
+    } finally {
+      setCruzando(false)
+    }
+  }
+
+  const cruzViewDef = CRUZ_VIEWS.find((v) => v.key === cruzView) || null
+  const cruzRows = cruzViewDef && cruzRes ? (cruzRes[cruzViewDef.key] || []) : []
+  const cruzSelSet = (cruzViewDef && cruzSel[cruzViewDef.key]) || new Set()
+  const cruzSelRows = cruzRows.filter((r) => cruzSelSet.has(r.id))
+  const cruzAllSel = cruzRows.length > 0 && cruzRows.every((r) => cruzSelSet.has(r.id))
+  const toggleCruzRow = (id) => setCruzSel((prev) => {
+    const s = new Set(prev[cruzView] || [])
+    s.has(id) ? s.delete(id) : s.add(id)
+    return { ...prev, [cruzView]: s }
+  })
+  const toggleCruzAll = () => setCruzSel((prev) => ({
+    ...prev,
+    [cruzView]: cruzAllSel ? new Set() : new Set(cruzRows.map((r) => r.id)),
+  }))
+  const baixarCruzSelecionados = (formato) => {
+    setShowCruzAcoes(false)
+    if (!cruzViewDef) { alert('Escolha uma opção no Filtro.'); return }
+    if (cruzSelRows.length === 0) { alert('Selecione ao menos um registro.'); return }
+    const nome = `Sincronizar_${cruzViewDef.n}_${cruzViewDef.sheet.replace(/^\d+\s*/, '').replace(/[^\w+]+/g, '_')}_${hojeISO()}`
+    if (formato === 'pdf') exportarVisaoPdf(cruzViewDef, cruzSelRows, `${nome}.pdf`)
+    else exportarVisaoExcel(cruzViewDef, cruzSelRows, `${nome}.xlsx`)
+  }
+
   const th = 'text-left px-3 py-2 font-semibold text-[#a3a3a3] uppercase text-xs whitespace-nowrap'
   const td = 'px-3 py-2 whitespace-nowrap border-t border-[#1f1f1f]'
   const thc = 'cursor-pointer select-none hover:text-white'
@@ -589,7 +716,7 @@ export default function SincronizarPage() {
               onClick={() => setShowAcoes((x) => !x)}
               disabled={exportando}
               className={`px-3 py-2 rounded border text-sm ${showAcoes ? 'bg-white text-black border-white' : 'bg-[#1a1a1a] border-[#2a2a2a] hover:bg-[#222]'} ${exportando ? 'opacity-60 cursor-wait' : ''}`}
-            >{exportando ? 'Exportando…' : 'Ações'}</button>
+            >{exportando ? 'Exportando…' : (cruzando && !showCruz) ? 'Gerando…' : 'Ações'}</button>
             {showAcoes && (
               <div className="absolute right-0 mt-1 w-72 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20 p-1">
                 <button
@@ -607,6 +734,17 @@ export default function SincronizarPage() {
                   disabled={exportando || loading}
                   className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[#1f1f1f] disabled:opacity-50"
                 >Remessa Prorrogação</button>
+                <div className="my-1 border-t border-[#1f1f1f]" />
+                <button
+                  onClick={exportarCruzamento}
+                  disabled={exportando || loading || cruzando}
+                  className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[#1f1f1f] disabled:opacity-50"
+                >{cruzando && !showCruz ? 'Gerando cruzamento…' : 'Cruzamento OPEITE x capt_registrado'}</button>
+                <button
+                  onClick={abrirCruzamentoTela}
+                  disabled={exportando || loading || cruzando}
+                  className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[#1f1f1f] disabled:opacity-50"
+                >Sincronizar</button>
               </div>
             )}
           </div>
@@ -688,6 +826,120 @@ export default function SincronizarPage() {
           </tbody>
         </table>
       </div>
+
+      {showCruz && (
+        <div className="fixed inset-0 z-50 bg-[#0a0a0a] text-white flex flex-col">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#1f1f1f]">
+            <div>
+              <h2 className="text-xl font-semibold">Sincronizar</h2>
+              <p className="text-sm text-[#a3a3a3]">
+                Cruzamento OPEITE x capt_registrado
+                {cruzando && <span className="text-[#666666]"> · carregando…</span>}
+                {!cruzando && cruzViewDef && (
+                  <span className="text-[#666666]"> · {cruzViewDef.n}. {cruzViewDef.label} · {cruzRows.length} registro(s) · {cruzSelRows.length} selecionado(s)</span>
+                )}
+                {!cruzando && !cruzViewDef && <span className="text-[#666666]"> · escolha uma opção em Filtro</span>}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <button
+                  onClick={() => { setShowCruzAcoes((x) => !x); setShowCruzFiltro(false) }}
+                  disabled={cruzando}
+                  className={`px-3 py-2 rounded border text-sm ${showCruzAcoes ? 'bg-white text-black border-white' : 'bg-[#1a1a1a] border-[#2a2a2a] hover:bg-[#222]'} disabled:opacity-50`}
+                >Ações</button>
+                {showCruzAcoes && (
+                  <div className="absolute right-0 mt-1 w-64 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20 p-1">
+                    <button
+                      onClick={() => baixarCruzSelecionados('xlsx')}
+                      disabled={cruzSelRows.length === 0}
+                      className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[#1f1f1f] disabled:opacity-50"
+                    >Download Excel ({cruzSelRows.length} selecionado{cruzSelRows.length === 1 ? '' : 's'})</button>
+                    <button
+                      onClick={() => baixarCruzSelecionados('pdf')}
+                      disabled={cruzSelRows.length === 0}
+                      className="w-full text-left px-3 py-2 text-sm rounded hover:bg-[#1f1f1f] disabled:opacity-50"
+                    >Download PDF ({cruzSelRows.length} selecionado{cruzSelRows.length === 1 ? '' : 's'})</button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => { setShowCruzFiltro((x) => !x); setShowCruzAcoes(false) }}
+                className={`px-3 py-2 rounded border text-sm ${showCruzFiltro ? 'bg-white text-black border-white' : 'bg-[#1a1a1a] border-[#2a2a2a] hover:bg-[#222]'}`}
+              >Filtrar</button>
+              <button
+                onClick={() => setShowCruz(false)}
+                className="px-3 py-2 rounded border border-[#2a2a2a] bg-[#1a1a1a] text-sm hover:bg-[#222]"
+              >Fechar</button>
+            </div>
+          </div>
+
+          {showCruzFiltro && (
+            <div className="mx-6 mt-4 p-4 bg-[#111111] border border-[#1f1f1f] rounded-lg text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {CRUZ_VIEWS.map((v) => (
+                  <label key={v.key} className={`flex items-start gap-2 p-2 rounded cursor-pointer border ${cruzView === v.key ? 'border-white bg-[#1a1a1a]' : 'border-transparent hover:bg-[#161616]'}`}>
+                    <input
+                      type="radio"
+                      name="cruz-view"
+                      className="mt-1"
+                      checked={cruzView === v.key}
+                      onChange={() => setCruzView(v.key)}
+                    />
+                    <span>
+                      <span className="text-white">{v.n}. {v.label}</span>
+                      <span className="block text-xs text-[#666666]">
+                        {v.desc}{cruzRes ? ` · ${(cruzRes[v.key] || []).length} registro(s)` : ''}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button onClick={() => setCruzView('')} className="px-3 py-1 rounded bg-[#1a1a1a] border border-[#2a2a2a] hover:bg-[#222]">Limpar</button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-auto mx-6 my-4 border border-[#1f1f1f] rounded-lg">
+            <table className="w-full text-sm">
+              {cruzViewDef && (
+                <thead className="bg-[#111111] sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 w-8">
+                      <input type="checkbox" checked={cruzAllSel} onChange={toggleCruzAll} disabled={cruzRows.length === 0} />
+                    </th>
+                    {cruzViewDef.cols.map((c) => (
+                      <th key={c.key + c.label} className={`${th} ${c.type === 'money' || c.type === 'int' ? 'text-right' : ''}`}>{c.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+              )}
+              <tbody>
+                {cruzando && (
+                  <tr><td className={td}>Carregando OPEITE, SACADO e capt_registrado…</td></tr>
+                )}
+                {!cruzando && !cruzViewDef && (
+                  <tr><td className={`${td} text-[#666666]`}>Nenhum filtro selecionado. Clique em Filtrar e escolha uma opção.</td></tr>
+                )}
+                {!cruzando && cruzViewDef && cruzRows.length === 0 && (
+                  <tr><td className={td} colSpan={cruzViewDef.cols.length + 1}>Nenhum registro nesta opção.</td></tr>
+                )}
+                {!cruzando && cruzViewDef && cruzRows.map((r) => (
+                  <tr key={r.id} className={`hover:bg-[#0d0d0d] ${cruzSelSet.has(r.id) ? 'bg-[#141414]' : ''}`}>
+                    <td className="px-3 py-2 border-t border-[#1f1f1f]">
+                      <input type="checkbox" checked={cruzSelSet.has(r.id)} onChange={() => toggleCruzRow(r.id)} />
+                    </td>
+                    {cruzViewDef.cols.map((c) => (
+                      <td key={c.key + c.label} className={`${td} ${c.type === 'money' || c.type === 'int' ? 'text-right' : ''}`}>{fmtCel(r[c.key], c.type)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {showProrrogacao && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowProrrogacao(false)}>
