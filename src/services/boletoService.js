@@ -4583,3 +4583,126 @@ export const vincularRetPorVencTitulo = async () => {
   }
   return { total: pend.length, atualizados, semMatch, falhas, error: null }
 }
+
+// Vincula NUM_LANCA aos registros de RET_CONTACAPT SEM lançamento aproveitando o
+// Nº Lançamento já resolvido em capt_registrado (num_lanca), casando pelo nosso
+// número normalizado (só dígitos, sem zeros à esquerda). Quando o mesmo nosso número
+// aparece em capt_registrado com lançamentos diferentes, NÃO grava (ambíguo).
+export const vincularRetPorCaptRegistrado = async () => {
+  // 1) pendentes (sem NUM_LANCA)
+  const pend = []
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('hash_dedup, NOSSO_NUMERO')
+        .is('NUM_LANCA', null)
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[vincCaptReg] pend:', error.message); return { total: 0, atualizados: 0, semMatch: 0, ambiguos: 0, falhas: 0, error } }
+      if (!data || !data.length) break
+      pend.push(...data)
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+  if (!pend.length) return { total: 0, atualizados: 0, semMatch: 0, ambiguos: 0, falhas: 0, error: null }
+
+  // 2) capt_registrado com num_lanca -> nosso número normalizado -> lançamentos distintos
+  const lancPorNosso = {}   // nosso -> Set(num_lanca)
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('capt_registrado')
+        .select('identd_nosso_num, num_lanca')
+        .not('num_lanca', 'is', null)
+        .order('id')
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[vincCaptReg] capt_registrado:', error.message); return { total: pend.length, atualizados: 0, semMatch: 0, ambiguos: 0, falhas: 0, error } }
+      if (!data || !data.length) break
+      data.forEach(c => { const k = _normNum(c.identd_nosso_num); if (k) (lancPorNosso[k] = lancPorNosso[k] || new Set()).add(c.num_lanca) })
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+
+  // 3) resolve cada pendente e grava (em paralelo, por hash_dedup)
+  let atualizados = 0, semMatch = 0, ambiguos = 0, falhas = 0
+  const gravar = []
+  for (const r of pend) {
+    const lancs = lancPorNosso[_normNum(r.NOSSO_NUMERO)]
+    if (!lancs || !r.hash_dedup) { semMatch++; continue }
+    if (lancs.size !== 1) { ambiguos++; continue }
+    gravar.push({ hash: r.hash_dedup, num: [...lancs][0] })
+  }
+  for (const c of _cnabChunk(gravar, 20)) {
+    const res = await Promise.all(c.map(g => supabase.from('RET_CONTACAPT')
+      .update({ NUM_LANCA: String(g.num), link_metodo: 'capt_registrado', link_score: 90 })
+      .eq('hash_dedup', g.hash)
+      .is('NUM_LANCA', null)))
+    res.forEach(({ error }) => { if (error) { falhas++; console.warn('[vincCaptReg] update:', error.message) } else atualizados++ })
+  }
+  return { total: pend.length, atualizados, semMatch, ambiguos, falhas, error: null }
+}
+
+// Ajusta RET_CONTACAPT.TROCA_CEDENTE conforme capt_registrado.status, casando pelo nosso
+// número normalizado: 'ativo' -> 'true'; 'devolvido' -> 'false'. Só mexe nos registros cujo
+// nosso número existe em capt_registrado; se o mesmo nosso número tiver os dois status, NÃO altera.
+export const syncTrocaCedentePorCaptRegistrado = async () => {
+  const vazio = { total: 0, marcados: 0, desmarcados: 0, conflitos: 0, falhas: 0 }
+  // 1) capt_registrado: nosso número normalizado -> status distintos
+  const statusPorNosso = {}   // nosso -> Set('ativo' | 'devolvido')
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('capt_registrado')
+        .select('identd_nosso_num, status')
+        .order('id')
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[syncTrocaCedente] capt_registrado:', error.message); return { ...vazio, error } }
+      if (!data || !data.length) break
+      data.forEach(c => {
+        const k = _normNum(c.identd_nosso_num)
+        const st = String(c.status || '').trim().toLowerCase()
+        if (k && (st === 'ativo' || st === 'devolvido')) (statusPorNosso[k] = statusPorNosso[k] || new Set()).add(st)
+      })
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+
+  // 2) RET_CONTACAPT: todos os registros (para marcar e também desmarcar)
+  const rets = []
+  { let from = 0; const ps = 1000
+    while (true) {
+      const { data, error } = await supabase.from('RET_CONTACAPT')
+        .select('hash_dedup, NOSSO_NUMERO, TROCA_CEDENTE')
+        .order('hash_dedup')
+        .range(from, from + ps - 1)
+      if (error) { console.warn('[syncTrocaCedente] RET_CONTACAPT:', error.message); return { ...vazio, error } }
+      if (!data || !data.length) break
+      rets.push(...data)
+      if (data.length < ps) break
+      from += ps
+    }
+  }
+
+  // 3) resolve e grava só o que muda (em paralelo, por hash_dedup)
+  let marcados = 0, desmarcados = 0, conflitos = 0, falhas = 0
+  const gravar = []
+  for (const r of rets) {
+    const sts = statusPorNosso[_normNum(r.NOSSO_NUMERO)]
+    if (!sts || !r.hash_dedup) continue
+    if (sts.size !== 1) { conflitos++; continue }
+    const alvo = sts.has('ativo') ? 'true' : 'false'
+    if (String(r.TROCA_CEDENTE ?? '').trim().toLowerCase() === alvo) continue
+    gravar.push({ hash: r.hash_dedup, alvo })
+  }
+  for (const c of _cnabChunk(gravar, 20)) {
+    const res = await Promise.all(c.map(g => supabase.from('RET_CONTACAPT')
+      .update({ TROCA_CEDENTE: g.alvo })
+      .eq('hash_dedup', g.hash)))
+    res.forEach(({ error }, i) => {
+      if (error) { falhas++; console.warn('[syncTrocaCedente] update:', error.message) }
+      else if (c[i].alvo === 'true') marcados++
+      else desmarcados++
+    })
+  }
+  return { total: rets.length, marcados, desmarcados, conflitos, falhas, error: null }
+}

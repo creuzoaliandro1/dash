@@ -3,7 +3,7 @@ import jsPDF from 'jspdf'
 import { lerEntradasZip } from '../utils/zipEntries'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
-import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, retFileStorageKey, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
+import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, vincularRetPorCaptRegistrado, syncTrocaCedentePorCaptRegistrado, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, retFileStorageKey, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
 
 // ─── CNAB400 BMP — posições 1-indexed ────────────────────────────────────────
 // Retorno Tipo 1 (registro de transação):
@@ -552,6 +552,35 @@ export default function RetornoPage() {
       alert('Erro ao vincular: ' + (e?.message || e))
     } finally {
       setVincVencTit(false)
+    }
+  }
+  // Sincronizar › Num Lançamento + Digitável: roda nos registros JÁ gravados a mesma rotina do
+  // "Vincular OPEITE + gravar", aproveitando antes o capt_registrado.num_lanca (por nosso número),
+  // e ajusta TROCA_CEDENTE pelo capt_registrado.status (ativo -> true; devolvido -> false).
+  const [vincLancDig, setVincLancDig] = useState(false)
+  const handleNumLancaDigitavel = async () => {
+    setOpenSyncMenu(false)
+    setVincLancDig(true)
+    try {
+      const r0 = await vincularRetPorCaptRegistrado()
+      if (r0.error) throw r0.error
+      const r1 = await vincularRetPorTituloValor()
+      const r2 = await vincularRetPorVencTitulo()
+      const bf = await backfillCorrentistaRet()
+      const st = await recomputarStatusRet()
+      const tc = await syncTrocaCedentePorCaptRegistrado()
+      await loadSalvos()
+      alert(`Num Lançamento + Digitável:
+Registros sem lançamento: ${r0.total}
+Vinculados via Conta Capt (capt_registrado): ${r0.atualizados}${r0.ambiguos ? ` · ambíguos (nosso número com mais de um lançamento): ${r0.ambiguos}` : ''}
+Nº Título+Valor: ${r1.atualizados} · Vencimento+Nº Título: ${r2.atualizados}
+Correntista / Linha digitável preenchidos: ${bf.atualizados}. STATUS atualizado: ${st.atualizados}.
+Troca de Cedente — marcados (ativo): ${tc.marcados} · desmarcados (devolvido): ${tc.desmarcados}${tc.conflitos ? ` · não alterados (nosso número com ativo e devolvido): ${tc.conflitos}` : ''}${tc.error ? ` · erro: ${tc.error.message}` : ''}.${(r0.falhas || r1.falhas || r2.falhas || bf.falhas || tc.falhas) ? `
+Falhas: ${(r0.falhas || 0) + (r1.falhas || 0) + (r2.falhas || 0) + (bf.falhas || 0) + (tc.falhas || 0)}` : ''}`)
+    } catch (e) {
+      alert('Erro em Num Lançamento + Digitável: ' + (e?.message || e))
+    } finally {
+      setVincLancDig(false)
     }
   }
   const keySalvo = (r) => r.hash_dedup || [r.RETORNO, r.NOSSO_NUMERO, r.OCORRENCIA, r.VENCIMENTO, r.VR_TITULO, r.created_at].join('|')
@@ -1478,10 +1507,10 @@ export default function RetornoPage() {
             <div className="relative">
               <button
                 onClick={() => setOpenSyncMenu(o => !o)}
-                disabled={vincTitVal || vincVencTit}
+                disabled={vincTitVal || vincVencTit || vincLancDig}
                 className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition disabled:opacity-50"
               >
-                {(vincTitVal || vincVencTit) ? 'Vinculando...' : 'Sincronizar ▾'}
+                {(vincTitVal || vincVencTit || vincLancDig) ? 'Vinculando...' : 'Sincronizar ▾'}
               </button>
               {openSyncMenu && (
                 <div className="absolute right-0 mt-1 w-56 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20">
@@ -1500,6 +1529,14 @@ export default function RetornoPage() {
                     title="Vincular NUM_LANCA por Vencimento + Nº Título (para registros sem lançamento)"
                   >
                     {vincVencTit ? 'Vinculando...' : 'Vencimento + Num Titulo'}
+                  </button>
+                  <button
+                    onClick={handleNumLancaDigitavel}
+                    disabled={vincLancDig}
+                    className="block w-full text-left px-3 py-2 text-xs text-[#a3a3a3] hover:bg-[#1a1a1a] hover:text-white transition disabled:opacity-50"
+                    title="Preenche NUM_LANCA (via Conta Capt e OPEITE), correntista, linha digitável, STATUS e Troca de Cedente dos registros gravados"
+                  >
+                    {vincLancDig ? 'Processando...' : 'Num Lançamento + Digitável'}
                   </button>
                 </div>
               )}
