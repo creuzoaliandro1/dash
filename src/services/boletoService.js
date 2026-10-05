@@ -4117,6 +4117,7 @@ export const backfillCorrentistaRet = async () => {
   const items = pend.filter(r => r.hash_dedup).map(r => ({ key: r.hash_dedup, nosso: r.NOSSO_NUMERO, numLanca: r.NUM_LANCA }))
   const corr = await resolverCorrentistaRet(items)
   let atualizados = 0, falhas = 0
+  const gravar = []
   for (const r of pend) {
     if (!r.hash_dedup) continue
     const c = corr[r.hash_dedup]
@@ -4126,9 +4127,11 @@ export const backfillCorrentistaRet = async () => {
     if (!(r.CIC_CORRENTISTA && String(r.CIC_CORRENTISTA).trim()) && c.cic) upd.CIC_CORRENTISTA = c.cic
     if (!(r.LINHA_DIGITAVEL && String(r.LINHA_DIGITAVEL).trim()) && c.barcode) upd.LINHA_DIGITAVEL = c.barcode
     if (!Object.keys(upd).length) continue
-    const { error } = await supabase.from('RET_CONTACAPT').update(upd).eq('hash_dedup', r.hash_dedup)
-    if (error) { falhas++; console.warn('[backfillCorrentistaRet] update', r.hash_dedup, error.message) }
-    else atualizados++
+    gravar.push({ hash: r.hash_dedup, upd })
+  }
+  for (const c of _cnabChunk(gravar, 20)) {
+    const res = await Promise.all(c.map(g => supabase.from('RET_CONTACAPT').update(g.upd).eq('hash_dedup', g.hash)))
+    res.forEach(({ error }) => { if (error) { falhas++; console.warn('[backfillCorrentistaRet] update:', error.message) } else atualizados++ })
   }
   return { total: pend.length, atualizados, falhas }
 }
@@ -4494,6 +4497,7 @@ export const vincularRetPorTituloValor = async () => {
 
   // 3) resolve cada pendente e grava
   let atualizados = 0, semMatch = 0, falhas = 0
+  const gravar = []
   for (const r of pend) {
     const cents = Math.round((Number(r.VR_TITULO) || 0) * 100)
     let num = null
@@ -4505,11 +4509,14 @@ export const vincularRetPorTituloValor = async () => {
     const distintos = [...new Set(cands.map(o => o.num))]
     if (distintos.length === 1) num = distintos[0]      // valor + título -> lançamento único
     if (num == null) { semMatch++; continue }
-    const { error } = await supabase.from('RET_CONTACAPT')
-      .update({ NUM_LANCA: String(num), link_metodo: 'titulo+valor', link_score: 60 })
-      .eq('hash_dedup', r.hash_dedup)
-    if (error) { falhas++; console.warn('[vincTitVal] update:', error.message) }
-    else atualizados++
+    gravar.push({ hash: r.hash_dedup, num })
+  }
+  // grava em paralelo (lotes de 20) — um UPDATE por vez deixava a rotina muito lenta
+  for (const c of _cnabChunk(gravar, 20)) {
+    const res = await Promise.all(c.map(g => supabase.from('RET_CONTACAPT')
+      .update({ NUM_LANCA: String(g.num), link_metodo: 'titulo+valor', link_score: 60 })
+      .eq('hash_dedup', g.hash)))
+    res.forEach(({ error }) => { if (error) { falhas++; console.warn('[vincTitVal] update:', error.message) } else atualizados++ })
   }
   return { total: pend.length, atualizados, semMatch, falhas, error: null }
 }
@@ -4567,6 +4574,7 @@ export const vincularRetPorVencTitulo = async () => {
 
   // 3) resolve e grava
   let atualizados = 0, semMatch = 0, falhas = 0
+  const gravar = []
   for (const r of pendV) {
     const venc = String(r.VENCIMENTO).slice(0, 10)
     const pk = _titKeys(r.NUM_TITULO)
@@ -4575,11 +4583,13 @@ export const vincularRetPorVencTitulo = async () => {
     const cands = candsND.length ? candsND : candsAll   // DC só quando não há outro STATUS
     const distintos = [...new Set(cands.map(o => o.num))]
     if (distintos.length !== 1) { semMatch++; continue }   // exige venc + título -> único
-    const { error } = await supabase.from('RET_CONTACAPT')
-      .update({ NUM_LANCA: String(distintos[0]), link_metodo: 'venc+titulo', link_score: 70 })
-      .eq('hash_dedup', r.hash_dedup)
-    if (error) { falhas++; console.warn('[vincVencTit] update:', error.message) }
-    else atualizados++
+    gravar.push({ hash: r.hash_dedup, num: distintos[0] })
+  }
+  for (const c of _cnabChunk(gravar, 20)) {
+    const res = await Promise.all(c.map(g => supabase.from('RET_CONTACAPT')
+      .update({ NUM_LANCA: String(g.num), link_metodo: 'venc+titulo', link_score: 70 })
+      .eq('hash_dedup', g.hash)))
+    res.forEach(({ error }) => { if (error) { falhas++; console.warn('[vincVencTit] update:', error.message) } else atualizados++ })
   }
   return { total: pend.length, atualizados, semMatch, falhas, error: null }
 }
