@@ -3995,6 +3995,8 @@ export const getImportadosUnificados = async (contaId, contaData, userType = 'U'
 
 // ============================================================
 // RETORNO -> OPEITE -> RET_CONTACAPT
+// As rotinas de Retorno leem OPEITE/SACADO SEMPRE da réplica no Supabase (supabase.from,
+// não smartFrom): não dependem do Firebird estar no ar. RET_CONTACAPT é gravada no Supabase.
 // Rotina para tratar arquivos de retorno (.ret): resolve o CIC do sacado a
 // partir do nosso número (capt_boletos e, como fallback, capt_registrado) e
 // casa no OPEITE por valor + vencimento + CIC (a mesma regra usada na
@@ -4044,13 +4046,13 @@ export const resolverCorrentistaRet = async (items) => {
   const codPorLanca = {}
   const codSet = new Set()
   for (const c of _cnabChunk(lancas, 300)) {
-    const { data, error } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, COD_SACADO').in('NUM_LANCAMENTO', c)
+    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, COD_SACADO').in('NUM_LANCAMENTO', c)
     if (error) { console.warn('[resolverCorrentistaRet] OPEITE:', error.message); continue }
     ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && codPorLanca[l] == null) { codPorLanca[l] = o.COD_SACADO; if (o.COD_SACADO != null) codSet.add(o.COD_SACADO) } })
   }
   const sacadoPorCod = {}
   for (const c of _cnabChunk([...codSet], 300)) {
-    const { data, error } = await smartFrom('SACADO').select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', c)
+    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', c)
     if (error) { console.warn('[resolverCorrentistaRet] SACADO:', error.message); continue }
     ;(data || []).forEach(sa => { sacadoPorCod[sa.COD_SACADO] = { nome: (sa.NOME_CORRENTISTA || '').trim(), cic: _normNum(sa.CIC) } })
   }
@@ -4141,7 +4143,7 @@ export const getOpeiteStatusMap = async (lancas) => {
   const uniq = [...new Set((lancas || []).map(l => (l == null ? '' : String(l).trim())).filter(Boolean))]
   const map = {}
   for (const c of _cnabChunk(uniq, 300)) {
-    const { data, error } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, STATUS').in('NUM_LANCAMENTO', c)
+    const { data, error } = await supabase.from('OPEITE').select('NUM_LANCAMENTO, STATUS').in('NUM_LANCAMENTO', c)
     if (error) { console.warn('[getOpeiteStatusMap]', error.message); continue }
     ;(data || []).forEach(o => { const l = String(o.NUM_LANCAMENTO).trim(); if (l && map[l] == null) map[l] = (o.STATUS == null ? '' : String(o.STATUS)).trim() })
   }
@@ -4261,7 +4263,7 @@ export const vincularRetornoOpeite = async (registros) => {
     for (const c of _cnabChunk(vencs, 100)) {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await smartFrom('OPEITE')
+        const { data, error } = await supabase.from('OPEITE')
           .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
           .in(col, c).range(from, from + ps - 1)
         if (error) { console.warn('[vincularRetornoOpeite] OPEITE', col, error.message); break }
@@ -4278,7 +4280,7 @@ export const vincularRetornoOpeite = async (registros) => {
   const cods = [...new Set(opeiteRows.map(o => o.COD_SACADO))]
   const cicPorCod = {}
   for (const c of _cnabChunk(cods, 300)) {
-    const { data, error } = await smartFrom('SACADO').select('COD_SACADO, CIC').in('COD_SACADO', c)
+    const { data, error } = await supabase.from('SACADO').select('COD_SACADO, CIC').in('COD_SACADO', c)
     if (error) { console.warn('[vincularRetornoOpeite] SACADO:', error.message); continue }
     ;(data || []).forEach(sa => { const cic = _normNum(sa.CIC); if (cic) cicPorCod[sa.COD_SACADO] = cic })
   }
@@ -4480,7 +4482,7 @@ export const vincularRetPorTituloValor = async () => {
   for (const c of _cnabChunk(valores, 200)) {
     let from = 0; const ps = 1000
     while (true) {
-      const { data, error } = await smartFrom('OPEITE')
+      const { data, error } = await supabase.from('OPEITE')
         .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, STATUS')
         .in('VR_FACE', c).range(from, from + ps - 1)
       if (error) { console.warn('[vincTitVal] OPEITE:', error.message); break }
@@ -4551,7 +4553,7 @@ export const vincularRetPorVencTitulo = async () => {
     for (const c of _cnabChunk(vencs, 100)) {
       let from = 0; const ps = 1000
       while (true) {
-        const { data, error } = await smartFrom('OPEITE')
+        const { data, error } = await supabase.from('OPEITE')
           .select('NUM_LANCAMENTO, NUM_TITULO, DT_VENCI, DT_VENCI_NOVO, STATUS')
           .in(col, c).range(from, from + ps - 1)
         if (error) { console.warn('[vincVencTit] OPEITE', col, error.message); break }
