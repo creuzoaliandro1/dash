@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { smartFrom } from '../services/firebirdQuery'
 import { firebirdConfig } from '../config/firebird'
 import { generateCNAB400RemittanceFile } from '../utils/boleto'
-import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa } from '../services/boletoService'
+import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa, getContaCaptCapital } from '../services/boletoService'
 import { CRUZ_VIEWS, calcularCruzamento, exportarCruzamentoExcel, exportarVisaoExcel, exportarVisaoPdf, fmtCel } from '../utils/cruzamentoOpeite'
 
 // Sincronizar (Operações · Master): TODA a OPEITE (sem paginar, exceto STATUS='DC'),
@@ -448,7 +448,8 @@ export default function SincronizarPage() {
 
   // Gera a(s) remessa(s) CNAB400 de alteração de vencimento (ocorrência 06),
   // um arquivo .rem/.zip por conta (cedente), e um .zip unificado quando há mais
-  // de uma conta. Também move (no cadastro) as datas de juros/multa/desconto.
+  // de uma conta. O header (linha 1) vai sempre com os dados da CAPT CAPITAL.
+  // Também move (no cadastro) as datas de juros/multa/desconto.
   const gerarRemessaProrrogacao = async () => {
     const selec = remRows.filter((r) => r.sel)
     if (selec.length === 0) { alert('Selecione ao menos um título.'); return }
@@ -493,8 +494,12 @@ export default function SincronizarPage() {
       }
 
       // 2) Carrega as contas de cada cedente de origem (por cod_cedente). Cada conta
-      //    gera a SUA própria remessa (header e detalhe = a mesma conta), como um
-      //    registro CNAB normal, porém com ocorrência 06 (alteração de vencimento).
+      //    gera a SUA própria remessa: header = CAPT CAPITAL, detalhe = a conta de
+      //    origem, com ocorrência 06 (alteração de vencimento).
+      const { data: contaCapt, error: captErr } = await getContaCaptCapital()
+      if (captErr || !contaCapt) {
+        throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
+      }
       const { data: contasOrig } = await supabase
         .from('CONTAS')
         .select('id, nome_correntista, conta, cedente, cic, cnab400, agencia, cod_cedente')
@@ -506,7 +511,12 @@ export default function SincronizarPage() {
         alert('Cedente(s) de origem sem conta em CONTAS (cod_cedente): ' + semConta.join(', ') + '. Esses títulos não serão incluídos.')
       }
 
-      // 3) Gera um .rem/.zip por conta, usando a numeração de cada conta.
+      // 3) Gera um .rem/.zip por conta, usando a numeração de remessa da CAPT CAPITAL
+      //    (é ela quem vai no header).
+      const cnab400Capt = Number(contaCapt.cnab400)
+      let nextSeq
+      if (!isNaN(cnab400Capt) && cnab400Capt >= 1) nextSeq = cnab400Capt + 1
+      else { const { count } = await getContaRemessaCount(contaCapt.cedente || ''); nextSeq = (count || 0) + 1 }
       const now = new Date()
       const p2 = (n) => String(n).padStart(2, '0')
       const dd = p2(now.getDate()), mm = p2(now.getMonth() + 1)
@@ -515,21 +525,18 @@ export default function SincronizarPage() {
         const conta = contaByCod[co]
         if (!conta) continue
         const boletos = porOrigem[co].map((r) => captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]))
-        const cnab400Num = Number(conta.cnab400)
-        let nextSeq
-        if (!isNaN(cnab400Num) && cnab400Num >= 1) nextSeq = cnab400Num + 1
-        else { const { count } = await getContaRemessaCount(conta.cedente || ''); nextSeq = (count || 0) + 1 }
-        // Registro CNAB normal (header = detalhe = a própria conta), ocorrência 06
-        const blob = await generateCNAB400RemittanceFile(boletos, conta, nextSeq, '06')
+        // Header = CAPT CAPITAL; detalhe = conta de origem; ocorrência 06
+        const blob = await generateCNAB400RemittanceFile(boletos, conta, nextSeq, '06', undefined, contaCapt)
         const seq = String(nextSeq).padStart(7, '0')
         const remName = `CB${dd}${mm}${seq}.REM`
-        try { await incrementContaCnab400(conta.id, nextSeq) } catch (e) { /* best-effort */ }
+        try { await incrementContaCnab400(contaCapt.id, nextSeq) } catch (e) { /* best-effort */ }
         let caminhoStorage = null
-        try { const { data: up } = await uploadRemessaCNAB400(conta.id, remName, blob); caminhoStorage = up?.caminho || null } catch (e) { /* best-effort */ }
+        try { const { data: up } = await uploadRemessaCNAB400(contaCapt.id, remName, blob); caminhoStorage = up?.caminho || null } catch (e) { /* best-effort */ }
         try {
           const valorTotal = boletos.reduce((sm, b) => sm + (parseFloat(b.valor) || 0), 0)
-          await createRemessa(conta.id, { filename: remName, quantidadeBoletos: boletos.length, valorTotal, caminhoStorage })
+          await createRemessa(contaCapt.id, { filename: remName, quantidadeBoletos: boletos.length, valorTotal, caminhoStorage })
         } catch (e) { /* best-effort */ }
+        nextSeq++
         const zip = new JSZip()
         zip.file(remName, blob)
         const zipBlob = await zip.generateAsync({ type: 'blob' })
