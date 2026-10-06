@@ -400,8 +400,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     const loteYield = Math.max(20, Math.ceil(totalBoletos / 40))
     let idxBoleto = 0
     for (const boleto of boletos) {
-          // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
-          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
+          lines.push(buildDetalhe1(boleto, contaInfo, lineSeq, tipoOperacao))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
