@@ -163,6 +163,100 @@ export function calcularCruzamento({ opeite, capt, hoje }) {
   return { t1, t2, t3, t4, t5, t6, t7 }
 }
 
+// ---------- Datas divergentes (tela Sincronizar) ----------
+// Títulos de capt_registrado cujo vencimento difere do esperado pela OPEITE.
+// Data esperada = DT_VENCI_NOVO quando preenchida; senão DT_VENCI. Não depende
+// do STATUS da OPEITE (não precisa ser PR). Cruza por CIC + valor:
+//   1) CIC + valor + data esperada iguais -> correto, fica fora da relação (1:1);
+//   2) entre as sobras, mesmo CIC + valor com data diferente -> entra na relação
+//      (1:1; prefere o capt já vinculado ao lançamento, depois o que ainda está no
+//      DT_VENCI antigo, depois a data mais próxima).
+// Um capt já vinculado a OUTRO lançamento (num_lanca) nunca é pareado: evita cruzar
+// parcelas de mesmo valor do mesmo sacado.
+// Só considera capt_registrado ativo no banco (situação A Vencer/Vencido, não devolvido).
+// opeite: mesmo formato de calcularCruzamento; capt: + situacao_boleto, status, identd_nosso_num, num_lanca.
+export const VIEW_DATAS = {
+  key: 'datas', n: 1, label: 'Datas divergentes', sheet: 'Datas divergentes',
+  desc: 'capt_registrado com vencimento diferente do esperado na OPEITE (Dt Novo; se vazio, Dt Venci) · mesmo CIC e valor',
+  cols: [
+    C.lanc, C.titulo,
+    { key: 'status', label: 'Status OPEITE', type: 'text' },
+    { key: 'nosso', label: 'Nosso Número', type: 'text' },
+    C.numDocCapt, C.dtVenci, C.dtNovo, C.dtVencCapt, C.vrFace, C.correntista, C.cicPar,
+  ],
+}
+
+export function calcularDatasDivergentes({ opeite, capt }) {
+  const os = opeite.map((o, i) => {
+    const dtVenci = iso(o.DT_VENCI), dtNovo = iso(o.DT_VENCI_NOVO)
+    return {
+      id: `o:${o.NUM_LANCAMENTO ?? ''}:${i}`,
+      lanc: o.NUM_LANCAMENTO,
+      titulo: String(o.NUM_TITULO ?? '').trim(),
+      status: up(o.STATUS),
+      dtVenci, dtNovo, esperado: dtNovo || dtVenci,
+      vrFace: parseFloat(o.VR_FACE) || 0,
+      nome: String(o.nome ?? '').trim(),
+      cic: dig(o.cic),
+    }
+  }).filter((o) => o.cic && o.esperado)
+
+  const porCicValor = new Map()
+  for (const c of capt) {
+    const sit = String(c.situacao_boleto ?? '').trim().toLowerCase()
+    if (sit !== 'a vencer' && sit !== 'vencido') continue
+    if (String(c.status ?? '').trim().toLowerCase() === 'devolvido') continue
+    const cic = dig(c.cnpj_cpf_pagdr), dt = iso(c.dt_venc_tit)
+    if (!cic || !dt) continue
+    const k = `${cic}|${cents(c.vlr_tit)}`
+    if (!porCicValor.has(k)) porCicValor.set(k, [])
+    porCicValor.get(k).push({
+      id: `c:${c.id}`, dt,
+      lanc: c.num_lanca == null || c.num_lanca === '' ? null : String(c.num_lanca),
+      numDoc: String(c.numero_documento ?? '').trim(),
+      nosso: String(c.identd_nosso_num ?? '').trim(),
+      pagador: String(c.nom_rz_soc_pagdr ?? '').trim(),
+    })
+  }
+
+  const usadoC = new Set()
+  const livres = (o) => (porCicValor.get(`${o.cic}|${cents(o.vrFace)}`) || [])
+    .filter((c) => !usadoC.has(c.id) && (c.lanc == null || c.lanc === String(o.lanc)))
+    .sort((a, b) => (b.lanc != null) - (a.lanc != null))
+
+  // 1) data esperada já confere -> correto
+  const sobras = []
+  for (const o of os) {
+    const c = livres(o).find((x) => x.dt === o.esperado)
+    if (c) usadoC.add(c.id)
+    else sobras.push(o)
+  }
+
+  // 2) mesmo CIC + valor, data diferente
+  const linha = (o, c) => ({
+    id: `${o.id}|${c.id}`,
+    lanc: o.lanc, titulo: o.titulo, status: o.status, nosso: c.nosso, numDocCapt: c.numDoc,
+    dtVenci: o.dtVenci, dtNovo: o.dtNovo, dtVencCapt: c.dt,
+    vrFace: o.vrFace, nome: o.nome || c.pagador, cic: o.cic,
+  })
+  const out = [], resto = []
+  for (const o of sobras) {
+    const l = livres(o)
+    const c = l.find((x) => x.lanc != null) || (o.dtNovo ? l.find((x) => x.dt === o.dtVenci) : null)
+    if (c) { usadoC.add(c.id); out.push(linha(o, c)) }
+    else resto.push(o)
+  }
+  for (const o of resto) {
+    let melhor = null, dist = Infinity
+    for (const c of livres(o)) {
+      const dd = dias(o.esperado, c.dt)
+      if (dd < dist) { dist = dd; melhor = c }
+    }
+    if (melhor) { usadoC.add(melhor.id); out.push(linha(o, melhor)) }
+  }
+  return out.sort((a, b) => cmpStr(a.dtNovo || a.dtVenci, b.dtNovo || b.dtVenci) || (parseInt(a.lanc) || 0) - (parseInt(b.lanc) || 0))
+}
+
 // ---------- Formatação ----------
 export const fmtCel = (v, type) => {
   if (v == null || v === '') return ''
