@@ -202,7 +202,7 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01', multiplasContas = fals
     line += '        '                             // pos 101-108 - brancos (8 espacos)
     line += 'MX'                                   // pos 109-110 - identificador sistema
     line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
-    line += (multiplasContas ? '1 ' : '  ')        // pos 118 - indicador de registro múltiplas contas (dígito 1)
+    line += (multiplasContas ? '11' : '  ')        // pos 118-119 - indicador de registro múltiplas contas (dígito 1 nas duas posições)
 
     // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '
@@ -400,7 +400,8 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     const loteYield = Math.max(20, Math.ceil(totalBoletos / 40))
     let idxBoleto = 0
     for (const boleto of boletos) {
-          lines.push(buildDetalhe1(boleto, contaInfo, lineSeq, tipoOperacao))
+          // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
+          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
