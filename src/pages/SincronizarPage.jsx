@@ -447,11 +447,11 @@ export default function SincronizarPage() {
   }
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
-  // os títulos selecionados, enviada pela CAPT CAPITAL no formato múltiplas contas
-  // do manual BMP: header = CAPT CAPITAL (conta-mãe) com pos 118-119 = 1; cada
-  // detalhe leva a conta do cedente de origem (pos 030-037). O título cedido só
-  // aceita instrução do cedente atual — pela conta de origem o BMP devolve
-  // ocorrência 32 / motivo 14 (boleto cedido para outro cedente).
+  // os títulos selecionados, enviada pela CAPT CAPITAL como remessa comum dela:
+  // header e detalhe (pos 030-037) com a conta da CAPT CAPITAL, que é o titular
+  // do título no BMP após a troca de cedente (capt_registrado.conta_titular).
+  // Pela conta de origem o BMP devolve ocorrência 32 / motivo 14 (boleto cedido);
+  // com a conta de origem no detalhe, não localiza o título no cedente da CAPT.
   // Também move (no cadastro) as datas de juros/multa/desconto.
   const gerarRemessaProrrogacao = async () => {
     const selec = remRows.filter((r) => r.sel)
@@ -464,25 +464,7 @@ export default function SincronizarPage() {
     }
     setGerandoRem(true)
     try {
-      // 1) Resolve o cedente ORIGINAL de cada título (OPEITE.COD_CEDENTE), buscando
-      //    direto na OPEITE por Nº de lançamento — robusto a recargas da tela.
-      const lancsSel = [...new Set(selec.map((r) => r.lanc).filter((v) => v != null))]
-      const codCedByLanc = {}
-      for (let i = 0; i < lancsSel.length; i += 300) {
-        const chunk = lancsSel.slice(i, i + 300)
-        const { data: ops } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, COD_CEDENTE').in('NUM_LANCAMENTO', chunk)
-        ;(ops || []).forEach((o) => { if (o.NUM_LANCAMENTO != null) codCedByLanc[String(o.NUM_LANCAMENTO)] = o.COD_CEDENTE })
-      }
-      const porOrigem = {}
-      for (const r of selec) {
-        const co = (r.cod_cedente != null && r.cod_cedente !== '') ? r.cod_cedente : codCedByLanc[String(r.lanc)]
-        if (co == null || co === '') continue
-        ;(porOrigem[String(co)] = porOrigem[String(co)] || []).push(r)
-      }
-      const origCods = Object.keys(porOrigem)
-      if (origCods.length === 0) { alert('Nenhum título com cedente de origem (OPEITE.COD_CEDENTE) identificado.'); return }
-
-      // 1b) Carrega os dados de endereço do pagador (SACADO) por COD_SACADO
+      // 1) Carrega os dados de endereço do pagador (SACADO) por COD_SACADO
       const codsSacado = [...new Set(selec.map((r) => r.cod_sacado).filter((v) => v != null))]
       const sacadoMap = {}
       for (let i = 0; i < codsSacado.length; i += 300) {
@@ -494,33 +476,14 @@ export default function SincronizarPage() {
         })
       }
 
-      // 2) Carrega a CAPT CAPITAL (header) e as contas de cada cedente de origem
-      //    (por cod_cedente), usadas nas linhas de detalhe.
+      // 2) Carrega a CAPT CAPITAL: header e detalhe usam a conta dela.
       const { data: contaCapt, error: captErr } = await getContaCaptCapital()
       if (captErr || !contaCapt) {
         throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
       }
-      const { data: contasOrig } = await supabase
-        .from('CONTAS')
-        .select('id, nome_correntista, conta, cedente, cic, cnab400, agencia, cod_cedente')
-        .in('cod_cedente', origCods.map((c) => Number(c)))
-      const contaByCod = {}
-      ;(contasOrig || []).forEach((c) => { if (c.cod_cedente != null) contaByCod[String(c.cod_cedente)] = c })
-      const semConta = origCods.filter((c) => !contaByCod[c])
-      if (semConta.length > 0) {
-        alert('Cedente(s) de origem sem conta em CONTAS (cod_cedente): ' + semConta.join(', ') + '. Esses títulos não serão incluídos.')
-      }
 
-      // 3) Um único .REM: header = CAPT CAPITAL (numeração de remessa dela) com o
-      //    indicador de múltiplas contas ligado; detalhe = conta de origem de cada
-      //    título, ocorrência 06.
-      const boletos = []
-      for (const co of origCods) {
-        const conta = contaByCod[co]
-        if (!conta) continue
-        porOrigem[co].forEach((r) => boletos.push({ ...captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]), _contaDetalhe: conta }))
-      }
-      if (boletos.length === 0) { alert('Nenhuma remessa gerada (contas não encontradas).'); return }
+      // 3) Um único .REM na numeração de remessa da CAPT CAPITAL, ocorrência 06.
+      const boletos = selec.map((r) => captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]))
 
       const cnab400Capt = Number(contaCapt.cnab400)
       let nextSeq
@@ -529,7 +492,7 @@ export default function SincronizarPage() {
       const now = new Date()
       const p2 = (n) => String(n).padStart(2, '0')
       const dd = p2(now.getDate()), mm = p2(now.getMonth() + 1)
-      const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, '06', undefined, null, true)
+      const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, '06')
       const seq = String(nextSeq).padStart(7, '0')
       const remName = `CB${dd}${mm}${seq}.REM`
       try { await incrementContaCnab400(contaCapt.id, nextSeq) } catch (e) { /* best-effort */ }
