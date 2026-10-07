@@ -319,7 +319,9 @@ export default function SincronizarPage() {
   }
 
   // Carrega as linhas OPEITE STATUS='PR' que possuem NUM_LANCAMENTO correspondente
-  // em capt_registrado (por num_lanca). Reaproveitado pelo modal e pela remessa.
+  // em capt_registrado (por num_lanca) e cujo vencimento em capt_registrado ainda
+  // difere do esperado (DT_VENCI_NOVO; se vazio, DT_VENCI). Quem já está com a data
+  // nova fica de fora. Reaproveitado pelo modal e pela remessa.
   const carregarPRRegistros = async () => {
     const prRows = rawRows.filter((o) => String(o.STATUS || '').trim().toUpperCase() === 'PR')
     const lancs = [...new Set(prRows.map((o) => o.NUM_LANCAMENTO).filter((v) => v != null))]
@@ -334,6 +336,7 @@ export default function SincronizarPage() {
     }
     return prRows
       .filter((o) => o.NUM_LANCAMENTO in capById)
+      .filter((o) => _iso(capById[o.NUM_LANCAMENTO].dt_venc_tit) !== _iso(o.DT_VENCI_NOVO || o.DT_VENCI))
       .map((o) => {
         const r = capById[o.NUM_LANCAMENTO]
         return {
@@ -424,7 +427,7 @@ export default function SincronizarPage() {
       }
     }
     if (base.length === 0) {
-      alert('Nenhum registro de prorrogação com correspondência para gerar remessa.')
+      alert('Nenhum registro de prorrogação com vencimento pendente para gerar remessa.')
       return
     }
     setRemRows(base.map((r) => ({
@@ -865,7 +868,7 @@ export default function SincronizarPage() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-[#1f1f1f]">
               <div>
                 <h2 className="text-white font-semibold">Registros com prorrogação</h2>
-                <p className="text-xs text-[#666666]">OPEITE STATUS=PR com correspondência em capt_registrado (por Nº de lançamento) · {prRegistros.length} registro(s)</p>
+                <p className="text-xs text-[#666666]">OPEITE STATUS=PR com vencimento em capt_registrado diferente do novo vencimento (por Nº de lançamento) · {prRegistros.length} registro(s)</p>
               </div>
               <button onClick={() => setShowProrrogacao(false)} className="text-[#666666] hover:text-white text-2xl leading-none">×</button>
             </div>
@@ -891,7 +894,7 @@ export default function SincronizarPage() {
                 </thead>
                 <tbody>
                   {prRegistros.length === 0 && (
-                    <tr><td className={td} colSpan={10}>{carregandoPR ? 'Carregando…' : 'Nenhum registro com prorrogação e correspondência encontrado.'}</td></tr>
+                    <tr><td className={td} colSpan={10}>{carregandoPR ? 'Carregando…' : 'Nenhum registro com prorrogação pendente (todos já estão com a data nova).'}</td></tr>
                   )}
                   {prRegistros.map((r, i) => (
                     <tr key={`${r.lanc}-${i}`} className="hover:bg-[#0d0d0d]">
