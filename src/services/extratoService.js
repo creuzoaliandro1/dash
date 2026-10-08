@@ -59,13 +59,73 @@ const parseValor = (raw) => {
   return isNaN(n) ? 0 : n
 }
 
+// Cabeçalho sem acento / pontuação / espaços, em minúsculas ("Agência Origem " -> "agenciaorigem")
+const _normHeader = (h) => String(h ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+// Layout "Relatório Movimentos" (BMP): cabeçalho na linha 1 com as colunas
+// Ag. | Conta | Modelo Conta | Correntista | Parceiro | Operador | DataMovto. | Operação | Valor | D/C | NSU |
+// Banco Origem | Agência Origem | Complemento | Observações | ISPB Destino | Nome/Razão Social Contraparte |
+// CPF/CNPJ Contraparte | ISPB Origem | CPF/CNPJ Correntista | End To End
+// Mapeado pelo NOME da coluna. O NSU é o mesmo ID da transação do layout "Últimas Transações",
+// então a deduplicação por TRANSACAO vale entre os dois layouts.
+// Ag./Conta do arquivo são da própria conta (não da contraparte) e não há coluna de origem
+// INTERNO/EXTERNO: CONTA e ORIGEM ficam vazios.
+const _findHeaderMovimentos = (rows) => {
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const hs = (rows[i] || []).map(_normHeader)
+    if (hs.includes('datamovto') && hs.includes('nsu')) return i
+  }
+  return -1
+}
+
+const _parseMovimentos = (rows, headerIdx) => {
+  const hs = rows[headerIdx].map(_normHeader)
+  const col = (nome) => hs.indexOf(nome)
+  const c = {
+    data: col('datamovto'), tipo: col('dc'), operacao: col('operacao'), valor: col('valor'), nsu: col('nsu'),
+    banco: col('bancoorigem'), agencia: col('agenciaorigem'), obs: col('observacoes'),
+    nome: col('nomerazaosocialcontraparte'), cic: col('cpfcnpjcontraparte'), e2e: col('endtoend'),
+  }
+  const txt = (r, i) => (i < 0 ? '' : String(r[i] ?? '').trim())
+  const out = []
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i] || []
+    const data = parseDataLancamento(c.data < 0 ? null : r[c.data])
+    if (!data) continue
+    out.push({
+      DATA: data,
+      TIPO: txt(r, c.tipo).toUpperCase(),
+      OPERACAO: txt(r, c.operacao),
+      NOME: txt(r, c.nome),
+      CIC: txt(r, c.cic),
+      AGENCIA: txt(r, c.agencia),
+      CONTA: '',
+      INSTITUICAO: txt(r, c.banco),
+      VALOR: Math.abs(parseValor(c.valor < 0 ? null : r[c.valor])),
+      TRANSACAO: txt(r, c.nsu),
+      ORIGEM: '',
+      CONTROLE: txt(r, c.e2e),
+      OBSERVACAO: txt(r, c.obs),
+    })
+  }
+  return out
+}
+
 // Lê o XLSX e devolve um array de registros normalizados para a tabela EXTRATO.
+// Aceita dois layouts: "Relatório Movimentos" (detectado pelo cabeçalho, ver _parseMovimentos)
+// e "Últimas Transações" (BTG), abaixo.
 // O arquivo tem cabeçalho mesclado na linha 1; usamos {header: 1} para pegar tudo bruto
 // e mapeamos por POSIÇÃO da coluna (mais robusto que nome).
 export const parseExtratoXLSX = async (file) => {
   const buf = await file.arrayBuffer()
   const wb = XLSX.read(buf, { type: 'array' })
   const ws = wb.Sheets[wb.SheetNames[0]]
+
+  // Valores brutos (número continua número) para não depender da máscara da célula
+  const brutas = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true })
+  const movIdx = _findHeaderMovimentos(brutas)
+  if (movIdx !== -1) return _parseMovimentos(brutas, movIdx)
+
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false })
 
   // Localiza a linha de cabeçalho (contém "Data hora transação" e "Operação")

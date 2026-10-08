@@ -301,7 +301,7 @@ export default function ExtratoPage() {
           <div className="flex-1 min-w-0">
             <span className="text-white font-semibold text-sm">Importar Extrato</span>
             <span className="text-[#666666] text-xs ml-2 hidden sm:inline">
-              Arraste o .xlsx do extrato (Últimas Transações) ou clique em Selecionar arquivo
+              Arraste o .xlsx do extrato (Últimas Transações ou Relatório Movimentos) ou clique em Selecionar arquivo
             </span>
           </div>
           <label className="shrink-0">
