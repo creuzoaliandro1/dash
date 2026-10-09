@@ -202,7 +202,7 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01', multiplasContas = fals
     line += '        '                             // pos 101-108 - brancos (8 espacos)
     line += 'MX'                                   // pos 109-110 - identificador sistema
     line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
-    line += (multiplasContas ? '11' : '  ')        // pos 118-119 - indicador de registro múltiplas contas (dígito 1 nas duas posições)
+    line += (multiplasContas ? '1 ' : '  ')        // pos 118-119 - indicador de registro múltiplas contas (1 na pos 118; 119 em branco)
 
     // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '

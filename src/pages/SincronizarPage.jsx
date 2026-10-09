@@ -449,7 +449,7 @@ export default function SincronizarPage() {
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
   // os títulos selecionados, enviada pela CAPT CAPITAL no formato múltiplas contas
-  // do manual BMP: header = CAPT CAPITAL (conta-mãe) com pos 118-119 = 1; cada
+  // do manual BMP: header = CAPT CAPITAL (conta-mãe) com pos 118 = 1 (119 em branco); cada
   // detalhe leva a conta do cedente de origem (pos 030-037), onde o título foi
   // registrado. Pela conta de origem o BMP devolve ocorrência 32 / motivo 14
   // (boleto cedido para outro cedente); com a conta da CAPT no detalhe, não
