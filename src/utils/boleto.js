@@ -175,7 +175,7 @@ const getTipoPessoa = (cic) => {
 // ============================================================
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
 // ============================================================
-const buildHeader = (conta, nextSeq, tipoOperacao = '01', multiplasContas = false) => {
+const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
     // Dados do beneficiario/cedente vindos de CONTAS
     const nomeEmpresa  = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
     const cpfCnpjConta = cleanNum(conta.cpf_cnpj || conta.cic || '0')
@@ -202,7 +202,6 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01', multiplasContas = fals
     line += '        '                             // pos 101-108 - brancos (8 espacos)
     line += 'MX'                                   // pos 109-110 - identificador sistema
     line += padLeft(nextSeq, 7)                    // pos 111-117 - sequencial remessa
-    line += (multiplasContas ? '1 ' : '  ')        // pos 118-119 - indicador de registro múltiplas contas (1 na pos 118; 119 em branco)
 
     // Brancos ate pos 394, depois sequencial de linha (header e sempre linha 1)
     while (line.length < 394) line += ' '
@@ -350,6 +349,38 @@ const buildDetalhe2 = (boleto, lineSeq) => {
     return line.substring(0, 400)
 }
 
+// Codigo de barras (44 digitos) a partir da linha digitavel (47 digitos).
+// Aceita tambem o proprio codigo de barras (44). Retorna '' se nao for nenhum dos dois.
+export const linhaDigitavelParaCodigoBarras = (linha) => {
+    const d = cleanNum(linha || '')
+    if (d.length === 44) return d
+    if (d.length !== 47) return ''
+    return d.substring(0, 4) +      // banco + moeda
+           d.substring(32, 33) +    // DV geral
+           d.substring(33, 47) +    // fator de vencimento + valor
+           d.substring(4, 9) +      // campo livre 01-05
+           d.substring(10, 20) +    // campo livre 06-15
+           d.substring(21, 31)      // campo livre 16-25
+}
+
+// ============================================================
+// CNAB400 - Registro Tipo 3 (codigo de barras do titulo)
+// Conforme arquivo modelo do BMP: identifica, pelo codigo de barras,
+// o titulo registrado em outro cedente (remessa enviada pela CAPT CAPITAL).
+// ============================================================
+const buildDetalhe3 = (boleto, lineSeq) => {
+    let line = ''
+    line += '3'                                    // pos 001        - tipo registro
+    line += ' '                                    // pos 002        - branco
+    line += '0'.repeat(57)                         // pos 003-059    - zeros (57)
+    line += ' '.repeat(112)                        // pos 060-171    - brancos (112)
+    line += padRight(linhaDigitavelParaCodigoBarras(boleto.codigo_barras), 44) // pos 172-215 - codigo de barras (44)
+    line += ' '.repeat(179)                        // pos 216-394    - brancos (179)
+    line += padLeft(lineSeq, 6)                    // pos 395-400    - nr sequencial linha (6)
+
+    return line.substring(0, 400)
+}
+
 // ============================================================
 // CNAB400 - Registro TRAILER (Tipo 9)
 // ============================================================
@@ -367,7 +398,7 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, multiplasContas = false) => {
+export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, comCodigoBarras = false) => {
     console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
@@ -390,10 +421,11 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
         let lineSeq = 1
 
     // Header (pode ser uma conta diferente da do detalhe: header=CAPT, detalhe=cedente original)
-    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao, multiplasContas))
+    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao))
     lineSeq++
 
-    // Detalhe (2 linhas por boleto). Libera a thread principal periodicamente
+    // Detalhe (2 linhas por boleto: tipo 1 + tipo 2; com comCodigoBarras, tipo 1 + tipo 3,
+    // sem o tipo 2, como no arquivo modelo do BMP). Libera a thread principal periodicamente
     // para a barra de progresso da UI atualizar e reportar progresso REAL —
     // senao a geracao sincrona trava a tela inteira ate terminar.
     const totalBoletos = boletos.length
@@ -403,7 +435,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
           // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
           lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
           lineSeq++
-          lines.push(buildDetalhe2(boleto, lineSeq))
+          lines.push(comCodigoBarras ? buildDetalhe3(boleto, lineSeq) : buildDetalhe2(boleto, lineSeq))
           lineSeq++
           idxBoleto++
           if (idxBoleto % loteYield === 0) {

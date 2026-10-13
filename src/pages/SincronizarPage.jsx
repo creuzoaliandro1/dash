@@ -5,7 +5,7 @@ import { saveAs } from 'file-saver'
 import { supabase } from '../lib/supabase'
 import { smartFrom } from '../services/firebirdQuery'
 import { firebirdConfig } from '../config/firebird'
-import { generateCNAB400RemittanceFile } from '../utils/boleto'
+import { generateCNAB400RemittanceFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa, getContaCaptCapital } from '../services/boletoService'
 import { VIEW_DATAS, calcularDatasDivergentes, calcularCruzamento, exportarCruzamentoExcel, exportarVisaoExcel, exportarVisaoPdf, fmtCel } from '../utils/cruzamentoOpeite'
 
@@ -77,6 +77,7 @@ const captParaBoletoRemessa = (c, novaData, sac) => {
     avalista_cic: '',
     avalista_nome: c.nome_sacador_avalista || '',
     descricao: c.descricao || '',
+    codigo_barras: c.num_linha_digtvl || '',
   }
 }
 
@@ -330,7 +331,7 @@ export default function SincronizarPage() {
       const chunk = lancs.slice(i, i + 200)
       const { data } = await supabase
         .from('capt_registrado')
-        .select('num_lanca, id, identd_nosso_num, numero_documento, num_doc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, vlr_tit, dt_venc_tit, dt_ems_tit, lograd_pagdr, numero_endereco_pagdr, cep_pagdr, cid_pagdr, uf_pagdr, nome_sacador_avalista, descricao, cod_cedente_titular, dt_juros_tit, data_multa, dt_desct_tit_1, dt_desct_tit_2, dt_desct_tit_3')
+        .select('num_lanca, id, identd_nosso_num, numero_documento, num_doc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, vlr_tit, dt_venc_tit, dt_ems_tit, lograd_pagdr, numero_endereco_pagdr, cep_pagdr, cid_pagdr, uf_pagdr, nome_sacador_avalista, descricao, num_linha_digtvl, cod_cedente_titular, dt_juros_tit, data_multa, dt_desct_tit_1, dt_desct_tit_2, dt_desct_tit_3')
         .in('num_lanca', chunk)
       ;(data || []).forEach((r) => { if (r.num_lanca != null && !(r.num_lanca in capById)) capById[r.num_lanca] = r })
     }
@@ -448,12 +449,11 @@ export default function SincronizarPage() {
   }
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
-  // os títulos selecionados, enviada pela CAPT CAPITAL no formato múltiplas contas
-  // do manual BMP: header = CAPT CAPITAL (conta-mãe) com pos 118 = 1 (119 em branco); cada
-  // detalhe leva a conta do cedente de origem (pos 030-037), onde o título foi
-  // registrado. Pela conta de origem o BMP devolve ocorrência 32 / motivo 14
-  // (boleto cedido para outro cedente); com a conta da CAPT no detalhe, não
-  // localiza o título no cedente dela.
+  // os títulos selecionados, enviada pela CAPT CAPITAL conforme o arquivo modelo do
+  // BMP: header = CAPT CAPITAL; cada título leva um registro tipo 1 com a conta do
+  // cedente de origem (pos 030-037), onde o título foi registrado, seguido de um
+  // registro tipo 3 com o código de barras (pos 172-215), pelo qual o BMP localiza
+  // o título. Não leva registro tipo 2 nem indicador de múltiplas contas.
   // Também move (no cadastro) as datas de juros/multa/desconto.
   const gerarRemessaProrrogacao = async () => {
     const selec = remRows.filter((r) => r.sel)
@@ -513,16 +513,25 @@ export default function SincronizarPage() {
         alert('Cedente(s) de origem sem conta em CONTAS (cod_cedente): ' + semConta.join(', ') + '. Esses títulos não serão incluídos.')
       }
 
-      // 3) Um único .REM: header = CAPT CAPITAL (numeração de remessa dela) com o
-      //    indicador de múltiplas contas ligado; detalhe = conta de origem de cada
-      //    título, ocorrência 06.
+      // 3) Um único .REM: header = CAPT CAPITAL (numeração de remessa dela);
+      //    detalhe = conta de origem de cada título, ocorrência 06, + tipo 3 com o
+      //    código de barras. Título sem código de barras válido fica de fora.
       const boletos = []
+      const incluidos = []
+      const semBarras = []
       for (const co of origCods) {
         const conta = contaByCod[co]
         if (!conta) continue
-        porOrigem[co].forEach((r) => boletos.push({ ...captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]), _contaDetalhe: conta }))
+        porOrigem[co].forEach((r) => {
+          if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); return }
+          boletos.push({ ...captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]), _contaDetalhe: conta })
+          incluidos.push(r)
+        })
       }
-      if (boletos.length === 0) { alert('Nenhuma remessa gerada (contas não encontradas).'); return }
+      if (semBarras.length > 0) {
+        alert('Lançamento(s) sem linha digitável/código de barras válido em capt_registrado: ' + semBarras.join(', ') + '. Esses títulos não serão incluídos.')
+      }
+      if (boletos.length === 0) { alert('Nenhuma remessa gerada (contas ou códigos de barras não encontrados).'); return }
 
       const cnab400Capt = Number(contaCapt.cnab400)
       let nextSeq
@@ -547,8 +556,9 @@ export default function SincronizarPage() {
       zip.file(remName, blob)
       saveAs(await zip.generateAsync({ type: 'blob' }), `CB${dd}${mm}${seq}.zip`)
 
-      // 5) Move as datas no cadastro (vencimento + juros/multa/desconto) pela mesma diferença
-      for (const r of selec) {
+      // 5) Move as datas no cadastro (vencimento + juros/multa/desconto) pela mesma diferença,
+      //    só dos títulos que entraram na remessa
+      for (const r of incluidos) {
         const c = r._capt
         if (!c?.id) continue
         const delta = daysDiff(r.anterior || c.dt_venc_tit, r.nova)
