@@ -424,8 +424,8 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao))
     lineSeq++
 
-    // Detalhe (2 linhas por boleto: tipo 1 + tipo 2; com comCodigoBarras, tipo 1 + tipo 3,
-    // sem o tipo 2, como no arquivo modelo do BMP). Libera a thread principal periodicamente
+    // Detalhe (2 linhas por boleto: tipo 1 + tipo 2; com comCodigoBarras, uma terceira
+    // linha tipo 3 com o codigo de barras). Libera a thread principal periodicamente
     // para a barra de progresso da UI atualizar e reportar progresso REAL —
     // senao a geracao sincrona trava a tela inteira ate terminar.
     const totalBoletos = boletos.length
@@ -435,8 +435,12 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
           // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
           lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
           lineSeq++
-          lines.push(comCodigoBarras ? buildDetalhe3(boleto, lineSeq) : buildDetalhe2(boleto, lineSeq))
+          lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
+          if (comCodigoBarras) {
+                lines.push(buildDetalhe3(boleto, lineSeq))
+                lineSeq++
+          }
           idxBoleto++
           if (idxBoleto % loteYield === 0) {
                 if (typeof onProgress === 'function') onProgress(idxBoleto / totalBoletos)

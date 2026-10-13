@@ -449,11 +449,10 @@ export default function SincronizarPage() {
   }
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
-  // os títulos selecionados, enviada pela CAPT CAPITAL conforme o arquivo modelo do
-  // BMP: header = CAPT CAPITAL; cada título leva um registro tipo 1 com a conta do
-  // cedente de origem (pos 030-037), onde o título foi registrado, seguido de um
-  // registro tipo 3 com o código de barras (pos 172-215), pelo qual o BMP localiza
-  // o título. Não leva registro tipo 2 nem indicador de múltiplas contas.
+  // os títulos selecionados, enviada pela CAPT CAPITAL: header e conta do registro
+  // tipo 1 (pos 030-037) = CAPT CAPITAL; cada título leva tipo 1 + tipo 2 (dados do
+  // pagador, exigidos pelo BMP) + tipo 3 com o código de barras (pos 172-215), pelo
+  // qual o BMP localiza o título registrado no cedente de origem.
   // Também move (no cadastro) as datas de juros/multa/desconto.
   const gerarRemessaProrrogacao = async () => {
     const selec = remRows.filter((r) => r.sel)
@@ -466,25 +465,7 @@ export default function SincronizarPage() {
     }
     setGerandoRem(true)
     try {
-      // 1) Resolve o cedente ORIGINAL de cada título (OPEITE.COD_CEDENTE), buscando
-      //    direto na OPEITE por Nº de lançamento — robusto a recargas da tela.
-      const lancsSel = [...new Set(selec.map((r) => r.lanc).filter((v) => v != null))]
-      const codCedByLanc = {}
-      for (let i = 0; i < lancsSel.length; i += 300) {
-        const chunk = lancsSel.slice(i, i + 300)
-        const { data: ops } = await smartFrom('OPEITE').select('NUM_LANCAMENTO, COD_CEDENTE').in('NUM_LANCAMENTO', chunk)
-        ;(ops || []).forEach((o) => { if (o.NUM_LANCAMENTO != null) codCedByLanc[String(o.NUM_LANCAMENTO)] = o.COD_CEDENTE })
-      }
-      const porOrigem = {}
-      for (const r of selec) {
-        const co = (r.cod_cedente != null && r.cod_cedente !== '') ? r.cod_cedente : codCedByLanc[String(r.lanc)]
-        if (co == null || co === '') continue
-        ;(porOrigem[String(co)] = porOrigem[String(co)] || []).push(r)
-      }
-      const origCods = Object.keys(porOrigem)
-      if (origCods.length === 0) { alert('Nenhum título com cedente de origem (OPEITE.COD_CEDENTE) identificado.'); return }
-
-      // 1b) Carrega os dados de endereço do pagador (SACADO) por COD_SACADO
+      // 1) Carrega os dados de endereço do pagador (SACADO) por COD_SACADO
       const codsSacado = [...new Set(selec.map((r) => r.cod_sacado).filter((v) => v != null))]
       const sacadoMap = {}
       for (let i = 0; i < codsSacado.length; i += 300) {
@@ -496,42 +477,26 @@ export default function SincronizarPage() {
         })
       }
 
-      // 2) Carrega a CAPT CAPITAL (header) e as contas de cada cedente de origem
-      //    (por cod_cedente), usadas nas linhas de detalhe.
+      // 2) Carrega a CAPT CAPITAL (header e conta das linhas de detalhe)
       const { data: contaCapt, error: captErr } = await getContaCaptCapital()
       if (captErr || !contaCapt) {
         throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
       }
-      const { data: contasOrig } = await supabase
-        .from('CONTAS')
-        .select('id, nome_correntista, conta, cedente, cic, cnab400, agencia, cod_cedente')
-        .in('cod_cedente', origCods.map((c) => Number(c)))
-      const contaByCod = {}
-      ;(contasOrig || []).forEach((c) => { if (c.cod_cedente != null) contaByCod[String(c.cod_cedente)] = c })
-      const semConta = origCods.filter((c) => !contaByCod[c])
-      if (semConta.length > 0) {
-        alert('Cedente(s) de origem sem conta em CONTAS (cod_cedente): ' + semConta.join(', ') + '. Esses títulos não serão incluídos.')
-      }
 
-      // 3) Um único .REM: header = CAPT CAPITAL (numeração de remessa dela);
-      //    detalhe = conta de origem de cada título, ocorrência 06, + tipo 3 com o
-      //    código de barras. Título sem código de barras válido fica de fora.
+      // 3) Um único .REM pela CAPT CAPITAL (numeração de remessa dela), ocorrência 06,
+      //    com tipo 3 (código de barras). Título sem código de barras válido fica de fora.
       const boletos = []
       const incluidos = []
       const semBarras = []
-      for (const co of origCods) {
-        const conta = contaByCod[co]
-        if (!conta) continue
-        porOrigem[co].forEach((r) => {
-          if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); return }
-          boletos.push({ ...captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]), _contaDetalhe: conta })
-          incluidos.push(r)
-        })
+      for (const r of selec) {
+        if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); continue }
+        boletos.push(captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]))
+        incluidos.push(r)
       }
       if (semBarras.length > 0) {
         alert('Lançamento(s) sem linha digitável/código de barras válido em capt_registrado: ' + semBarras.join(', ') + '. Esses títulos não serão incluídos.')
       }
-      if (boletos.length === 0) { alert('Nenhuma remessa gerada (contas ou códigos de barras não encontrados).'); return }
+      if (boletos.length === 0) { alert('Nenhuma remessa gerada (códigos de barras não encontrados).'); return }
 
       const cnab400Capt = Number(contaCapt.cnab400)
       let nextSeq
