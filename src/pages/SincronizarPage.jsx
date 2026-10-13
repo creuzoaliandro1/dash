@@ -5,7 +5,7 @@ import { saveAs } from 'file-saver'
 import { supabase } from '../lib/supabase'
 import { smartFrom } from '../services/firebirdQuery'
 import { firebirdConfig } from '../config/firebird'
-import { generateCNAB400RemittanceFile, codigoBarrasComConta } from '../utils/boleto'
+import { generateCNAB400RemittanceFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa, getContaCaptCapital } from '../services/boletoService'
 import { VIEW_DATAS, calcularDatasDivergentes, calcularCruzamento, exportarCruzamentoExcel, exportarVisaoExcel, exportarVisaoPdf, fmtCel } from '../utils/cruzamentoOpeite'
 
@@ -439,8 +439,8 @@ export default function SincronizarPage() {
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
   // os títulos selecionados, enviada pela CAPT CAPITAL: header e conta do registro
   // tipo 1 (pos 030-037) = CAPT CAPITAL; cada título leva tipo 1 + tipo 2 (dados do
-  // pagador, exigidos pelo BMP) + tipo 3 com o código de barras (pos 172-215) do
-  // título, com a conta da CAPT CAPITAL no lugar da conta de origem (campo 37-43).
+  // pagador, exigidos pelo BMP) + tipo 3 com o código de barras original do título
+  // (pos 172-215), pelo qual o BMP localiza o título registrado no cedente de origem.
   // Não altera o vencimento no cadastro: só marca a prorrogação como solicitada. O
   // título continua na lista até o vencimento em capt_registrado ser de fato atualizado.
   const gerarRemessaProrrogacao = async () => {
@@ -488,10 +488,8 @@ export default function SincronizarPage() {
       const incluidos = []
       const semBarras = []
       for (const r of selec) {
-        // Código de barras do título com a conta da CAPT CAPITAL no campo 37-43
-        const codigoBarras = codigoBarrasComConta(r._capt?.num_linha_digtvl, contaCapt.conta)
-        if (!codigoBarras) { semBarras.push(r.lanc); continue }
-        boletos.push({ ...captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]), codigo_barras: codigoBarras })
+        if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); continue }
+        boletos.push(captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]))
         incluidos.push(r)
       }
       if (semBarras.length > 0) {

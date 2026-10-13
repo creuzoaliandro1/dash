@@ -363,18 +363,6 @@ export const linhaDigitavelParaCodigoBarras = (linha) => {
            d.substring(21, 31)      // campo livre 16-25
 }
 
-// Troca a conta do beneficiario (pos 37-43, sem DV) de um codigo de barras BMP de
-// 44 digitos e recalcula o DV geral (pos 05). Demais campos ficam como estao.
-// conta: CONTAS.conta (8 dig, o ultimo e o DV). Retorna '' se o codigo for invalido.
-export const codigoBarrasComConta = (codigoBarras, conta) => {
-    const bc = linhaDigitavelParaCodigoBarras(codigoBarras)
-    if (!bc) return ''
-    const contaSemDV = cleanNum(conta || '').slice(0, 7).padStart(7, '0')
-    const campoLivre = bc.substring(19, 36) + contaSemDV + bc.substring(43)
-    const block = bc.substring(0, 4) + bc.substring(5, 19) + campoLivre
-    return bc.substring(0, 4) + modulo11Barcode(block) + bc.substring(5, 19) + campoLivre
-}
-
 // ============================================================
 // CNAB400 - Registro Tipo 3 (codigo de barras do titulo)
 // Conforme arquivo modelo do BMP: identifica, pelo codigo de barras,
