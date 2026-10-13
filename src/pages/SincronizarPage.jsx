@@ -32,21 +32,6 @@ const _iso = (d) => (d ? String(d).slice(0, 10) : '')
 const _dig = (v) => String(v ?? '').replace(/\D/g, '')
 const chaveVVC = (valor, venc, cic) => `${_cents(valor)}|${_iso(venc)}|${_dig(cic)}`
 
-// Soma n dias a uma data ISO (YYYY-MM-DD), preservando o formato.
-const addDays = (iso, n) => {
-  if (!iso) return iso
-  const d = new Date(String(iso).slice(0, 10) + 'T00:00:00')
-  if (isNaN(d)) return iso
-  d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
-// Diferença em dias (bIso - aIso).
-const daysDiff = (aIso, bIso) => {
-  const a = new Date(String(aIso).slice(0, 10) + 'T00:00:00')
-  const b = new Date(String(bIso).slice(0, 10) + 'T00:00:00')
-  if (isNaN(a) || isNaN(b)) return 0
-  return Math.round((b - a) / 86400000)
-}
 // Extrai o número do endereço (último número do texto); 'SN' quando não há.
 const extractNumero = (end) => {
   const m = String(end || '').match(/(\d+)\s*$/)
@@ -331,7 +316,7 @@ export default function SincronizarPage() {
       const chunk = lancs.slice(i, i + 200)
       const { data } = await supabase
         .from('capt_registrado')
-        .select('num_lanca, id, identd_nosso_num, numero_documento, num_doc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, vlr_tit, dt_venc_tit, dt_ems_tit, lograd_pagdr, numero_endereco_pagdr, cep_pagdr, cid_pagdr, uf_pagdr, nome_sacador_avalista, descricao, num_linha_digtvl, cod_cedente_titular, dt_juros_tit, data_multa, dt_desct_tit_1, dt_desct_tit_2, dt_desct_tit_3')
+        .select('num_lanca, id, identd_nosso_num, numero_documento, num_doc_tit, nom_rz_soc_pagdr, cnpj_cpf_pagdr, vlr_tit, dt_venc_tit, dt_ems_tit, lograd_pagdr, numero_endereco_pagdr, cep_pagdr, cid_pagdr, uf_pagdr, nome_sacador_avalista, descricao, num_linha_digtvl, cod_cedente_titular, dt_juros_tit, data_multa, dt_desct_tit_1, dt_desct_tit_2, dt_desct_tit_3, prorrog_solicitada_em, prorrog_solicitada_venc')
         .in('num_lanca', chunk)
       ;(data || []).forEach((r) => { if (r.num_lanca != null && !(r.num_lanca in capById)) capById[r.num_lanca] = r })
     }
@@ -353,6 +338,8 @@ export default function SincronizarPage() {
           cedente: String(r.cod_cedente_titular ?? '').trim(),
           cod_sacado: o.COD_SACADO,
           cod_cedente: o.COD_CEDENTE,
+          // pedido anterior já atendido (vencimento pedido = vencimento atual) não conta
+          solicitadaEm: (r.prorrog_solicitada_em && _iso(r.prorrog_solicitada_venc) !== _iso(r.dt_venc_tit)) ? r.prorrog_solicitada_em : '',
           _capt: r,
         }
       })
@@ -442,6 +429,7 @@ export default function SincronizarPage() {
       cod_cedente: r.cod_cedente,
       anterior: r.vencCapt ? String(r.vencCapt).slice(0, 10) : '',
       nova: (r.vencEfactorNovo || r.vencCapt) ? String(r.vencEfactorNovo || r.vencCapt).slice(0, 10) : '',
+      solicitadaEm: r.solicitadaEm,
       sel: true,
       _capt: r._capt,
     })))
@@ -453,14 +441,25 @@ export default function SincronizarPage() {
   // tipo 1 (pos 030-037) = CAPT CAPITAL; cada título leva tipo 1 + tipo 2 (dados do
   // pagador, exigidos pelo BMP) + tipo 3 com o código de barras (pos 172-215) do
   // título, com a conta da CAPT CAPITAL no lugar da conta de origem (campo 37-43).
-  // Também move (no cadastro) as datas de juros/multa/desconto.
+  // Não altera o vencimento no cadastro: só marca a prorrogação como solicitada. O
+  // título continua na lista até o vencimento em capt_registrado ser de fato atualizado.
   const gerarRemessaProrrogacao = async () => {
-    const selec = remRows.filter((r) => r.sel)
+    let selec = remRows.filter((r) => r.sel)
     if (selec.length === 0) { alert('Selecione ao menos um título.'); return }
     for (const r of selec) {
       if (!r.nova || !/^\d{4}-\d{2}-\d{2}$/.test(r.nova)) {
         alert(`Informe a nova data de vencimento do lançamento ${r.lanc}.`)
         return
+      }
+    }
+    // Prorrogação já solicitada e ainda sem retorno do banco: pergunta antes de pedir de novo
+    const jaSolic = selec.filter((r) => r.solicitadaEm)
+    if (jaSolic.length > 0) {
+      const lista = jaSolic.map((r) => `${r.lanc} (solicitada em ${fmtData(r.solicitadaEm)})`).join(', ')
+      const denovo = window.confirm(`${jaSolic.length} título(s) já tiveram a prorrogação solicitada e ainda não foram prorrogados: ${lista}.\n\nDeseja solicitar novamente?\n\nOK = incluir na remessa · Cancelar = deixar esses títulos de fora`)
+      if (!denovo) {
+        selec = selec.filter((r) => !r.solicitadaEm)
+        if (selec.length === 0) return
       }
     }
     setGerandoRem(true)
@@ -523,22 +522,20 @@ export default function SincronizarPage() {
       zip.file(remName, blob)
       saveAs(await zip.generateAsync({ type: 'blob' }), `CB${dd}${mm}${seq}.zip`)
 
-      // 5) Move as datas no cadastro (vencimento + juros/multa/desconto) pela mesma diferença,
-      //    só dos títulos que entraram na remessa
+      // 5) Marca a prorrogação como solicitada nos títulos que entraram na remessa
+      //    (o vencimento do cadastro não muda aqui) e atualiza a lista.
+      const solicitadaEm = now.toISOString()
+      const idsSolic = new Set()
       for (const r of incluidos) {
         const c = r._capt
         if (!c?.id) continue
-        const delta = daysDiff(r.anterior || c.dt_venc_tit, r.nova)
-        const upd = { dt_venc_tit: r.nova }
-        if (delta !== 0) {
-          if (c.dt_juros_tit) upd.dt_juros_tit = addDays(c.dt_juros_tit, delta)
-          if (c.data_multa) upd.data_multa = addDays(c.data_multa, delta)
-          if (c.dt_desct_tit_1) upd.dt_desct_tit_1 = addDays(c.dt_desct_tit_1, delta)
-          if (c.dt_desct_tit_2) upd.dt_desct_tit_2 = addDays(c.dt_desct_tit_2, delta)
-          if (c.dt_desct_tit_3) upd.dt_desct_tit_3 = addDays(c.dt_desct_tit_3, delta)
-        }
-        try { await supabase.from('capt_registrado').update(upd).eq('id', c.id) } catch (e) { /* best-effort */ }
+        const { error } = await supabase.from('capt_registrado')
+          .update({ prorrog_solicitada_em: solicitadaEm, prorrog_solicitada_venc: r.nova }).eq('id', c.id)
+        if (!error) idsSolic.add(c.id)
       }
+      setPrRegistros((prev) => prev.map((p) => (idsSolic.has(p._capt?.id)
+        ? { ...p, solicitadaEm, _capt: { ...p._capt, prorrog_solicitada_em: solicitadaEm } }
+        : p)))
 
       alert(`Remessa de prorrogação gerada: ${remName} (${boletos.length} título(s)).`)
       setShowRemessaPR(false)
@@ -905,11 +902,12 @@ export default function SincronizarPage() {
                     <th className={th}>Venc. CAPT</th>
                     <th className={th}>Venc. Efactor</th>
                     <th className={th}>Venc. Efactor Novo</th>
+                    <th className={th}>Solicitada em</th>
                   </tr>
                 </thead>
                 <tbody>
                   {prRegistros.length === 0 && (
-                    <tr><td className={td} colSpan={10}>{carregandoPR ? 'Carregando…' : 'Nenhum registro com prorrogação pendente (todos já estão com a data nova).'}</td></tr>
+                    <tr><td className={td} colSpan={11}>{carregandoPR ? 'Carregando…' : 'Nenhum registro com prorrogação pendente (todos já estão com a data nova).'}</td></tr>
                   )}
                   {prRegistros.map((r, i) => (
                     <tr key={`${r.lanc}-${i}`} className="hover:bg-[#0d0d0d]">
@@ -926,6 +924,7 @@ export default function SincronizarPage() {
                       <td className={td}>{fmtData(r.vencCapt)}</td>
                       <td className={td}>{fmtData(r.vencEfactor)}</td>
                       <td className={td}>{fmtData(r.vencEfactorNovo)}</td>
+                      <td className={td}>{fmtData(r.solicitadaEm)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -970,11 +969,12 @@ export default function SincronizarPage() {
                     <th className={`${th} text-right`}>Valor</th>
                     <th className={th}>Venc. anterior</th>
                     <th className={th}>Nova data</th>
+                    <th className={th}>Solicitada em</th>
                   </tr>
                 </thead>
                 <tbody>
                   {remRows.length === 0 && (
-                    <tr><td className={td} colSpan={9}>Nenhum título para gerar remessa.</td></tr>
+                    <tr><td className={td} colSpan={10}>Nenhum título para gerar remessa.</td></tr>
                   )}
                   {remRows.map((r, i) => (
                     <tr key={`${r.lanc}-${i}`} className="hover:bg-[#0d0d0d]">
@@ -994,6 +994,7 @@ export default function SincronizarPage() {
                           onChange={(e) => setRemRows((prev) => prev.map((x, j) => (j === i ? { ...x, nova: e.target.value } : x)))}
                           className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-white" />
                       </td>
+                      <td className={td}>{fmtData(r.solicitadaEm)}</td>
                     </tr>
                   ))}
                 </tbody>
