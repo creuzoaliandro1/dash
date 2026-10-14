@@ -131,13 +131,13 @@ const padRight = (text, size, char = ' ') => {
 // 2. Usar TODOS os 13 dígitos com pesos [2,7,6,5,4,3,2,7,6,5,4,3,2]
 // 3. Multiplicar, somar, dividir por 11
 // 4. Se resto=0: DV="0", Se resto=1: DV="P", Senão: DV=11-resto
-export const calcNNDV = (nossoNumero) => {
+export const calcNNDV = (nossoNumero, carteira = 9) => {
     const num = String(nossoNumero || '').replace(/\D/g, '')
 
-    // Prefixo BMP274: "09" + nosso número em 11 dígitos (13 no total).
+    // Prefixo BMP274: carteira (2, padrao "09") + nosso número em 11 dígitos (13 no total).
     // Para nossos de até 9 dígitos o resultado é idêntico ao "0900"+9;
     // para nossos de 10-11 dígitos usa todos os dígitos (antes truncava em 9).
-    const prefixado = '09' + num.slice(-11).padStart(11, '0')
+    const prefixado = String(carteira).padStart(2, '0') + num.slice(-11).padStart(11, '0')
 
     // Usar TODOS os 13 dígitos (não usar slice!)
     const base13 = prefixado
@@ -247,7 +247,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01', carteira = 9
     }
 
     const nossoBaseFull = padLeft(nossoBase, 11, '0')      // garante exatamente 11 dígitos para CNAB
-    const dvNN          = calcNNDV(nossoBase)              // DV: passa apenas a base (9 dígitos), não a versão padronizada!
+    const dvNN          = calcNNDV(nossoBase, carteira)             // DV: passa apenas a base (9 dígitos), não a versão padronizada!
     const nossoFmt      = nossoBaseFull                    // 11 digitos para posição CNAB 071-081
 
     // --- Numero do titulo (Seu Numero) ---
