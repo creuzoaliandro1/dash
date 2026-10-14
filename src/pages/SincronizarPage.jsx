@@ -437,8 +437,9 @@ export default function SincronizarPage() {
   }
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
-  // os títulos selecionados, enviada pela CAPT CAPITAL: header e conta do registro
-  // tipo 1 (pos 030-037) = CAPT CAPITAL; cada título leva tipo 1 + tipo 2 (dados do
+  // os títulos selecionados, enviada pela CAPT CAPITAL: header = CAPT CAPITAL, carteira
+  // 01 e, no tipo 1 (pos 030-037), a conta de origem do título (onde foi registrado no
+  // BMP); cada título leva tipo 1 + tipo 2 (dados do
   // pagador, exigidos pelo BMP) + tipo 3 com o código de barras original do título
   // (pos 172-215), pelo qual o BMP localiza o título registrado no cedente de origem.
   // Não altera o vencimento no cadastro: só marca a prorrogação como solicitada. O
@@ -494,34 +495,53 @@ export default function SincronizarPage() {
         })
       }
 
-      // 2) Carrega a CAPT CAPITAL (header e conta das linhas de detalhe)
+      // 2) Carrega a CAPT CAPITAL (header) e as contas (CONTAS) para achar a conta de
+      //    origem de cada título, onde ele foi registrado no BMP.
       const { data: contaCapt, error: captErr } = await getContaCaptCapital()
       if (captErr || !contaCapt) {
         throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
       }
+      const { data: contas, error: contasErr } = await supabase
+        .from('CONTAS').select('id, nome_correntista, conta, cedente, cic, agencia, cod_cedente')
+      if (contasErr) throw new Error('Não foi possível carregar as contas (CONTAS): ' + contasErr.message)
+      // conta sem DV (7 dígitos) -> CONTAS; o código de barras traz a conta sem DV
+      const contaPorBase = {}
+      ;(contas || []).forEach((c) => {
+        const d = String(c.conta || '').replace(/\D/g, '')
+        if (d.length >= 2) { const k = d.slice(0, -1).padStart(7, '0').slice(-7); if (!contaPorBase[k]) contaPorBase[k] = c }
+      })
 
       // 3) Um único .REM pela CAPT CAPITAL (numeração de remessa dela), ocorrência 06,
-      //    com tipo 3 (código de barras). Título sem código de barras válido fica de fora.
+      //    com tipo 3 (código de barras). Tipo 1 (pos 030-037) leva a conta de origem,
+      //    tirada do campo livre do código de barras (pos 37-43). Título sem código de
+      //    barras válido, sem conta de origem em CONTAS ou sem endereço fica de fora.
       const boletos = []
       const incluidos = []
       const semBarras = []
+      const semConta = []
       const semEndereco = []
       for (const r of selec) {
-        if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); continue }
+        const barras = linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)
+        if (!barras) { semBarras.push(r.lanc); continue }
+        const contaOrigem = contaPorBase[barras.substring(36, 43)]
+        if (!contaOrigem) { semConta.push(`${r.lanc} (conta ${barras.substring(36, 43)})`); continue }
         const b = captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado])
         const falta = [['bairro', b.sacado_bairro], ['cidade', b.sacado_cidade], ['UF', b.sacado_uf]]
           .filter(([, v]) => vazio(v)).map(([n]) => n)
         if (falta.length > 0) { semEndereco.push(`${r.lanc} (${falta.join(', ')})`); continue }
-        boletos.push(b)
+        boletos.push({ ...b, _contaDetalhe: contaOrigem })
         incluidos.push(r)
       }
       if (semBarras.length > 0) {
         alert('Lançamento(s) sem linha digitável/código de barras válido em capt_registrado: ' + semBarras.join(', ') + '. Esses títulos não serão incluídos.')
       }
+      if (semConta.length > 0) {
+        alert('Lançamento(s) com conta de origem (do código de barras) não encontrada em CONTAS: ' + semConta.join('; ') + '. Esses títulos não serão incluídos.')
+      }
       if (semEndereco.length > 0) {
         alert('Lançamento(s) sem endereço completo do pagador (SACADO / capt_registrado): ' + semEndereco.join('; ') + '. Esses títulos não serão incluídos.')
       }
-      if (boletos.length === 0) { alert('Nenhuma remessa gerada (títulos sem código de barras ou sem endereço completo).'); return }
+      if (boletos.length === 0) { alert('Nenhuma remessa gerada (títulos sem código de barras, conta de origem ou endereço completo).'); return }
 
       const cnab400Capt = Number(contaCapt.cnab400)
       let nextSeq
