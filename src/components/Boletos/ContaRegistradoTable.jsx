@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
+import { criarAntecipacao } from '../../services/boletoService'
 
 // Colunas de capt_registrado (84 campos do Relatório de Gestão de Boletos).
 // key = coluna no Supabase | label = rótulo original do Excel.
@@ -115,8 +116,26 @@ function fmt(value) {
   return String(value)
 }
 
+// Converte uma linha de capt_registrado no formato de boleto usado por criarAntecipacao
+// (mesmo mapeamento do modo Importados). Sem `id`: não há capt_boletos a marcar.
+const registradoParaBoleto = (r) => ({
+  numero_documento: r.numero_documento || r.num_doc_tit || '',
+  nosso_numero: r.identd_nosso_num || '',
+  valor: parseFloat(r.vlr_tit) || 0,
+  data_vencimento: r.dt_venc_tit || null,
+  sacado_nome: r.nom_rz_soc_pagdr || '',
+  sacado_cic: r.cnpj_cpf_pagdr || '',
+  sacado_endereco: [r.lograd_pagdr, r.numero_endereco_pagdr].filter(Boolean).join(', '),
+  sacado_cep: r.cep_pagdr || '',
+  sacado_bairro: '',
+  sacado_cidade: r.cid_pagdr || '',
+  sacado_uf: r.uf_pagdr || '',
+  avalista_nome: r.nome_sacador_avalista || '',
+  avalista_cic: '',
+})
+
 // Tabela inline de capt_registrado. Re-busca os dados quando `reloadKey` muda.
-export default function ContaRegistradoTable({ reloadKey = 0 }) {
+export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }) {
   const [registros, setRegistros] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -133,6 +152,7 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
   const [selecionados, setSelecionados] = useState(() => new Set())
   const [showAcoes, setShowAcoes] = useState(false)
   const [gerandoRel, setGerandoRel] = useState(false)
+  const [antecipando, setAntecipando] = useState(false)
 
   useEffect(() => {
     let ativo = true
@@ -246,6 +266,30 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
     XLSX.utils.book_append_sheet(wb, ws, 'Conta Capt')
     XLSX.writeFile(wb, `conta_capt_${new Date().toISOString().slice(0, 10)}.xlsx`)
     setShowAcoes(false)
+  }
+
+  // Ação › Antecipar: mesma rotina do modo Importados (criarAntecipacao).
+  const handleAntecipar = async () => {
+    const linhas = registros.filter((r) => selecionados.has(r.id))
+    if (linhas.length === 0) { alert('Selecione pelo menos um boleto para antecipar'); return }
+    if (!window.confirm(`Tem certeza que deseja antecipar ${linhas.length} boleto(s)?`)) return
+    setShowAcoes(false)
+    setAntecipando(true)
+    try {
+      const { data: resultado, error } = await criarAntecipacao(linhas.map(registradoParaBoleto), contaData)
+      if (error) {
+        alert('Erro ao antecipar boletos: ' + error.message)
+        console.error('[ContaRegistrado] Erro ao antecipar:', error)
+      } else {
+        alert(`✓ Antecipação realizada com sucesso!\n\nCódigo do Borderô: ${resultado.codBordero}\nCódigo da Operação: ${resultado.codOperacao}\nQuantidade: ${resultado.quantidadeBoletos} boleto(s)\nCódigos de Título: ${resultado.codTituloInicio} a ${resultado.codTituloFim}`)
+        setSelecionados(new Set())
+      }
+    } catch (e) {
+      console.error('[ContaRegistrado] Erro ao antecipar boletos:', e)
+      alert('Erro ao antecipar boletos: ' + e.message)
+    } finally {
+      setAntecipando(false)
+    }
   }
 
   const gerarRelatorioConciliacao = async () => {
@@ -436,6 +480,15 @@ export default function ContaRegistradoTable({ reloadKey = 0 }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
                   </svg>
                   Baixar selecionados (Excel)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAntecipar}
+                  disabled={selecionados.size === 0 || antecipando}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-white rounded hover:bg-[#1a1a1a] transition disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <span className="w-4 text-center">💰</span>
+                  {antecipando ? 'Processando…' : 'Antecipar'}
                 </button>
                 <button
                   type="button"

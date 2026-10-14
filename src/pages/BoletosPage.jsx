@@ -2337,7 +2337,7 @@ export default function BoletosPage() {
 
       {/* Tabela: capt_registrado (modo Conta Capt) ou capt_boletos */}
       {contaCaptActive ? (
-        <ContaRegistradoTable reloadKey={captReloadKey} />
+        <ContaRegistradoTable reloadKey={captReloadKey} contaData={contaData} />
       ) : (
         <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
           <BoletoTable
