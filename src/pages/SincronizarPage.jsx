@@ -550,7 +550,7 @@ export default function SincronizarPage() {
       const now = new Date()
       const p2 = (n) => String(n).padStart(2, '0')
       const dd = p2(now.getDate()), mm = p2(now.getMonth() + 1)
-      const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, '06', undefined, null, true, 1) // carteira 1: header pos 046 e tipo 1 pos 024
+      const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, '06', undefined, null, true, 1) // carteira 1 só no header (pos 046); tipo 1 e DV com 9
       const seq = String(nextSeq).padStart(7, '0')
       const remName = `CB${dd}${mm}${seq}.REM`
       try { await incrementContaCnab400(contaCapt.id, nextSeq) } catch (e) { /* best-effort */ }

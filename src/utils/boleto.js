@@ -398,7 +398,9 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, comCodigoBarras = false, carteira = 9) => {
+// carteiraHeader: carteira do header (pos 045-046); o detalhe (tipo 1 e DV do nosso
+// numero) segue sempre com a carteira 9, onde os titulos estao registrados.
+export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, comCodigoBarras = false, carteiraHeader = 9) => {
     console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
@@ -421,7 +423,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
         let lineSeq = 1
 
     // Header (pode ser uma conta diferente da do detalhe: header=CAPT, detalhe=cedente original)
-    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao, carteira))
+    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao, carteiraHeader))
     lineSeq++
 
     // Detalhe (2 linhas por boleto: tipo 1 + tipo 2; com comCodigoBarras, uma terceira
@@ -433,7 +435,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     let idxBoleto = 0
     for (const boleto of boletos) {
           // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
-          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao, carteira))
+          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
