@@ -275,7 +275,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01') => {
     line += ' '                                    // pos 007        - digito agencia (espaco)
     line += '000000000000'                         // pos 008-019    - razao da conta (12 zeros)
     line += ' '                                    // pos 020        - espaco
-    line += '000900001'                            // pos 021-029    - carteira + variacao
+    line += padLeft(cleanNum(boleto._carteira || '9'), 4, '0') + '00001' // pos 021-029 - carteira (padrao 009; boleto._carteira sobrepoe) + variacao
     line += contaField                             // pos 030-037    - CONTAS.conta (8 dig)
     line += padLeft(tituloNum, 15)                 // pos 038-052    - numero do titulo (15)
     line += '          '                           // pos 053-062    - brancos (10)
