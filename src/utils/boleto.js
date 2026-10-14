@@ -175,7 +175,7 @@ const getTipoPessoa = (cic) => {
 // ============================================================
 // CNAB400 - Registro HEADER (Tipo 0) - 400 caracteres
 // ============================================================
-const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
+const buildHeader = (conta, nextSeq, tipoOperacao = '01', carteira = 9) => {
     // Dados do beneficiario/cedente vindos de CONTAS
     const nomeEmpresa  = padRight(cleanStr(conta.nome_correntista || 'EMPRESA'), 30)
     const cpfCnpjConta = cleanNum(conta.cpf_cnpj || conta.cic || '0')
@@ -194,7 +194,7 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
     line += '01'                                   // pos 010-011 - codigo servico
     line += padRight('COBRANCA', 15)               // pos 012-026 - tipo servico
     line += cedenteFmt                             // pos 027-044 - codigo cedente (18)
-    line += '09'                                   // pos 045-046 - codigo banco
+    line += padLeft(carteira, 2, '0')              // pos 045-046 - carteira (padrao 09)
     line += padRight(nomeEmpresa, 30)              // pos 047-076 - nome cedente (CONTAS.nome_correntista)
     line += '274'                                  // pos 077-079 - codigo banco BMP
     line += padRight('BMP MONEY PLUS', 15)         // pos 080-094 - nome banco
@@ -214,7 +214,7 @@ const buildHeader = (conta, nextSeq, tipoOperacao = '01') => {
 // CNAB400 - Registro DETALHE Linha 1 (Tipo 1) - 400 caracteres
 // Conforme documentacao BMP 274 / FEBRABAN CNAB400
 // ============================================================
-const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01') => {
+const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01', carteira = 9) => {
     // --- Sacado ---
     const sacadoCic  = cleanNum(boleto.sacado_cic || '')
     const tipoPessoa = getTipoPessoa(sacadoCic)           // '01' CPF / '02' CNPJ
@@ -275,7 +275,7 @@ const buildDetalhe1 = (boleto, conta, lineSeq, tipoOperacao = '01') => {
     line += ' '                                    // pos 007        - digito agencia (espaco)
     line += '000000000000'                         // pos 008-019    - razao da conta (12 zeros)
     line += ' '                                    // pos 020        - espaco
-    line += '000900001'                            // pos 021-029    - carteira + variacao
+    line += padLeft(carteira, 4, '0') + '00001'   // pos 021-029    - carteira (padrao 0009) + variacao
     line += contaField                             // pos 030-037    - CONTAS.conta (8 dig)
     line += padLeft(tituloNum, 15)                 // pos 038-052    - numero do titulo (15)
     line += '          '                           // pos 053-062    - brancos (10)
@@ -398,7 +398,7 @@ const buildTrailer = (totalLines) => {
 // cpf_cnpj, cedente, cnab400) e o nextSeq (numero da remessa).
 // Se conta nao for fornecido, usa valores padrao.
 // ============================================================
-export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, comCodigoBarras = false) => {
+export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tipoOperacao = '01', onProgress, contaHeader = null, comCodigoBarras = false, carteira = 9) => {
     console.log('[CNAB400] Gerando remessa para', boletos ? boletos.length : 0, 'boletos, tipo:', tipoOperacao)
 
     if (!boletos || boletos.length === 0) {
@@ -421,7 +421,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
         let lineSeq = 1
 
     // Header (pode ser uma conta diferente da do detalhe: header=CAPT, detalhe=cedente original)
-    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao))
+    lines.push(buildHeader(contaHeader || contaInfo, seq, tipoOperacao, carteira))
     lineSeq++
 
     // Detalhe (2 linhas por boleto: tipo 1 + tipo 2; com comCodigoBarras, uma terceira
@@ -433,7 +433,7 @@ export const generateCNAB400RemittanceFile = async (boletos, conta, nextSeq, tip
     let idxBoleto = 0
     for (const boleto of boletos) {
           // boleto._contaDetalhe: conta propria do titulo (remessa unica com varios cedentes)
-          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao))
+          lines.push(buildDetalhe1(boleto, boleto._contaDetalhe || contaInfo, lineSeq, tipoOperacao, carteira))
           lineSeq++
           lines.push(buildDetalhe2(boleto, lineSeq))
           lineSeq++
