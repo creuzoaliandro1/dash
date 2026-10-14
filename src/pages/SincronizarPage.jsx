@@ -475,6 +475,24 @@ export default function SincronizarPage() {
           sacadoMap[sx.COD_SACADO] = { bairro: sx.BAIRRO, cidade: sx.CIDADE, uf: sx.UF, endereco: sx.ENDERECO, cep: sx.CEP }
         })
       }
+      // Campo em branco no Firebird: completa com a réplica do Supabase (o BMP rejeita
+      // a remessa sem bairro/cidade/UF do pagador).
+      const vazio = (v) => !String(v ?? '').trim()
+      const incompletos = codsSacado.filter((c) => { const s = sacadoMap[c]; return !s || vazio(s.bairro) || vazio(s.cidade) || vazio(s.uf) })
+      if (incompletos.length > 0) {
+        const { data: sacsSb } = await supabase.from('SACADO')
+          .select('COD_SACADO, BAIRRO, CIDADE, UF, ENDERECO, CEP').in('COD_SACADO', incompletos)
+        ;(sacsSb || []).forEach((sx) => {
+          const s = sacadoMap[sx.COD_SACADO] || {}
+          sacadoMap[sx.COD_SACADO] = {
+            bairro: vazio(s.bairro) ? sx.BAIRRO : s.bairro,
+            cidade: vazio(s.cidade) ? sx.CIDADE : s.cidade,
+            uf: vazio(s.uf) ? sx.UF : s.uf,
+            endereco: vazio(s.endereco) ? sx.ENDERECO : s.endereco,
+            cep: vazio(s.cep) ? sx.CEP : s.cep,
+          }
+        })
+      }
 
       // 2) Carrega a CAPT CAPITAL (header e conta das linhas de detalhe)
       const { data: contaCapt, error: captErr } = await getContaCaptCapital()
@@ -487,15 +505,23 @@ export default function SincronizarPage() {
       const boletos = []
       const incluidos = []
       const semBarras = []
+      const semEndereco = []
       for (const r of selec) {
         if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); continue }
-        boletos.push(captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado]))
+        const b = captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado])
+        const falta = [['bairro', b.sacado_bairro], ['cidade', b.sacado_cidade], ['UF', b.sacado_uf]]
+          .filter(([, v]) => vazio(v)).map(([n]) => n)
+        if (falta.length > 0) { semEndereco.push(`${r.lanc} (${falta.join(', ')})`); continue }
+        boletos.push(b)
         incluidos.push(r)
       }
       if (semBarras.length > 0) {
         alert('Lançamento(s) sem linha digitável/código de barras válido em capt_registrado: ' + semBarras.join(', ') + '. Esses títulos não serão incluídos.')
       }
-      if (boletos.length === 0) { alert('Nenhuma remessa gerada (códigos de barras não encontrados).'); return }
+      if (semEndereco.length > 0) {
+        alert('Lançamento(s) sem endereço completo do pagador (SACADO / capt_registrado): ' + semEndereco.join('; ') + '. Esses títulos não serão incluídos.')
+      }
+      if (boletos.length === 0) { alert('Nenhuma remessa gerada (títulos sem código de barras ou sem endereço completo).'); return }
 
       const cnab400Capt = Number(contaCapt.cnab400)
       let nextSeq
