@@ -1,12 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import JSZip from 'jszip'
-import { saveAs } from 'file-saver'
 import { supabase } from '../lib/supabase'
 import { smartFrom } from '../services/firebirdQuery'
 import { firebirdConfig } from '../config/firebird'
-import { generateCNAB400RemittanceFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
-import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, createRemessa, getContaCaptCapital } from '../services/boletoService'
+import { linhaDigitavelParaCodigoBarras } from '../utils/boleto'
+import { captParaBoletoRemessa, carregarSacadosEndereco, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
 import { VIEW_DATAS, calcularDatasDivergentes, calcularCruzamento, exportarCruzamentoExcel, exportarVisaoExcel, exportarVisaoPdf, fmtCel } from '../utils/cruzamentoOpeite'
 
 // Sincronizar (Operações · Master): TODA a OPEITE (sem paginar, exceto STATUS='DC'),
@@ -31,40 +29,6 @@ const _cents = (v) => Math.round((parseFloat(v) || 0) * 100)
 const _iso = (d) => (d ? String(d).slice(0, 10) : '')
 const _dig = (v) => String(v ?? '').replace(/\D/g, '')
 const chaveVVC = (valor, venc, cic) => `${_cents(valor)}|${_iso(venc)}|${_dig(cic)}`
-
-// Extrai o número do endereço (último número do texto); 'SN' quando não há.
-const extractNumero = (end) => {
-  const m = String(end || '').match(/(\d+)\s*$/)
-  return m ? m[1] : 'SN'
-}
-// Mapeia uma linha de capt_registrado + a nova data + os dados do SACADO
-// (endereço completo do pagador) para o formato de "boleto" do CNAB400.
-const captParaBoletoRemessa = (c, novaData, sac) => {
-  // Endereço/cidade/UF/CEP: capt_registrado (SACADO só como reserva).
-  const endereco = c.lograd_pagdr || (sac && sac.endereco) || ''
-  // Número do pagador: capt_registrado.numero_endereco_pagdr; se vazio,
-  // extrai do fim do endereço do SACADO (para não voltar em branco ao BMP).
-  const numero = c.numero_endereco_pagdr || extractNumero((sac && sac.endereco) || endereco)
-  return {
-    numero_documento: c.numero_documento || c.num_doc_tit || '',
-    nosso_numero: c.identd_nosso_num || '',
-    data_vencimento: novaData,
-    data_emissao: c.dt_ems_tit || '',
-    valor: c.vlr_tit,
-    sacado_cic: c.cnpj_cpf_pagdr || '',
-    sacado_nome: c.nom_rz_soc_pagdr || '',
-    sacado_endereco: endereco,
-    sacado_numero: numero,
-    sacado_cep: c.cep_pagdr || (sac && sac.cep) || '',
-    sacado_bairro: (sac && sac.bairro) || '',        // bairro: SACADO (via OPEITE)
-    sacado_uf: c.uf_pagdr || (sac && sac.uf) || '',
-    sacado_cidade: c.cid_pagdr || (sac && sac.cidade) || '',
-    avalista_cic: '',
-    avalista_nome: c.nome_sacador_avalista || '',
-    descricao: c.descricao || '',
-    codigo_barras: c.num_linha_digtvl || '',
-  }
-}
 
 // capt_registrado indexada por valor+venc+cic -> { nosso, linha }
 async function carregarRegIndex() {
@@ -465,43 +429,10 @@ export default function SincronizarPage() {
     setGerandoRem(true)
     try {
       // 1) Carrega os dados de endereço do pagador (SACADO) por COD_SACADO
-      const codsSacado = [...new Set(selec.map((r) => r.cod_sacado).filter((v) => v != null))]
-      const sacadoMap = {}
-      for (let i = 0; i < codsSacado.length; i += 300) {
-        const chunk = codsSacado.slice(i, i + 300)
-        const { data: sacs } = await smartFrom('SACADO')
-          .select('COD_SACADO, BAIRRO, CIDADE, UF, ENDERECO, CEP').in('COD_SACADO', chunk)
-        ;(sacs || []).forEach((sx) => {
-          sacadoMap[sx.COD_SACADO] = { bairro: sx.BAIRRO, cidade: sx.CIDADE, uf: sx.UF, endereco: sx.ENDERECO, cep: sx.CEP }
-        })
-      }
-      // Campo em branco no Firebird: completa com a réplica do Supabase (o BMP rejeita
-      // a remessa sem bairro/cidade/UF do pagador).
-      const vazio = (v) => !String(v ?? '').trim()
-      const incompletos = codsSacado.filter((c) => { const s = sacadoMap[c]; return !s || vazio(s.bairro) || vazio(s.cidade) || vazio(s.uf) })
-      if (incompletos.length > 0) {
-        const { data: sacsSb } = await supabase.from('SACADO')
-          .select('COD_SACADO, BAIRRO, CIDADE, UF, ENDERECO, CEP').in('COD_SACADO', incompletos)
-        ;(sacsSb || []).forEach((sx) => {
-          const s = sacadoMap[sx.COD_SACADO] || {}
-          sacadoMap[sx.COD_SACADO] = {
-            bairro: vazio(s.bairro) ? sx.BAIRRO : s.bairro,
-            cidade: vazio(s.cidade) ? sx.CIDADE : s.cidade,
-            uf: vazio(s.uf) ? sx.UF : s.uf,
-            endereco: vazio(s.endereco) ? sx.ENDERECO : s.endereco,
-            cep: vazio(s.cep) ? sx.CEP : s.cep,
-          }
-        })
-      }
+      const sacadoMap = await carregarSacadosEndereco(selec.map((r) => r.cod_sacado))
 
-      // 2) Carrega a CAPT CAPITAL (header e conta das linhas de detalhe)
-      const { data: contaCapt, error: captErr } = await getContaCaptCapital()
-      if (captErr || !contaCapt) {
-        throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
-      }
-
-      // 3) Um único .REM pela CAPT CAPITAL (numeração de remessa dela), ocorrência 06,
-      //    com tipo 3 (código de barras). Título sem código de barras válido fica de fora.
+      // 2) Monta os títulos (tipo 3 com código de barras). Título sem código de
+      //    barras válido ou sem endereço completo fica de fora.
       const boletos = []
       const incluidos = []
       const semBarras = []
@@ -509,8 +440,7 @@ export default function SincronizarPage() {
       for (const r of selec) {
         if (!linhaDigitavelParaCodigoBarras(r._capt?.num_linha_digtvl)) { semBarras.push(r.lanc); continue }
         const b = captParaBoletoRemessa(r._capt, r.nova, sacadoMap[r.cod_sacado])
-        const falta = [['bairro', b.sacado_bairro], ['cidade', b.sacado_cidade], ['UF', b.sacado_uf]]
-          .filter(([, v]) => vazio(v)).map(([n]) => n)
+        const falta = faltasEnderecoBoleto(b)
         if (falta.length > 0) { semEndereco.push(`${r.lanc} (${falta.join(', ')})`); continue }
         boletos.push(b)
         incluidos.push(r)
@@ -523,30 +453,12 @@ export default function SincronizarPage() {
       }
       if (boletos.length === 0) { alert('Nenhuma remessa gerada (títulos sem código de barras ou sem endereço completo).'); return }
 
-      const cnab400Capt = Number(contaCapt.cnab400)
-      let nextSeq
-      if (!isNaN(cnab400Capt) && cnab400Capt >= 1) nextSeq = cnab400Capt + 1
-      else { const { count } = await getContaRemessaCount(contaCapt.cedente || ''); nextSeq = (count || 0) + 1 }
+      // 3) Um único .REM pela CAPT CAPITAL, ocorrência 06 (alteração de vencimento),
+      //    registrado e baixado em .zip
       const now = new Date()
-      const p2 = (n) => String(n).padStart(2, '0')
-      const dd = p2(now.getDate()), mm = p2(now.getMonth() + 1)
-      const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, '06', undefined, null, true, 1) // carteira 1: header pos 046 e tipo 1 pos 024
-      const seq = String(nextSeq).padStart(7, '0')
-      const remName = `CB${dd}${mm}${seq}.REM`
-      try { await incrementContaCnab400(contaCapt.id, nextSeq) } catch (e) { /* best-effort */ }
-      let caminhoStorage = null
-      try { const { data: up } = await uploadRemessaCNAB400(contaCapt.id, remName, blob); caminhoStorage = up?.caminho || null } catch (e) { /* best-effort */ }
-      try {
-        const valorTotal = boletos.reduce((sm, b) => sm + (parseFloat(b.valor) || 0), 0)
-        await createRemessa(contaCapt.id, { filename: remName, quantidadeBoletos: boletos.length, valorTotal, caminhoStorage })
-      } catch (e) { /* best-effort */ }
+      const { remName } = await gerarRemessaCaptCapital(boletos, '06')
 
-      // 4) Download do .zip com o .REM único
-      const zip = new JSZip()
-      zip.file(remName, blob)
-      saveAs(await zip.generateAsync({ type: 'blob' }), `CB${dd}${mm}${seq}.zip`)
-
-      // 5) Marca a prorrogação como solicitada nos títulos que entraram na remessa
+      // 4) Marca a prorrogação como solicitada nos títulos que entraram na remessa
       //    (o vencimento do cadastro não muda aqui) e atualiza a lista.
       const solicitadaEm = now.toISOString()
       const idsSolic = new Set()

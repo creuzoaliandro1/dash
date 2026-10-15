@@ -5,7 +5,8 @@ import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus, getCed
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
-import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile } from '../utils/boleto'
+import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
+import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -746,6 +747,71 @@ export default function BoletosPage() {
       alert('Erro ao gerar ZIP: ' + error.message)
     } finally {
       setGeneratingZip(false)
+    }
+  }
+
+  // CNAB400 > Baixa: UMA remessa de pedido de baixa (ocorrência 02) dos títulos
+  // selecionados, no mesmo modelo da Remessa Prorrogação do Sincronizar — enviada
+  // pela CAPT CAPITAL (header e conta do tipo 1), carteira 01 só no header, tipo 1 +
+  // tipo 2 + tipo 3 com o código de barras original do título. Os dados de cada
+  // título vêm de capt_registrado (título não registrado não tem o que baixar).
+  const handleGerarRemessaBaixa = async () => {
+    if (efactorActive || contaCaptActive) {
+      alert('A geração de CNAB400 não está disponível nos modos Conta Capt ou Efactor.')
+      return
+    }
+    if (selectedRows.size === 0) {
+      alert('Selecione pelo menos um boleto')
+      return
+    }
+    setShowCnab400Sub(false)
+    setOpenActionsMenu(false)
+    const filteredBoletos = getFilteredBoletos()
+    const selecionados = Array.from(selectedRows).map((index) => filteredBoletos[index]).filter((b) => b)
+    if (!window.confirm(`Gerar remessa de BAIXA (ocorrência 02) pela CAPT CAPITAL para ${selecionados.length} título(s)?`)) return
+
+    setGeneratingCNAB400(true)
+    try {
+      const rotulo = (b) => b.num_lancamento || b.numero_documento || b.nosso_numero || b.sacado_nome || '?'
+      const pares = await buscarRegistradosDasLinhas(selecionados)
+      const naoRegistrados = pares.filter((p) => !p.reg).map((p) => rotulo(p.row))
+      const codPorLanc = await codSacadoPorLancamento(pares.filter((p) => p.reg).map((p) => p.row))
+      const sacadoMap = await carregarSacadosEndereco(Object.values(codPorLanc))
+
+      const boletos = []
+      const semBarras = []
+      const semEndereco = []
+      for (const { row, reg } of pares) {
+        if (!reg) continue
+        if (!linhaDigitavelParaCodigoBarras(reg.num_linha_digtvl)) { semBarras.push(rotulo(row)); continue }
+        const b = captParaBoletoRemessa(reg, String(reg.dt_venc_tit || '').slice(0, 10), sacadoMap[codPorLanc[String(row.num_lancamento)]])
+        // Sem SACADO: completa com o endereço do próprio boleto (capt_boletos)
+        if (!String(b.sacado_bairro || '').trim()) b.sacado_bairro = row.sacado_bairro || ''
+        if (!String(b.sacado_cidade || '').trim()) b.sacado_cidade = row.sacado_cidade || ''
+        if (!String(b.sacado_uf || '').trim()) b.sacado_uf = row.sacado_uf || ''
+        const falta = faltasEnderecoBoleto(b)
+        if (falta.length > 0) { semEndereco.push(`${rotulo(row)} (${falta.join(', ')})`); continue }
+        boletos.push(b)
+      }
+      if (naoRegistrados.length > 0) {
+        alert('Título(s) não encontrados em capt_registrado (não registrados): ' + naoRegistrados.join(', ') + '. Esses títulos não serão incluídos.')
+      }
+      if (semBarras.length > 0) {
+        alert('Título(s) sem linha digitável/código de barras válido em capt_registrado: ' + semBarras.join(', ') + '. Esses títulos não serão incluídos.')
+      }
+      if (semEndereco.length > 0) {
+        alert('Título(s) sem endereço completo do pagador (SACADO / capt_registrado): ' + semEndereco.join('; ') + '. Esses títulos não serão incluídos.')
+      }
+      if (boletos.length === 0) { alert('Nenhuma remessa de baixa gerada.'); return }
+
+      const { remName } = await gerarRemessaCaptCapital(boletos, '02')
+      alert(`Remessa de baixa gerada: ${remName} (${boletos.length} título(s)).`)
+      setSelectedRows(new Set())
+    } catch (e) {
+      console.error('[CNAB400 Baixa] Erro ao gerar remessa:', e)
+      alert('Erro ao gerar remessa de baixa: ' + (e?.message || String(e)))
+    } finally {
+      setGeneratingCNAB400(false)
     }
   }
 
@@ -2018,7 +2084,7 @@ export default function BoletosPage() {
                             Alterar
                           </button>
                           <button
-                            onClick={() => handleGenerateRemessaCNAB400('02')}
+                            onClick={handleGerarRemessaBaixa}
                             className="w-full text-left pl-8 pr-4 py-2 text-sm text-white hover:bg-[#2a2a2a] transition"
                           >
                             Baixa
