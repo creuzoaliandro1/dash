@@ -2623,6 +2623,12 @@ export async function importContaRegistradoFile(file) {
     inserted += chunk.length
   }
 
+  // 4) Completa endereço do pagador vazio no relatório (por CPF/CNPJ, a partir de
+  // backups, capt_boletos, REMESSAS e SACADO). Falha aqui não invalida a importação.
+  const { data: endRes, error: endErr } = await supabase.rpc('preencher_endereco_pagador')
+  if (endErr) console.warn('[ContaRegistrado] Falha ao completar endereços:', endErr.message)
+  else console.log('[ContaRegistrado] Endereços completados:', endRes)
+
   console.log(`[ContaRegistrado] Importação concluída: ${inserted} registro(s) inseridos`)
   return { total: rows.length, inserted, deleted: true }
 }
