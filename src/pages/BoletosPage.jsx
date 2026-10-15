@@ -6,7 +6,7 @@ import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
-import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
+import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, carregarSacadosPorCic, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -777,6 +777,10 @@ export default function BoletosPage() {
       const naoRegistrados = pares.filter((p) => !p.reg).map((p) => rotulo(p.row))
       const codPorLanc = await codSacadoPorLancamento(pares.filter((p) => p.reg).map((p) => p.row))
       const sacadoMap = await carregarSacadosEndereco(Object.values(codPorLanc))
+      // Título sem lançamento vinculado (sem COD_SACADO): SACADO pelo CPF/CNPJ do pagador
+      const sacadoPorCic = await carregarSacadosPorCic(
+        pares.filter((p) => p.reg && !sacadoMap[codPorLanc[String(p.row.num_lancamento)]]).map((p) => p.reg.cnpj_cpf_pagdr)
+      )
 
       const boletos = []
       const semBarras = []
@@ -784,7 +788,9 @@ export default function BoletosPage() {
       for (const { row, reg } of pares) {
         if (!reg) continue
         if (!linhaDigitavelParaCodigoBarras(reg.num_linha_digtvl)) { semBarras.push(rotulo(row)); continue }
-        const b = captParaBoletoRemessa(reg, String(reg.dt_venc_tit || '').slice(0, 10), sacadoMap[codPorLanc[String(row.num_lancamento)]])
+        const sac = sacadoMap[codPorLanc[String(row.num_lancamento)]]
+          || sacadoPorCic[String(reg.cnpj_cpf_pagdr || '').replace(/\D/g, '')]
+        const b = captParaBoletoRemessa(reg, String(reg.dt_venc_tit || '').slice(0, 10), sac)
         // Sem SACADO: completa com o endereço do próprio boleto (capt_boletos)
         if (!String(b.sacado_bairro || '').trim()) b.sacado_bairro = row.sacado_bairro || ''
         if (!String(b.sacado_cidade || '').trim()) b.sacado_cidade = row.sacado_cidade || ''

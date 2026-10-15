@@ -83,6 +83,26 @@ export async function carregarSacadosEndereco(codsSacado) {
   return sacadoMap
 }
 
+// Endereço do pagador (SACADO) por CPF/CNPJ (só dígitos) — reserva para título sem
+// lançamento vinculado (sem COD_SACADO): capt_registrado não tem bairro e o BMP
+// rejeita a remessa sem ele (motivo 47). Retorna { [cic]: { bairro, cidade, uf, endereco, cep } }.
+export async function carregarSacadosPorCic(cics) {
+  const lista = [...new Set((cics || []).map((c) => String(c ?? '').replace(/\D/g, '')).filter(Boolean))]
+  const map = {}
+  for (let i = 0; i < lista.length; i += 300) {
+    const { data } = await supabase.from('SACADO')
+      .select('CIC, BAIRRO, CIDADE, UF, ENDERECO, CEP').in('CIC', lista.slice(i, i + 300))
+    ;(data || []).forEach((sx) => {
+      const atual = map[sx.CIC]
+      // havendo mais de um cadastro para o CPF/CNPJ, fica o que tem bairro
+      if (!atual || (campoVazio(atual.bairro) && !campoVazio(sx.BAIRRO))) {
+        map[sx.CIC] = { bairro: sx.BAIRRO, cidade: sx.CIDADE, uf: sx.UF, endereco: sx.ENDERECO, cep: sx.CEP }
+      }
+    })
+  }
+  return map
+}
+
 // Faltas de endereço do pagador que impedem o título de entrar na remessa.
 export const faltasEnderecoBoleto = (b) =>
   [['bairro', b.sacado_bairro], ['cidade', b.sacado_cidade], ['UF', b.sacado_uf]]
