@@ -1929,9 +1929,16 @@ export const getOPEITEByCedente = async (codCedente) => {
 
     console.log(`[BoletoService] ✓ Total de OPEITE: ${allOpeite.length} registros`)
 
-    // Regra: se STATUS=PR, usar DT_VENCI_NOVO no lugar de DT_VENCI
+    // Regra: havendo DT_VENCI_NOVO, ele é o vencimento em vigor (qualquer STATUS
+    // carregado: PR, e também IN/DO quando a prorrogação venceu ou foi revertida).
+    // Sem isso, um PR que virou IN volta ao DT_VENCI antigo, deixa de casar com o
+    // capt_registrado (já no vencimento novo) e a bolinha Antecipa fica vermelha
+    // com o título ainda em carteira. DC/CO nem são carregados (ficam vermelhos).
+    // O DT_VENCI original é guardado: se a prorrogação nunca chegou ao banco, o
+    // capt_registrado continua nele e o casamento usa essa data (ver opeiteRecs).
     allOpeite.forEach(o => {
-      if (String(o.STATUS || '').trim().toUpperCase() === 'PR' && o.DT_VENCI_NOVO) {
+      if (o.DT_VENCI_NOVO) {
+        o._DT_VENCI_ORIG = o.DT_VENCI
         o.DT_VENCI = o.DT_VENCI_NOVO
       }
     })
@@ -1968,6 +1975,7 @@ export const getOPEITEByCedente = async (codCedente) => {
         num_titulo: opeite.NUM_TITULO || '',
         data_emissao: opeite.DT_LANCA || '',
         data_vencimento: opeite.DT_VENCI || '',
+        _data_vencimento_original: opeite._DT_VENCI_ORIG || null,
         valor: parseFloat(opeite.VR_FACE) || 0,
         // Documento = número do título (NUM_TITULO), NUNCA o lançamento (NUM_LANCAMENTO,
         // usado só em num_lancamento/coluna LANC) — eram iguais aqui por engano.
@@ -2213,10 +2221,21 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       _key: _matchKey(b.valor, b.data_vencimento, b.sacado_cic),
     }))
 
-    const opeiteRecs = opeite.map((o) => ({
-      ...o, // já vem em snake_case (getOPEITEByCedente) com _ORIGEM:'OPEITE'
-      _key: _matchKey(o.valor, o.data_vencimento, o.sacado_cic),
-    }))
+    // Chave do OPEITE: vencimento em vigor (DT_VENCI_NOVO, se houver). Se só o
+    // vencimento ORIGINAL casa com capt_boletos/capt_registrado (prorrogação ainda
+    // não registrada no banco), usa o original — o título segue em carteira.
+    const _keysOutrasFontes = new Set([
+      ...captRecs.map((c) => c._key),
+      ...registrados.map((r) => _matchKey(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)),
+    ])
+    const opeiteRecs = opeite.map((o) => {
+      const k = _matchKey(o.valor, o.data_vencimento, o.sacado_cic)
+      const kOrig = o._data_vencimento_original ? _matchKey(o.valor, o._data_vencimento_original, o.sacado_cic) : null
+      return {
+        ...o, // já vem em snake_case (getOPEITEByCedente) com _ORIGEM:'OPEITE'
+        _key: (kOrig && !_keysOutrasFontes.has(k) && _keysOutrasFontes.has(kOrig)) ? kOrig : k,
+      }
+    })
 
     // LANC das linhas de capt_registrado. Quando há DUPLICIDADE (várias linhas de
     // capt_registrado com o mesmo valor+vencimento+CIC), TODAS as duplicatas aparecem
