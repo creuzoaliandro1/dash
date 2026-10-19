@@ -526,7 +526,8 @@ function parseNFSe(xmlDoc) {
     //   "BOLETO ( 12/07/2026,12/08/2026,27/08/2026,12/09/2026 )"
     // Cada data é o vencimento de uma parcela. O valor total é dividido
     // igualmente entre as parcelas (sobra de centavos vai nas primeiras).
-    const mBoleto = (descricao || '').match(/BOLETO\s*\(([^)]*)\)/i)
+    // Aceita pontuação solta entre BOLETO e o parêntese (ex.: "BOLETO ; ( ... )").
+    const mBoleto = (descricao || '').match(/BOLETO[\s;:,.\-]*\(([^)]*)\)/i)
     if (mBoleto) {
       const datas = mBoleto[1]
         .split(',')
