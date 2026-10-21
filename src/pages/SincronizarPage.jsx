@@ -30,25 +30,82 @@ const _iso = (d) => (d ? String(d).slice(0, 10) : '')
 const _dig = (v) => String(v ?? '').replace(/\D/g, '')
 const chaveVVC = (valor, venc, cic) => `${_cents(valor)}|${_iso(venc)}|${_dig(cic)}`
 
-// capt_registrado indexada por valor+venc+cic -> { nosso, linha }
+// Executa fn(item) para cada item com no máximo `limit` chamadas simultâneas.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length)
+  let i = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx) }
+  }))
+  return out
+}
+
+// capt_registrado indexada por valor+venc+cic -> { nosso, linha }.
+// Conta as linhas e lê as páginas de 1000 em paralelo (antes: uma por vez).
 async function carregarRegIndex() {
   const idx = {}
-  let from = 0
   const ps = 1000
-  while (true) {
-    const { data, error } = await supabase
-      .from('capt_registrado')
-      .select('vlr_tit, dt_venc_tit, cnpj_cpf_pagdr, identd_nosso_num, num_linha_digtvl')
-      .range(from, from + ps - 1)
-    if (error || !data || data.length === 0) break
-    data.forEach((r) => {
-      const k = chaveVVC(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)
-      if (!(k in idx)) idx[k] = { nosso: r.identd_nosso_num ?? '', linha: r.num_linha_digtvl ?? '' }
-    })
-    if (data.length < ps) break
-    from += ps
+  const cols = 'id, vlr_tit, dt_venc_tit, cnpj_cpf_pagdr, identd_nosso_num, num_linha_digtvl'
+  const { count, error } = await supabase.from('capt_registrado').select('id', { count: 'exact', head: true })
+  if (error) return idx
+  const paginas = Array.from({ length: Math.ceil((count || 0) / ps) }, (_, p) => p)
+  const res = await mapLimit(paginas, 6, async (p) => {
+    const { data } = await supabase.from('capt_registrado').select(cols)
+      .order('id').range(p * ps, p * ps + ps - 1)
+    return data || []
+  })
+  for (const r of res.flat()) {
+    const k = chaveVVC(r.vlr_tit, r.dt_venc_tit, r.cnpj_cpf_pagdr)
+    if (!(k in idx)) idx[k] = { nosso: r.identd_nosso_num ?? '', linha: r.num_linha_digtvl ?? '' }
   }
   return idx
+}
+
+// Toda a OPEITE (menos DC) em páginas de API_PAGE, várias páginas em paralelo.
+// O total não é conhecido de antemão no Firebird: para na primeira página
+// incompleta. Devolve as linhas na mesma ordem da leitura sequencial.
+async function carregarOpeite(onProgresso, conc = 6, maxPaginas = 600) {
+  const paginas = []
+  let ultima = Infinity // índice da primeira página incompleta
+  let prox = 0
+  let lidas = 0
+  const naoDC = (o) => String(o.STATUS || '').trim().toUpperCase() !== 'DC'
+  await Promise.all(Array.from({ length: conc }, async () => {
+    while (true) {
+      const p = prox++
+      if (p >= maxPaginas || p > ultima) return
+      const { data, error } = await smartFrom('OPEITE')
+        .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, DT_LANCA, COD_SACADO, COD_CEDENTE, STATUS, TIPO_TITULO')
+        .range(p * API_PAGE, p * API_PAGE + API_PAGE - 1)
+      if (error) throw error
+      const lote = data || []
+      paginas[p] = lote.filter(naoDC)
+      lidas += paginas[p].length
+      onProgresso?.(lidas)
+      if (lote.length < API_PAGE && p < ultima) ultima = p
+    }
+  }))
+  const fim = Math.min(ultima, maxPaginas - 1)
+  const todas = []
+  for (let p = 0; p <= fim; p++) todas.push(...(paginas[p] || []))
+  return todas
+}
+
+// Nome/CIC do SACADO para os códigos ainda fora do cache. No Firebird cada código
+// vira uma chamada ao proxy; os blocos rodam em paralelo para não enfileirar
+// centenas delas de 8 em 8.
+async function carregarSacadosCache(cache, cods, { lancarErro = false, bloco = 40, conc = 3 } = {}) {
+  const faltantes = [...new Set(cods.filter((v) => v != null && !(v in cache)))]
+  if (faltantes.length === 0) return
+  const blocos = []
+  for (let i = 0; i < faltantes.length; i += bloco) blocos.push(faltantes.slice(i, i + bloco))
+  await mapLimit(blocos, conc, async (chunk) => {
+    const { data: sac, error } = await smartFrom('SACADO')
+      .select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', chunk)
+    if (error && lancarErro) throw error
+    ;(sac || []).forEach((sx) => { cache[sx.COD_SACADO] = { nome: sx.NOME_CORRENTISTA, cic: sx.CIC } })
+    chunk.forEach((c) => { if (!(c in cache)) cache[c] = { nome: '', cic: '' } })
+  })
 }
 
 export default function SincronizarPage() {
@@ -87,20 +144,12 @@ export default function SincronizarPage() {
     ;(async () => {
       setLoading(true); setErro(null); setProgresso(0)
       try {
-        regIdx.current = await carregarRegIndex()
-        const todas = []
-        for (let p = 0; p < 600; p++) {
-          const { data, error } = await smartFrom('OPEITE')
-            .select('NUM_LANCAMENTO, NUM_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, DT_LANCA, COD_SACADO, COD_CEDENTE, STATUS, TIPO_TITULO')
-            .range(p * API_PAGE, p * API_PAGE + API_PAGE - 1)
-          if (error) throw error
-          const lote = data || []
-          for (const o of lote) {
-            if (String(o.STATUS || '').trim().toUpperCase() !== 'DC') todas.push(o)
-          }
-          if (!cancel) setProgresso(todas.length)
-          if (lote.length < API_PAGE) break
-        }
+        // capt_registrado e OPEITE são independentes: carregam ao mesmo tempo.
+        const [idx, todas] = await Promise.all([
+          carregarRegIndex(),
+          carregarOpeite((n) => { if (!cancel) setProgresso(n) }),
+        ])
+        regIdx.current = idx
         if (!cancel) setRawRows(todas)
       } catch (e) {
         if (!cancel) setErro(e?.message || String(e))
@@ -133,14 +182,7 @@ export default function SincronizarPage() {
       if (rawRows.length === 0) { setDisplayRows([]); return }
       setEnriching(true)
       try {
-        const cods = [...new Set(preFiltrados.map((o) => o.COD_SACADO)
-          .filter((v) => v != null && !(v in sacadoCache.current)))]
-        if (cods.length) {
-          const { data: sac } = await smartFrom('SACADO')
-            .select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', cods)
-          ;(sac || []).forEach((s) => { sacadoCache.current[s.COD_SACADO] = { nome: s.NOME_CORRENTISTA, cic: s.CIC } })
-          cods.forEach((c) => { if (!(c in sacadoCache.current)) sacadoCache.current[c] = { nome: '', cic: '' } })
-        }
+        await carregarSacadosCache(sacadoCache.current, preFiltrados.map((o) => o.COD_SACADO))
         if (cancel) return
         const enr = preFiltrados.map((o) => {
           const cic = sacadoCache.current[o.COD_SACADO]?.cic || ''
@@ -193,15 +235,7 @@ export default function SincronizarPage() {
       const coRows = rawRows.filter((o) => String(o.STATUS || '').trim().toUpperCase() === 'CO')
 
       // 2) Garante CIC (via SACADO) para os COD_SACADO das linhas CO
-      const faltantes = [...new Set(coRows.map((o) => o.COD_SACADO)
-        .filter((v) => v != null && !(v in sacadoCache.current)))]
-      for (let i = 0; i < faltantes.length; i += 300) {
-        const chunk = faltantes.slice(i, i + 300)
-        const { data: sac } = await smartFrom('SACADO')
-          .select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', chunk)
-        ;(sac || []).forEach((sx) => { sacadoCache.current[sx.COD_SACADO] = { nome: sx.NOME_CORRENTISTA, cic: sx.CIC } })
-        chunk.forEach((c) => { if (!(c in sacadoCache.current)) sacadoCache.current[c] = { nome: '', cic: '' } })
-      }
+      await carregarSacadosCache(sacadoCache.current, coRows.map((o) => o.COD_SACADO))
 
       // 3) Mapa chave (valor+venc+cic) -> NUM_TITULO da linha CO
       const coByNum = new Map()
@@ -484,17 +518,7 @@ export default function SincronizarPage() {
 
   // ---------- Cruzamento OPEITE x capt_registrado ----------
   // Garante nome/CIC (SACADO) no cache para os COD_SACADO informados.
-  const garantirSacados = async (cods) => {
-    const faltantes = [...new Set(cods.filter((v) => v != null && !(v in sacadoCache.current)))]
-    for (let i = 0; i < faltantes.length; i += 300) {
-      const chunk = faltantes.slice(i, i + 300)
-      const { data: sac, error } = await smartFrom('SACADO')
-        .select('COD_SACADO, NOME_CORRENTISTA, CIC').in('COD_SACADO', chunk)
-      if (error) throw error
-      ;(sac || []).forEach((sx) => { sacadoCache.current[sx.COD_SACADO] = { nome: sx.NOME_CORRENTISTA, cic: sx.CIC } })
-      chunk.forEach((c) => { if (!(c in sacadoCache.current)) sacadoCache.current[c] = { nome: '', cic: '' } })
-    }
-  }
+  const garantirSacados = (cods) => carregarSacadosCache(sacadoCache.current, cods, { lancarErro: true })
 
   // Carrega capt_registrado (todas as linhas; o filtro de status_ret é feito no cálculo).
   const carregarCaptParaCruzamento = async () => {
