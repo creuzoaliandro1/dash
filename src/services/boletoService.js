@@ -590,53 +590,59 @@ export const importContaCaptToRegistrado = async (boletosData) => {
     // Registros que já estavam em capt_registrado mas NÃO vieram no relatório atual
     // (a lista é sempre completa) => devolvidos ao cedente de origem.
     const devolvidoIds = []
-    {
+
+    // Lê uma tabela inteira em páginas. Descobre o total com count e busca as
+    // páginas em paralelo, em vez de uma por vez.
+    const lerTudo = async (tabela, colunas) => {
       const pageSize = 1000
-      let from = 0
-      while (true) {
-        const { data, error } = await supabase
-          .from('capt_registrado')
-          .select('id, num_linha_digtvl, status')
-          .range(from, from + pageSize - 1)
-        if (error) { console.warn('[importContaCaptToRegistrado] Erro ao ler capt_registrado:', error.message); break }
-        if (!data || data.length === 0) break
-        data.forEach(r => {
-          const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
-          if (norm && linhasSet.has(norm)) {
-            existingMap.set(norm, r.id)
-          } else if (norm && String(r.status || '') !== 'devolvido') {
-            devolvidoIds.push(r.id)
-          }
-        })
-        if (data.length < pageSize) break
-        from += pageSize
+      const { count, error: cErr } = await supabase.from(tabela).select('id', { count: 'exact', head: true })
+      if (cErr) throw cErr
+      const total = count || 0
+      const paginas = []
+      for (let from = 0; from < total; from += pageSize) {
+        paginas.push(supabase.from(tabela).select(colunas).order('id').range(from, from + pageSize - 1))
       }
+      const res = await Promise.all(paginas)
+      const out = []
+      for (const { data, error } of res) {
+        if (error) throw error
+        if (data) out.push(...data)
+      }
+      return out
     }
+
+    // capt_registrado e capt_boletos são independentes: lidas ao mesmo tempo.
+    const [regRows, bolRows] = await Promise.all([
+      lerTudo('capt_registrado', 'id, num_linha_digtvl, status').catch(e => {
+        console.warn('[importContaCaptToRegistrado] Erro ao ler capt_registrado:', e.message); return null
+      }),
+      lerTudo('capt_boletos', 'id, codigo_barras').catch(e => {
+        console.warn('[importContaCaptToRegistrado] Erro ao ler capt_boletos:', e.message); return []
+      }),
+    ])
+    // Sem a leitura completa de capt_registrado não dá para separar inserir/atualizar
+    // nem marcar devolvidos com segurança: aborta em vez de duplicar registros.
+    if (regRows === null) throw new Error('Falha ao ler capt_registrado. Tente novamente.')
+    regRows.forEach(r => {
+      const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
+      if (norm && linhasSet.has(norm)) {
+        existingMap.set(norm, r.id)
+      } else if (norm && String(r.status || '') !== 'devolvido') {
+        devolvidoIds.push(r.id)
+      }
+    })
     console.log(`[importContaCaptToRegistrado] ${existingMap.size} registro(s) já existente(s) em capt_registrado`)
 
     // 2) Excluir de capt_boletos qualquer registro cujo codigo_barras bata com
-    //    uma das linhas digitáveis importadas.
-    //    Estratégia: carrega TODA capt_boletos em páginas (comparação em JS),
-    //    evitando URLs longas que causam 400 ao usar .in() com strings de 47 dígitos.
+    //    uma das linhas digitáveis importadas (comparação em JS, evitando URLs
+    //    longas que causam 400 ao usar .in() com strings de 47 dígitos).
     let deletedFromBoletos = 0
     {
       const idsParaExcluir = []
-      const pageSize = 1000
-      let from = 0
-      while (true) {
-        const { data: bPage, error: bErr } = await supabase
-          .from('capt_boletos')
-          .select('id, codigo_barras')
-          .range(from, from + pageSize - 1)
-        if (bErr) { console.warn('[importContaCaptToRegistrado] Erro ao ler capt_boletos:', bErr.message); break }
-        if (!bPage || bPage.length === 0) break
-        bPage.forEach(b => {
-          const norm = String(b.codigo_barras || '').replace(/\D/g, '')
-          if (norm && linhasSet.has(norm)) idsParaExcluir.push(b.id)
-        })
-        if (bPage.length < pageSize) break
-        from += pageSize
-      }
+      bolRows.forEach(b => {
+        const norm = String(b.codigo_barras || '').replace(/\D/g, '')
+        if (norm && linhasSet.has(norm)) idsParaExcluir.push(b.id)
+      })
       // Exclui em lotes de 100 IDs (UUIDs são curtos, sem risco de URL longa)
       const delBatch = 100
       for (let i = 0; i < idsParaExcluir.length; i += delBatch) {
@@ -675,25 +681,33 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       }
     }
 
-    // 5) Atualizar existentes em lote usando update por id
-    //    (Supabase não suporta bulk update com diferentes valores, então fazemos em paralelo controlado)
+    // 5) Atualizar existentes em lote: upsert por id (ON CONFLICT (id) DO UPDATE) atualiza
+    //    centenas de linhas por requisição, em vez de um UPDATE por registro.
+    //    Só as colunas enviadas são alteradas. Ids repetidos no mesmo lote fariam o
+    //    Postgres recusar o upsert, então deduplica por id (vale a última linha).
     let updated = 0
-    const UPDATE_CONCURRENCY = 10
-    for (let i = 0; i < toUpdate.length; i += UPDATE_CONCURRENCY) {
-      const slice = toUpdate.slice(i, i + UPDATE_CONCURRENCY)
-      const results = await Promise.all(
-        slice.map(({ id, row }) =>
-          supabase.from('capt_registrado').update(row).eq('id', id)
+    {
+      const porId = new Map()
+      for (const { id, row } of toUpdate) porId.set(id, { ...row, id })
+      const updRows = [...porId.values()]
+      const UPD_BATCH = 500
+      const chunks = []
+      for (let i = 0; i < updRows.length; i += UPD_BATCH) chunks.push(updRows.slice(i, i + UPD_BATCH))
+      const UPD_CONCURRENCY = 3
+      for (let i = 0; i < chunks.length; i += UPD_CONCURRENCY) {
+        const slice = chunks.slice(i, i + UPD_CONCURRENCY)
+        const results = await Promise.all(
+          slice.map(chunk => supabase.from('capt_registrado').upsert(chunk, { onConflict: 'id' }))
         )
-      )
-      results.forEach(({ error }) => {
-        if (error) {
-          errors++
-          console.error('[importContaCaptToRegistrado] Erro ao atualizar:', error.message)
-        } else {
-          updated++
-        }
-      })
+        results.forEach(({ error }, k) => {
+          if (error) {
+            errors += slice[k].length
+            console.error('[importContaCaptToRegistrado] Erro ao atualizar lote:', error.message)
+          } else {
+            updated += slice[k].length
+          }
+        })
+      }
     }
 
     // 6) Marcar como "devolvido" os registros que sumiram do relatório atual.
