@@ -7,7 +7,7 @@ import { incrementContaCnab400, getContaRemessaCount, uploadRemessaCNAB400, crea
 
 // Remessa CNAB400 enviada pela CAPT CAPITAL sobre títulos já registrados (modelo
 // da remessa 68): header e conta do tipo 1 (pos 030-037) = CAPT CAPITAL, carteira
-// 01 só no header, cada título com tipo 1 + tipo 2 (dados do pagador, exigidos pelo
+// 01 (Baixa) ou 09 (Prorrogação) no header e no tipo 1, cada título com tipo 1 + tipo 2 (dados do pagador, exigidos pelo
 // BMP) + tipo 3 com o código de barras original (pos 172-215), pelo qual o BMP
 // localiza o título no cedente de origem. Usada pela Remessa Prorrogação (Sincronizar,
 // ocorrência 06) e pela Baixa (Boletos > Importados > CNAB400, ocorrência 02).
@@ -109,9 +109,10 @@ export const faltasEnderecoBoleto = (b) =>
     .filter(([, v]) => campoVazio(v)).map(([n]) => n)
 
 // Gera UM .REM pela CAPT CAPITAL (numeração de remessa dela) com a ocorrência
-// informada, registra a remessa (contador, Storage, REMESSAS) e baixa o .zip.
+// informada (e carteira: padrão 1; Prorrogação usa 9), registra a remessa
+// (contador, Storage, REMESSAS) e baixa o .zip.
 // Retorna { remName, quantidade }.
-export async function gerarRemessaCaptCapital(boletos, ocorrencia) {
+export async function gerarRemessaCaptCapital(boletos, ocorrencia, carteira = 1) {
   const { data: contaCapt, error: captErr } = await getContaCaptCapital()
   if (captErr || !contaCapt) {
     throw new Error('Não foi possível carregar os dados da CAPT CAPITAL: ' + (captErr?.message || 'conta não encontrada'))
@@ -123,7 +124,7 @@ export async function gerarRemessaCaptCapital(boletos, ocorrencia) {
   const now = new Date()
   const p2 = (n) => String(n).padStart(2, '0')
   const dd = p2(now.getDate()), mm = p2(now.getMonth() + 1)
-  const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, ocorrencia, undefined, null, true, 1) // carteira 1: header pos 046 e tipo 1 pos 024
+  const blob = await generateCNAB400RemittanceFile(boletos, contaCapt, nextSeq, ocorrencia, undefined, null, true, carteira) // carteira: header pos 045-046 e tipo 1 pos 021-024 (Baixa = 1, Prorrogação = 9)
   const seq = String(nextSeq).padStart(7, '0')
   const remName = `CB${dd}${mm}${seq}.REM`
   try { await incrementContaCnab400(contaCapt.id, nextSeq) } catch (e) { /* best-effort */ }

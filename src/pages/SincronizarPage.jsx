@@ -435,7 +435,7 @@ export default function SincronizarPage() {
   }
 
   // Gera UMA remessa CNAB400 de alteração de vencimento (ocorrência 06) com todos
-  // os títulos selecionados, enviada pela CAPT CAPITAL: header e conta do registro
+  // os títulos selecionados, enviada pela CAPT CAPITAL (carteira 9): header e conta do registro
   // tipo 1 (pos 030-037) = CAPT CAPITAL; cada título leva tipo 1 + tipo 2 (dados do
   // pagador, exigidos pelo BMP) + tipo 3 com o código de barras original do título
   // (pos 172-215), pelo qual o BMP localiza o título registrado no cedente de origem.
@@ -490,7 +490,7 @@ export default function SincronizarPage() {
       // 3) Um único .REM pela CAPT CAPITAL, ocorrência 06 (alteração de vencimento),
       //    registrado e baixado em .zip
       const now = new Date()
-      const { remName } = await gerarRemessaCaptCapital(boletos, '06')
+      const { remName } = await gerarRemessaCaptCapital(boletos, '06', 9) // carteira 9 no header e no tipo 1
 
       // 4) Marca a prorrogação como solicitada nos títulos que entraram na remessa
       //    (o vencimento do cadastro não muda aqui) e atualiza a lista.
