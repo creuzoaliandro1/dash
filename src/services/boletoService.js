@@ -2296,6 +2296,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       // NUM_LANCAMENTO só na duplicata mais antiga (as demais ficam sem LANC).
       // Quando há duas vezes em capt_registrado, ambas aparecem (cada uma sua linha).
       num_lancamento: (_info && _info.oldestId === r.id) ? _info.lanca : null,
+      _numLanca: _lancaNum(r.num_lanca), // lançamento gravado neste registro (para parear com a OPEITE)
       created_at: r.created_at || r.dt_inclusao || null,
       data_emissao: r.dt_ems_tit || null,
       numero_documento: r.numero_documento || r.num_doc_tit || '',
@@ -2450,11 +2451,27 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       R.forEach((r, i) => { if (!usedR[i]) triples.push({ R: r, O: null, C: null }) })
 
       // OPEITE (Efactor) não tem nosso número: casa pela própria chave (valor+venc+CIC = k).
-      // Mescla no primeiro par existente ainda sem OPEITE; o que sobrar vira linha própria
-      // (OPEITE sempre aparece, tendo ou não correspondência).
-      let oi = 0
-      for (const t of triples) { if (oi < O.length) { t.O = O[oi]; oi++ } }
-      for (; oi < O.length; oi++) triples.push({ R: null, O: O[oi], C: null })
+      // Ordem de preferência para cada lançamento:
+      //   1) o par cujo capt_registrado já tem esse num_lanca gravado;
+      //   2) um par sem registrado cancelado e sem num_lanca de outro lançamento;
+      //   3) qualquer par ainda sem OPEITE cujo registrado não tenha outro num_lanca.
+      // O que sobrar vira linha própria (OPEITE sempre aparece, tendo ou não correspondência).
+      const _regCancelado = (r) => !!r && /cancelado/i.test(String(r._situacaoReg || ''))
+      const _livre = (t) => !t.O
+      const pendentesO = []
+      for (const o of O) {
+        const nl = _lancaNum(o.num_lancamento)
+        const t = nl != null ? triples.find((x) => _livre(x) && x.R && x.R._numLanca === nl) : null
+        if (t) t.O = o
+        else pendentesO.push(o)
+      }
+      for (const o of pendentesO) {
+        const semOutroLanc = (x) => !(x.R && x.R._numLanca != null)
+        const t = triples.find((x) => _livre(x) && semOutroLanc(x) && !_regCancelado(x.R))
+          || triples.find((x) => _livre(x) && semOutroLanc(x))
+        if (t) t.O = o
+        else triples.push({ R: null, O: o, C: null })
+      }
 
       for (const t of triples) {
         const Ri = t.R || null
