@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import jsPDF from 'jspdf'
 import { lerEntradasZip } from '../utils/zipEntries'
+import { prepararNovasRemessas, gerarNovasRemessas } from '../services/novasRemessasRet'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
 import { vincularRetornoOpeite, gravarRetContacapt, getRetContacapt, vincularRetPorTituloValor, vincularRetPorVencTitulo, vincularRetPorCaptRegistrado, syncTrocaCedentePorCaptRegistrado, getAllContas, resolverCorrentistaRet, backfillCorrentistaRet, uploadRetFiles, getDownloadUrlRet, retFileStorageKey, getOpeiteStatusMap, recomputarStatusRet, getContaInfo } from '../services/boletoService'
@@ -644,6 +645,29 @@ Falhas: ${(r0.falhas || 0) + (r1.falhas || 0) + (r2.falhas || 0) + (bf.falhas ||
   const allSalvosKeys = salvosOrdenados.map(keySalvo)
   const allSelSalvos = allSalvosKeys.length > 0 && allSalvosKeys.every(k => selSalvos.has(k))
   const toggleSelAllSalvos = () => setSelSalvos(() => allSelSalvos ? new Set() : new Set(allSalvosKeys))
+  // Ações › Gerar novas remessas: um .REM (ocorrência 01) por conta com os títulos
+  // marcados, cada um no seu .zip, todos baixados juntos num único .zip.
+  const [gerandoNR, setGerandoNR] = useState('')
+  const gerarNovasRemessasSalvos = async () => {
+    setOpenSalvosMenu(false)
+    const alvo = salvosOrdenados.filter(r => selSalvos.has(keySalvo(r)))
+    if (!alvo.length) { alert('Marque ao menos um título.'); return }
+    setGerandoNR('Buscando os títulos...')
+    try {
+      const { grupos, faltas } = await prepararNovasRemessas(alvo, allContasRet)
+      const avisoFaltas = faltas.length ? `\n\nFicam de fora ${faltas.length} título(s):\n${faltas.slice(0, 15).join('\n')}${faltas.length > 15 ? `\n... e mais ${faltas.length - 15}` : ''}` : ''
+      if (!grupos.length) { alert('Nenhuma remessa a gerar.' + avisoFaltas); return }
+      const resumo = grupos.map(g => `• ${g.conta.conta || g.conta.cedente} — ${g.conta.nome_correntista || ''}: ${g.boletos.length} título(s)`).join('\n')
+      if (!window.confirm(`Gerar ${grupos.length} remessa(s) CNAB400 (registro, ocorrência 01), uma por conta:\n\n${resumo}${avisoFaltas}\n\nO contador de remessas de cada conta será incrementado. Continuar?`)) return
+      const res = await gerarNovasRemessas(grupos, setGerandoNR)
+      const lista = res.arquivos.map(a => `• ${a.remName} — ${a.conta} (${a.quantidade})`).join('\n')
+      alert(`${res.zipName ? `Arquivo ${res.zipName} baixado com ${res.arquivos.length} remessa(s):\n${lista}` : 'Nenhuma remessa gerada.'}${res.erros.length ? `\n\nErros:\n${res.erros.join('\n')}` : ''}`)
+    } catch (e) {
+      alert('Erro ao gerar novas remessas: ' + (e?.message || e))
+    } finally {
+      setGerandoNR('')
+    }
+  }
   const gerarPdfSalvos = () => {
     setOpenSalvosMenu(false)
     const alvo = selSalvos.size > 0 ? salvosOrdenados.filter(r => selSalvos.has(keySalvo(r))) : salvosOrdenados
@@ -1491,9 +1515,10 @@ Falhas: ${(r0.falhas || 0) + (r1.falhas || 0) + (r2.falhas || 0) + (bf.falhas ||
                 onClick={() => setOpenSalvosMenu(o => !o)}
                 className="text-xs text-[#a3a3a3] hover:text-white border border-[#2a2a2a] rounded px-2.5 py-1 transition"
               >
-                Ações ▾
+                {gerandoNR ? 'Gerando remessas...' : 'Ações ▾'}
               </button>
-              {openSalvosMenu && (
+              {gerandoNR && <div className="absolute right-0 mt-1 w-72 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20 px-3 py-2 text-xs text-[#a3a3a3]">{gerandoNR}</div>}
+              {openSalvosMenu && !gerandoNR && (
                 <div className="absolute right-0 mt-1 w-56 bg-[#111111] border border-[#2a2a2a] rounded-lg shadow-lg z-20">
                   <button
                     onClick={gerarPdfSalvos}
@@ -1501,6 +1526,16 @@ Falhas: ${(r0.falhas || 0) + (r1.falhas || 0) + (r2.falhas || 0) + (bf.falhas ||
                   >
                     📄 Gerar PDF {selSalvos.size > 0 ? `(${selSalvos.size} sel.)` : '(todos)'}
                   </button>
+                  {selSalvos.size > 0 && (
+                    <button
+                      onClick={gerarNovasRemessasSalvos}
+                      disabled={!!gerandoNR}
+                      className="block w-full text-left px-3 py-2 text-xs text-[#a3a3a3] hover:bg-[#1a1a1a] hover:text-white transition disabled:opacity-50"
+                      title="Gera um arquivo .REM por conta com os títulos marcados e baixa tudo num único .zip"
+                    >
+                      📦 Gerar novas remessas ({selSalvos.size} sel.)
+                    </button>
+                  )}
                 </div>
               )}
             </div>
