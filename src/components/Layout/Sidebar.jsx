@@ -283,6 +283,41 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
           </button>
         )}
 
+        {/* Relatórios with submenu — visível apenas para usuários Master */}
+        {isMaster && (
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => setExpandedMenu(expandedMenu === 'relatorios' ? null : 'relatorios')}
+              className="flex items-center justify-between px-3 py-2 text-sm font-medium text-[#a3a3a3] hover:bg-[#111111] hover:text-white rounded transition w-full"
+            >
+              <span>Relatórios</span>
+              <svg
+                className={`w-4 h-4 transition ${expandedMenu === 'relatorios' ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+            </button>
+
+            {expandedMenu === 'relatorios' && (
+              <div className="pl-4 flex flex-col gap-1">
+                <button
+                  onClick={() => setCurrentPage('relatorio-borderos')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'relatorio-borderos'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  Borderôs
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {isMaster && (
           <button
             onClick={() => setCurrentPage('acessos')}
