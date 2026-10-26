@@ -229,6 +229,49 @@ function getChildElementText(parentElement, tagName) {
   return ''
 }
 
+// Prefixo (2 dígitos) do código IBGE do município -> UF
+const UF_POR_CODIGO_IBGE = {
+  11: 'RO', 12: 'AC', 13: 'AM', 14: 'RR', 15: 'PA', 16: 'AP', 17: 'TO',
+  21: 'MA', 22: 'PI', 23: 'CE', 24: 'RN', 25: 'PB', 26: 'PE', 27: 'AL', 28: 'SE', 29: 'BA',
+  31: 'MG', 32: 'ES', 33: 'RJ', 35: 'SP', 41: 'PR', 42: 'SC', 43: 'RS',
+  50: 'MS', 51: 'MT', 52: 'GO', 53: 'DF',
+}
+
+const cacheMunicipiosIBGE = new Map()
+
+// Nome do município (maiúsculo, sem acento) a partir do código IBGE de 7 dígitos.
+// Os nomes em texto da NFS-e Nacional (xLocEmi/xLocIncid) não servem: alguns
+// emissores (ex.: Mossoró-RN) mandam o UTF-8 corrompido ("MOSSORÃ").
+async function nomeMunicipioIBGE(cMun) {
+  if (!/^\d{7}$/.test(cMun)) return ''
+  if (!cacheMunicipiosIBGE.has(cMun)) {
+    cacheMunicipiosIBGE.set(cMun, (async () => {
+      try {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 5000)
+        const resp = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/municipios/${cMun}`, { signal: ctrl.signal })
+        clearTimeout(t)
+        if (!resp.ok) return ''
+        const data = await resp.json()
+        return String(data?.nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+      } catch (e) {
+        console.warn('[NFSe Parser] Não foi possível consultar município IBGE', cMun, e)
+        return ''
+      }
+    })())
+  }
+  return cacheMunicipiosIBGE.get(cMun)
+}
+
+// Preenche SACADO_CIDADE dos registros que só trouxeram o código IBGE (_SACADO_CMUN)
+async function resolverMunicipiosIBGE(boletos) {
+  for (const b of boletos) {
+    if (!b._SACADO_CMUN) continue
+    if (!b.SACADO_CIDADE) b.SACADO_CIDADE = await nomeMunicipioIBGE(b._SACADO_CMUN)
+    delete b._SACADO_CMUN
+  }
+}
+
 async function parseXMLFile(file) {
   const text = await file.text()
   const parser = new DOMParser()
@@ -261,6 +304,8 @@ async function parseXMLFile(file) {
       boletos = parseMDFe(xmlDoc)
     }
   }
+
+  await resolverMunicipiosIBGE(boletos)
 
   // Anexa o arquivo XML original a cada boleto/parcela extraído do arquivo.
   // Isso permite que, ao confirmar a importação (ImportPreview), o XML seja
@@ -443,6 +488,9 @@ function parseNFSe(xmlDoc) {
     let tomaUF = ''
     let tomaCEP = ''
     let tomaFone = ''
+    let tomaNumero = ''
+    let tomaComplemento = ''
+    let tomaCMun = ''
 
     // Se encontrou TomadorServico (Ginfes format), extrair os dados
     if (tomaElement && tomaRazao) {
@@ -483,10 +531,17 @@ function parseNFSe(xmlDoc) {
       // No formato SPED, endereço vem dentro de <end>
       const endElement = tomaElement ? tomaElement.getElementsByTagName('end')[0] : null
       tomaEndereco = getChildElementText(endElement, 'xLgr')
+      tomaNumero = getChildElementText(endElement, 'nro')
+      tomaComplemento = getChildElementText(endElement, 'xCpl').replace(/[;,\s]+$/, '')
       tomaBairro = getChildElementText(endElement, 'xBairro')
       tomaCidade = getChildElementText(endElement, 'xMun')
       tomaUF = getChildElementText(endElement, 'UF')
       tomaCEP = getChildElementText(endElement, 'CEP')
+      // NFS-e Padrão Nacional (gov.br/nfse): <end><endNac> só traz cMun (IBGE),
+      // sem xMun/UF. UF sai do prefixo do código; o nome da cidade é resolvido
+      // depois (parseXMLFile -> resolverMunicipiosIBGE).
+      tomaCMun = getChildElementText(endElement, 'cMun')
+      if (!tomaUF && tomaCMun) tomaUF = UF_POR_CODIGO_IBGE[tomaCMun.slice(0, 2)] || ''
     }
 
     let tomador = tomaRazao || ''
@@ -502,15 +557,21 @@ function parseNFSe(xmlDoc) {
     // Converter valor para número (suporta formato brasileiro)
     const valorLimpo = converterValor(valor)
 
-    const emissaoBR = dataEmissao
-      ? new Date(dataEmissao).toLocaleDateString('pt-BR')
-      : new Date().toLocaleDateString('pt-BR')
+    // Usa a data escrita no XML (YYYY-MM-DD...) sem passar por fuso horário,
+    // para não virar o dia quando a hora vem em UTC (ex.: "...T01:00:00-00:00").
+    const mData = String(dataEmissao || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+    const emissaoBR = mData
+      ? `${mData[3]}/${mData[2]}/${mData[1]}`
+      : (dataEmissao ? new Date(dataEmissao) : new Date()).toLocaleDateString('pt-BR')
 
     // Campos comuns do sacado/cabeçalho (reutilizados nos dois caminhos)
     const sacadoFields = {
       SACADO_NOME: tomador.trim() || 'CLIENTE SEM NOME',
       SACADO_CIC: tomaCNPJ || '',
       SACADO_ENDERECO: tomaEndereco || '',
+      ...(tomaNumero ? { SACADO_NUMERO: tomaNumero } : {}),
+      ...(tomaComplemento ? { SACADO_COMPLEMENTO: tomaComplemento } : {}),
+      ...(!tomaCidade && tomaCMun ? { _SACADO_CMUN: tomaCMun } : {}),
       SACADO_BAIRRO: tomaBairro || '',
       SACADO_CIDADE: tomaCidade || '',
       SACADO_UF: tomaUF || '',
