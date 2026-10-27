@@ -7,6 +7,7 @@ import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, carregarSacadosPorCic, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
+import { validarDadosSacado } from '../utils/validarSacado'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -556,6 +557,7 @@ export default function BoletosPage() {
       importedCount: result.imported,
       errorCount: result.errors,
       totalCount: result.total,
+      sacadoIncompleto: (result.erros || []).filter(e => e.motivo === 'sacado_incompleto'),
     })
     setShowImportResult(true)
     loadBoletos()
@@ -862,9 +864,12 @@ export default function BoletosPage() {
 
       if (importResult.errors > 0) {
         fecharBarraCnab()
+        const detalhes = (importResult.errorDetails || []).slice(0, 15)
+          .map(d => `• ${d.numero_documento || '—'} — ${d.sacado_nome || '—'}: ${d.message}`).join('\n')
         const continuar = window.confirm(
           `${importResult.errors} registro(s) não puderam ser importados para capt_boletos.\n` +
-          `${importResult.imported} importados, ${importResult.skipped} já existiam.\n\n` +
+          `${importResult.imported} importados, ${importResult.skipped} já existiam.\n` +
+          (detalhes ? `\n${detalhes}\n` : '') + `\n` +
           `Deseja continuar a geração do CNAB400 com os registros disponíveis?`
         )
         if (!continuar) return
@@ -884,6 +889,9 @@ export default function BoletosPage() {
       alert('Nenhum boleto disponível para gerar remessa.')
       return
     }
+
+    // Registro: endereço e contato do sacado obrigatórios — não gera nada se faltar
+    if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
 
     // Verificar (lendo capt_boletos direto do banco — não confiar no campo
     // 'situacao' já mesclado da view "Importados") se algum boleto selecionado
@@ -963,7 +971,30 @@ export default function BoletosPage() {
     }
   }
 
+  // CNAB400 de Registro (01): bloqueia a geração se algum boleto tiver endereço/
+  // contato do sacado incompleto e lista os boletos com o que falta.
+  // Retorna true quando bloqueou.
+  const bloquearCnabSacadoIncompleto = (boletos, tipoOperacao) => {
+    if (tipoOperacao !== '01') return false
+    const incompletos = boletos
+      .map(b => ({ b, v: validarDadosSacado(b) }))
+      .filter(x => !x.v.ok)
+    if (incompletos.length === 0) return false
+    fecharBarraCnab()
+    const linhas = incompletos.slice(0, 20).map(({ b, v }) =>
+      `• Nº ${b.numero_documento || '—'} / Nosso nº ${b.nosso_numero || '—'} — ${b.sacado_nome || '—'}\n   Falta: ${v.mensagens.join(', ')}`
+    ).join('\n')
+    const resto = incompletos.length > 20 ? `\n... e mais ${incompletos.length - 20} boleto(s).` : ''
+    alert(
+      `CNAB400 NÃO gerado: ${incompletos.length} boleto(s) com dados do sacado incompletos.\n\n` +
+      `${linhas}${resto}\n\n` +
+      `Complete o cadastro (Editar boleto) e gere de novo.`
+    )
+    return true
+  }
+
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
+    if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
     setGeneratingCNAB400(true)
     // Barra de progresso continua (transform/compositor): segue avancando ate
     // ~90% mesmo enquanto a thread fica travada gerando o .REM. Se ja estiver
@@ -2541,6 +2572,18 @@ export default function BoletosPage() {
                     </p>
                   )}
                 </div>
+                {importStatus.sacadoIncompleto?.length > 0 && (
+                  <div className="p-4 bg-red-950/30 border border-red-900 rounded max-h-60 overflow-y-auto">
+                    <p className="text-sm text-red-400 font-medium mb-2">
+                      {importStatus.sacadoIncompleto.length} boleto(s) NÃO gravado(s) — endereço/contato do sacado incompleto:
+                    </p>
+                    {importStatus.sacadoIncompleto.map((e, i) => (
+                      <p key={i} className="text-xs text-red-300">
+                        • Nº {e.numero_documento || '—'} — {e.sacado_nome || '—'}: falta {e.detalhe}
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-4 bg-[#1a1a1a] border border-[#404040] rounded">

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createBoleto, getAllContas, uploadAnexoBoleto, linhaDigitavelParaBarcode, reconciliarBTGExistentes } from '../../services/boletoService'
 import { gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
+import { validarDadosSacado } from '../../utils/validarSacado'
 
 // Função para formatar valor em padrão brasileiro (55.457,87)
 function formatarValorBrasileiro(valor) {
@@ -46,7 +47,7 @@ function normalizarDataAno4(value) {
 }
 
 // Campo editável do popup — salva no blur, máscara automática para datas
-function DetailField({ label, field, isDate, currentValue, onSave }) {
+function DetailField({ label, field, isDate, currentValue, onSave, required, invalid }) {
   const [local, setLocal] = useState(currentValue ?? '')
 
   // Sincroniza quando o popup abre (currentValue muda)
@@ -66,14 +67,16 @@ function DetailField({ label, field, isDate, currentValue, onSave }) {
 
   return (
     <div>
-      <label className="block text-[10px] text-[#666666] uppercase font-semibold mb-0.5">{label}</label>
+      <label className="block text-[10px] text-[#666666] uppercase font-semibold mb-0.5">
+        {label}{required && <span className="text-red-500"> *</span>}
+      </label>
       <input
         type="text"
         value={local}
         onChange={handleChange}
         onBlur={handleBlur}
         placeholder={isDate ? 'dd/mm/aa' : ''}
-        className="w-full px-2 py-1.5 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition"
+        className={`w-full px-2 py-1.5 bg-[#0a0a0a] border rounded text-white text-xs focus:border-white outline-none transition ${invalid ? 'border-red-600' : 'border-[#2a2a2a]'}`}
       />
     </div>
   )
@@ -278,8 +281,11 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     if (instalmentModal) {
       const { itemIdx } = instalmentModal
       const newData = [...dataWithInstalments]
+      // Parcelas herdam o sacado da 1ª linha (com o que já foi corrigido no popup)
+      const { _records: recsAtuais, ...itemBase } = newData[itemIdx]
       newData[itemIdx]._records = instalments.map(inst => ({
-        ...newData[itemIdx],
+        ...itemBase,
+        ...(recsAtuais?.[0] || {}),
         NUM_TITULO: inst.number,
         VALOR: inst.value,
         VENCIMENTO: inst.dueDate,
@@ -341,6 +347,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       SACADO_TELEFONE: base.SACADO_TELEFONE || '',
       SACADO_EMAIL: base.SACADO_EMAIL || '',
       SACADO_ENDERECO: base.SACADO_ENDERECO || '',
+      SACADO_NUMERO: base.SACADO_NUMERO || '',
       SACADO_BAIRRO: base.SACADO_BAIRRO || '',
       SACADO_CEP: base.SACADO_CEP || '',
       SACADO_CIDADE: base.SACADO_CIDADE || '',
@@ -368,6 +375,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       SACADO_TELEFONE: detailEditData.SACADO_TELEFONE,
       SACADO_EMAIL: detailEditData.SACADO_EMAIL,
       SACADO_ENDERECO: detailEditData.SACADO_ENDERECO,
+      SACADO_NUMERO: detailEditData.SACADO_NUMERO,
       SACADO_BAIRRO: detailEditData.SACADO_BAIRRO,
       SACADO_CEP: detailEditData.SACADO_CEP,
       SACADO_CIDADE: detailEditData.SACADO_CIDADE,
@@ -435,6 +443,22 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           return
         }
 
+        // Endereço/contato do sacado incompletos: não grava (as linhas válidas seguem)
+        const validacaoSacado = validarDadosSacado(boletoData)
+        if (!validacaoSacado.ok) {
+          erros.push({
+            linha: linhaAtual,
+            numero_documento: boletoData.NUM_TITULO,
+            sacado_nome: boletoData.SACADO_NOME,
+            codigo_barras: boletoData.CODIGO_BARRAS || '',
+            valor: boletoData.VALOR,
+            motivo: 'sacado_incompleto',
+            detalhe: validacaoSacado.mensagens.join(', '),
+          })
+          errors++
+          return
+        }
+
         try {
           // 1. Duplicidade por código de barras já foi tratada no pré-filtro (ao abrir
           //    o preview): os já existentes foram ocultados (e, no caso do BTG, marcados
@@ -466,6 +490,17 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           const { data: boletoResult, error } = await createBoleto(targetUserId, boletoData)
           if (error) {
             console.error('[ImportPreview] Erro ao salvar boleto:', error)
+            if (error.code === 'SACADO_INCOMPLETO') {
+              erros.push({
+                linha: linhaAtual,
+                numero_documento: boletoData.NUM_TITULO,
+                sacado_nome: boletoData.SACADO_NOME,
+                codigo_barras: boletoData.CODIGO_BARRAS || '',
+                valor: boletoData.VALOR,
+                motivo: 'sacado_incompleto',
+                detalhe: (error.faltando || []).join(', '),
+              })
+            }
             errors++
           } else {
             imported++
@@ -523,6 +558,16 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     })
   }
 
+  // Linhas com endereço/contato do sacado incompleto (não serão gravadas)
+  let totalIncompletos = 0
+  let selecionadosValidos = 0
+  dataWithInstalments.forEach((item, itemIdx) => item._records.forEach((record, recordIdx) => {
+    const ok = validarDadosSacado(record).ok
+    if (!ok) totalIncompletos++
+    else if (selectedRows.has(`${itemIdx}-${recordIdx}`)) selecionadosValidos++
+  }))
+  const faltasPopup = detailPopup ? validarDadosSacado(detailEditData).faltando.map(f => f.campo) : []
+
   const saveDetailField = (field, val) => {
     setDetailEditData(prev => ({ ...prev, [field]: val }))
   }
@@ -543,6 +588,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             <p className="text-xs text-[#1a7f1a] mt-0.5">
               {dedupOcultos} registro(s) ocultado(s) (já existentes ou pagos/cancelados)
               {dedupAtualizados > 0 ? `, ${dedupAtualizados} atualizado(s)` : ''} — exibindo apenas o que será criado.
+            </p>
+          )}
+          {!checkingDedup && totalIncompletos > 0 && (
+            <p className="text-xs text-red-400 mt-0.5">
+              {totalIncompletos} registro(s) em vermelho com endereço/contato do sacado incompleto não serão importados — clique na linha para completar
+              (logradouro, número, bairro, CEP, cidade, UF, e-mail e telefone são obrigatórios).
             </p>
           )}
         </div>
@@ -570,11 +621,14 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             item._records.map((record, recordIdx) => {
               const rowId = `${itemIdx}-${recordIdx}`
               const isSelected = selectedRows.has(rowId)
+              const faltasSacado = validarDadosSacado(record).mensagens
+              const incompleto = faltasSacado.length > 0
               return (
                 <div
                   key={rowId}
                   onClick={() => openDetailPopup(itemIdx, recordIdx)}
-                  className={`flex items-center gap-2 px-4 py-px border-b border-[#1a1a1a] cursor-pointer hover:bg-[#111111] transition text-xs ${isSelected ? 'bg-[#0d0d0d]' : ''}`}
+                  title={incompleto ? `Não será importado — falta: ${faltasSacado.join(', ')}. Clique para editar.` : undefined}
+                  className={`flex items-center gap-2 px-4 py-px border-b border-[#1a1a1a] cursor-pointer hover:bg-[#111111] transition text-xs ${incompleto ? 'bg-red-950/30 border-l-2 border-l-red-600' : isSelected ? 'bg-[#0d0d0d]' : ''}`}
                 >
                   {/* Checkbox */}
                   <input
@@ -593,7 +647,12 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                   {/* Valor */}
                   <div className="w-[80px] flex-shrink-0 text-white font-mono text-right">{formatarValorBrasileiro(record.VALOR)}</div>
                   {/* Nome */}
-                  <div className="flex-1 text-white truncate">{record.SACADO_NOME || '—'}</div>
+                  <div className="flex-1 min-w-0 truncate">
+                    <span className="text-white">{record.SACADO_NOME || '—'}</span>
+                    {incompleto && (
+                      <span className="ml-2 text-[10px] text-red-400">⚠ falta: {faltasSacado.join(', ')}</span>
+                    )}
+                  </div>
                   {/* Ações */}
                   <div className="w-[60px] flex-shrink-0 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                     {/* Lixeira */}
@@ -676,9 +735,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
               className="px-6 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50">
               Cancelar
             </button>
-            <button onClick={handleImport} disabled={isImporting || checkingDedup || selectedRows.size === 0}
+            <button onClick={handleImport} disabled={isImporting || checkingDedup || selecionadosValidos === 0}
               className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50">
-              {isImporting ? 'Importando...' : checkingDedup ? 'Consultando...' : `Importar (${selectedRows.size})`}
+              {isImporting ? 'Importando...' : checkingDedup ? 'Consultando...' : `Importar (${selecionadosValidos})`}
             </button>
           </div>
         </div>
@@ -715,14 +774,20 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2"><DetailField label="Nome" field="SACADO_NOME" currentValue={detailEditData.SACADO_NOME} onSave={saveDetailField} /></div>
                   <DetailField label="CPF/CNPJ" field="SACADO_CIC" currentValue={detailEditData.SACADO_CIC} onSave={saveDetailField} />
-                  <DetailField label="Telefone" field="SACADO_TELEFONE" currentValue={detailEditData.SACADO_TELEFONE} onSave={saveDetailField} />
-                  <div className="col-span-2"><DetailField label="Email" field="SACADO_EMAIL" currentValue={detailEditData.SACADO_EMAIL} onSave={saveDetailField} /></div>
-                  <div className="col-span-2"><DetailField label="Endereço" field="SACADO_ENDERECO" currentValue={detailEditData.SACADO_ENDERECO} onSave={saveDetailField} /></div>
-                  <DetailField label="Bairro" field="SACADO_BAIRRO" currentValue={detailEditData.SACADO_BAIRRO} onSave={saveDetailField} />
-                  <DetailField label="CEP" field="SACADO_CEP" currentValue={detailEditData.SACADO_CEP} onSave={saveDetailField} />
-                  <DetailField label="Cidade" field="SACADO_CIDADE" currentValue={detailEditData.SACADO_CIDADE} onSave={saveDetailField} />
-                  <DetailField label="UF" field="SACADO_UF" currentValue={detailEditData.SACADO_UF} onSave={saveDetailField} />
+                  <DetailField label="Telefone (com DDD)" field="SACADO_TELEFONE" required invalid={faltasPopup.includes('SACADO_TELEFONE')} currentValue={detailEditData.SACADO_TELEFONE} onSave={saveDetailField} />
+                  <div className="col-span-2"><DetailField label="Email" field="SACADO_EMAIL" required invalid={faltasPopup.includes('SACADO_EMAIL')} currentValue={detailEditData.SACADO_EMAIL} onSave={saveDetailField} /></div>
+                  <DetailField label="Logradouro" field="SACADO_ENDERECO" required invalid={faltasPopup.includes('SACADO_ENDERECO')} currentValue={detailEditData.SACADO_ENDERECO} onSave={saveDetailField} />
+                  <DetailField label="Número" field="SACADO_NUMERO" required invalid={faltasPopup.includes('SACADO_NUMERO')} currentValue={detailEditData.SACADO_NUMERO} onSave={saveDetailField} />
+                  <DetailField label="Bairro" field="SACADO_BAIRRO" required invalid={faltasPopup.includes('SACADO_BAIRRO')} currentValue={detailEditData.SACADO_BAIRRO} onSave={saveDetailField} />
+                  <DetailField label="CEP" field="SACADO_CEP" required invalid={faltasPopup.includes('SACADO_CEP')} currentValue={detailEditData.SACADO_CEP} onSave={saveDetailField} />
+                  <DetailField label="Cidade" field="SACADO_CIDADE" required invalid={faltasPopup.includes('SACADO_CIDADE')} currentValue={detailEditData.SACADO_CIDADE} onSave={saveDetailField} />
+                  <DetailField label="UF" field="SACADO_UF" required invalid={faltasPopup.includes('SACADO_UF')} currentValue={detailEditData.SACADO_UF} onSave={saveDetailField} />
                 </div>
+                {faltasPopup.length > 0 && (
+                  <p className="text-[11px] text-red-400 mt-2">
+                    Sem estes dados o registro não será importado: {validarDadosSacado(detailEditData).mensagens.join(', ')}
+                  </p>
+                )}
               </div>
 
               {/* Avalista */}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import FileAttachment from './FileAttachment'
+import { validarDadosSacado } from '../../utils/validarSacado'
 
 // Converte registro snake_case do banco para chaves UPPERCASE do formulário
 const boletoToFormData = (b) => ({
@@ -123,6 +124,12 @@ const validate = (data) => {
     if (isEmpty(data.AVALISTA)) missing.push('Nome Sacador Avalista')
     if (isEmpty(data.AVALISTA_CIC)) missing.push('Identificador CIC (avalista)')
   }
+  // Endereço/contato do sacado: vazio (inclusive só espaços) ou formato inválido
+  for (const f of validarDadosSacado(data).faltando) {
+    const label = REQUIRED_FIELDS.find(([k]) => k === f.campo)?.[1] || f.rotulo
+    const msg = f.motivo === 'vazio' ? label : `${label} (${f.motivo})`
+    if (!missing.includes(label)) missing.push(msg)
+  }
   return missing
 }
 
@@ -141,6 +148,9 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
   // Arquivos selecionados para um boleto NOVO (ainda sem id). Enviados ao salvar.
   const [pendingFiles, setPendingFiles] = useState([])
   const [errors, setErrors] = useState([])
+  // Campos do sacado com problema (realce em vermelho após tentar salvar)
+  const [sacadoInvalidos, setSacadoInvalidos] = useState([])
+  const sacadoCls = (campo) => sacadoInvalidos.includes(campo) ? `${inputCls} !border-red-600` : inputCls
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -176,6 +186,7 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     const missing = validate(formData)
+    setSacadoInvalidos(validarDadosSacado(formData).faltando.map(f => f.campo))
     if (missing.length > 0) {
       setErrors(missing)
       return
@@ -285,27 +296,27 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
               <div className="flex gap-4">
                 <div className="flex-[2] min-w-0">
                   <label className={labelCls}>ENDEREÇO <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_ENDERECO" value={formData.SACADO_ENDERECO} onChange={handleChange} placeholder="Rua..." className={inputCls} />
+                  <input type="text" name="SACADO_ENDERECO" value={formData.SACADO_ENDERECO} onChange={handleChange} placeholder="Rua..." className={sacadoCls("SACADO_ENDERECO")} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <label className={labelCls}>NÚM. <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_NUMERO" value={formData.SACADO_NUMERO} onChange={handleChange} placeholder="123" className={inputCls} />
+                  <input type="text" name="SACADO_NUMERO" value={formData.SACADO_NUMERO} onChange={handleChange} placeholder="123" className={sacadoCls("SACADO_NUMERO")} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <label className={labelCls}>BAIRRO <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_BAIRRO" value={formData.SACADO_BAIRRO} onChange={handleChange} placeholder="Centro" className={inputCls} />
+                  <input type="text" name="SACADO_BAIRRO" value={formData.SACADO_BAIRRO} onChange={handleChange} placeholder="Centro" className={sacadoCls("SACADO_BAIRRO")} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <label className={labelCls}>CEP <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_CEP" value={formData.SACADO_CEP} onChange={handleChange} placeholder="00000-000" className={inputCls} />
+                  <input type="text" name="SACADO_CEP" value={formData.SACADO_CEP} onChange={handleChange} placeholder="00000-000" className={sacadoCls("SACADO_CEP")} />
                 </div>
                 <div className="flex-[0.7] min-w-0">
                   <label className={labelCls}>CIDADE <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_CIDADE" value={formData.SACADO_CIDADE} onChange={handleChange} placeholder="São Paulo" className={inputCls} />
+                  <input type="text" name="SACADO_CIDADE" value={formData.SACADO_CIDADE} onChange={handleChange} placeholder="São Paulo" className={sacadoCls("SACADO_CIDADE")} />
                 </div>
                 <div className="flex-[0.3] min-w-0">
                   <label className={labelCls}>UF <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_UF" value={formData.SACADO_UF} onChange={handleChange} placeholder="SP" maxLength="2" className={inputCls} />
+                  <input type="text" name="SACADO_UF" value={formData.SACADO_UF} onChange={handleChange} placeholder="SP" maxLength="2" className={sacadoCls("SACADO_UF")} />
                 </div>
               </div>
               {/* Linha 3: Tipo Pessoa + Complemento + Email + Telefone */}
@@ -324,11 +335,11 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
                 </div>
                 <div className="flex-[1.5] min-w-0">
                   <label className={labelCls}>EMAIL <span className="text-red-500">*</span></label>
-                  <input type="email" name="SACADO_EMAIL" value={formData.SACADO_EMAIL} onChange={handleChange} placeholder="cliente@email.com" className={inputCls} />
+                  <input type="email" name="SACADO_EMAIL" value={formData.SACADO_EMAIL} onChange={handleChange} placeholder="cliente@email.com" className={sacadoCls("SACADO_EMAIL")} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <label className={labelCls}>TELEFONE <span className="text-red-500">*</span></label>
-                  <input type="text" name="SACADO_TELEFONE" value={formData.SACADO_TELEFONE} onChange={handleChange} placeholder="(11) 90000-0000" className={inputCls} />
+                  <input type="text" name="SACADO_TELEFONE" value={formData.SACADO_TELEFONE} onChange={handleChange} placeholder="(11) 90000-0000" className={sacadoCls("SACADO_TELEFONE")} />
                 </div>
               </div>
             </div>

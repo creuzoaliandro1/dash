@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { generateBarcodeFromBoleto } from '../utils/boleto'
+import { validarDadosSacado, erroDadosSacado } from '../utils/validarSacado'
 import { firebirdConfig } from '../config/firebird'
 import { smartFrom } from './firebirdQuery'
 import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
@@ -157,6 +158,13 @@ export const getNextNossoNumero = async (contaId) => {
 // Criar novo boleto
 export const createBoleto = async (contaId, boletoData) => {
   try {
+    // Endereço e contato do sacado são obrigatórios (checado antes de consumir o nosso_numero)
+    const erroSacado = erroDadosSacado(boletoData)
+    if (erroSacado) {
+      console.warn('[BoletoService] Boleto bloqueado:', erroSacado.message)
+      return { data: null, error: erroSacado }
+    }
+
     // IMPORTANTE: SEMPRE gera novo nosso_numero usando o contador CONTAS.nnumero
     // Isso garante que cada boleto (importado ou novo) tenha um número único e sequencial
     // Não usa NOSSO_NUMERO do arquivo importado - sempre gera um novo
@@ -306,6 +314,19 @@ export const createBoletosBulk = async (contaId, boletosData) => {
       return { data: { imported: 0, errors: 0, total: 0 }, error: null }
     }
 
+    // Endereço e contato do sacado obrigatórios: incompletos não são gravados
+    const totalRecebido = boletosData.length
+    const incompletos = []
+    boletosData = boletosData.filter((b) => {
+      const v = validarDadosSacado(b)
+      if (!v.ok) incompletos.push({ numero_documento: b.NUM_TITULO || b.NUMERO_DOCUMENTO || '', sacado_nome: b.SACADO_NOME || '', faltando: v.mensagens })
+      return v.ok
+    })
+    if (incompletos.length) console.warn(`[BoletoService][Bulk] ${incompletos.length} boleto(s) com dados do sacado incompletos não gravados`, incompletos)
+    if (boletosData.length === 0) {
+      return { data: { imported: 0, errors: incompletos.length, total: totalRecebido, incompletos }, error: null }
+    }
+
     // 1) Lê a conta uma única vez (dados para barcode/juros)
     const { data: conta, error: contaErr } = await supabase
       .from('CONTAS')
@@ -350,6 +371,8 @@ export const createBoletosBulk = async (contaId, boletosData) => {
         sacado_cep: boletoData.SACADO_CEP || '',
         sacado_telefone: boletoData.SACADO_TELEFONE || '',
         sacado_email: boletoData.SACADO_EMAIL || '',
+        sacado_numero: boletoData.SACADO_NUMERO || '',
+        sacado_complemento: boletoData.SACADO_COMPLEMENTO || '',
         avalista_nome: boletoData.AVALISTA_NOME || '',
         avalista_cic: boletoData.AVALISTA_CIC || '',
         valor_pagamento: parseFloat(boletoData.VALOR_PAGAMENTO || 0),
@@ -400,7 +423,7 @@ export const createBoletosBulk = async (contaId, boletosData) => {
     // pela RPC next_nosso_numero no passo 1.1 — não há mais update aqui.
 
     console.log(`[BoletoService][Bulk] ${imported} inserido(s), ${errors} erro(s)`)
-    return { data: { imported, errors, total: registros.length }, error: null }
+    return { data: { imported, errors: errors + incompletos.length, total: totalRecebido, incompletos }, error: null }
   } catch (err) {
     console.error('[BoletoService][Bulk] Erro geral:', err)
     return { data: null, error: err }
@@ -2942,6 +2965,7 @@ export const autoImportarParaCapt = async (contaId, records) => {
     let errors = 0
     let relinked = 0
     const boletos = []
+    const errorDetails = []
     const onlyDigits = (v) => String(v || '').replace(/\D/g, '')
 
     for (const rec of records) {
@@ -3020,6 +3044,7 @@ export const autoImportarParaCapt = async (contaId, records) => {
       const { data: criado, error } = await createBoleto(contaId, payload)
       if (error) {
         errors++
+        errorDetails.push({ numero_documento: payload.NUM_TITULO, sacado_nome: payload.SACADO_NOME, message: error.message })
         console.error('[autoImportarParaCapt] Erro ao criar boleto para registro', rec.num_lancamento || rec.numero_documento, ':', error.message)
       } else {
         imported++
@@ -3029,7 +3054,7 @@ export const autoImportarParaCapt = async (contaId, records) => {
     }
 
     console.log(`[autoImportarParaCapt] Concluído: ${imported} criados, ${skipped} já existiam, ${relinked} relinkados (sacado trocado), ${errors} erros`)
-    return { data: { imported, skipped, errors, relinked, boletos }, error: null }
+    return { data: { imported, skipped, errors, relinked, boletos, errorDetails }, error: null }
   } catch (err) {
     console.error('[autoImportarParaCapt] Erro geral:', err)
     return { data: null, error: err }

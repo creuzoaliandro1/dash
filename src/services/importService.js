@@ -57,6 +57,7 @@ function processExcelFile(file, profileName, profileCIC, resolve, reject) {
           NOSSO_NUMERO: String(row['Nosso número'] || '').trim(),
           STATUS: String(row['Status do boleto'] || 'pendente').includes('Pago') ? 'pago' : 'pendente',
           SACADO_ENDERECO: String(row['Logradouro do pagador'] || '').trim(),
+          SACADO_NUMERO: String(row['Número do endereço do pagador'] || row['Número do pagador'] || '').trim(),
           SACADO_BAIRRO: String(row['Bairro do pagador'] || '').trim(),
           SACADO_CIDADE: String(row['Cidade do pagador'] || '').trim(),
           SACADO_UF: String(row['UF do pagador'] || '').substring(0, 2).toUpperCase(),
@@ -343,6 +344,9 @@ function parseNFe(xmlDoc) {
     let destCPF = getChildElementText(destElement, 'CPF') || ''
     let destEmail = getChildElementText(destElement, 'email') || ''
     let destEndereco = getChildElementText(destElement, 'xLgr') || ''
+    let destNumero = getChildElementText(destElement, 'nro') || ''
+    let destComplemento = getChildElementText(destElement, 'xCpl') || ''
+    let destFone = getChildElementText(destElement, 'fone') || ''
     let destBairro = getChildElementText(destElement, 'xBairro') || ''
     let destCidade = getChildElementText(destElement, 'xMun') || ''
     let destUF = getChildElementText(destElement, 'UF') || ''
@@ -377,6 +381,9 @@ function parseNFe(xmlDoc) {
       SACADO_NOME: destXNome || 'CLIENTE SEM NOME',
       SACADO_CIC: destCNPJ || destCPF || '',
       SACADO_ENDERECO: destEndereco || '',
+      SACADO_NUMERO: destNumero || '',
+      SACADO_COMPLEMENTO: destComplemento || '',
+      SACADO_TELEFONE: destFone || '',
       SACADO_BAIRRO: destBairro || '',
       SACADO_CIDADE: destCidade || '',
       SACADO_UF: destUF || '',
@@ -2394,6 +2401,7 @@ function processContaCaptExcel(file, userType, selectedContaId, profileName = ''
             ? formatarData(row['Data de pagamento'])
             : ''),                                                        // coluna AV
           SACADO_ENDERECO: String(row['Logradouro do pagador'] || '').trim(),
+          SACADO_NUMERO: String(row['Número do endereço do pagador'] || row['Número do pagador'] || '').trim(),
           SACADO_BAIRRO: String(row['Bairro do pagador'] || '').trim(),
           SACADO_CIDADE: String(row['Cidade do pagador'] || '').trim(),
           SACADO_UF: String(row['UF do pagador'] || '').substring(0, 2).toUpperCase(),

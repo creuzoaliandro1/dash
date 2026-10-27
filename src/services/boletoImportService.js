@@ -76,6 +76,7 @@ export const gerarRelatorioPDFErros = (erros, dataImportacao = new Date()) => {
   // Resumo
   const errosDuplicados = erros.filter(e => e.motivo === 'duplicado').length
   const errosContaNaoEncontrada = erros.filter(e => e.motivo === 'conta_nao_encontrada').length
+  const errosSacadoIncompleto = erros.filter(e => e.motivo === 'sacado_incompleto').length
 
   doc.setFontSize(11)
   doc.setFont(undefined, 'bold')
@@ -86,6 +87,7 @@ export const gerarRelatorioPDFErros = (erros, dataImportacao = new Date()) => {
   doc.text(`Total de registros não inseridos: ${erros.length}`, margin + 5, 48)
   doc.text(`  • Código de barras duplicado: ${errosDuplicados}`, margin + 5, 55)
   doc.text(`  • Conta não encontrada: ${errosContaNaoEncontrada}`, margin + 5, 62)
+  doc.text(`  • Dados do sacado incompletos: ${errosSacadoIncompleto}`, margin + 5, 69)
 
   // Tabela de erros
   const tabelaErros = erros.map(e => [
@@ -93,14 +95,16 @@ export const gerarRelatorioPDFErros = (erros, dataImportacao = new Date()) => {
     e.numero_documento || '—',
     (e.sacado_nome || '—').substring(0, 25), // Limitar tamanho
     (e.codigo_barras || '—').substring(0, 20),
-    e.valor ? `R$ ${e.valor.toFixed(2)}` : '—',
-    e.motivo === 'duplicado' ? 'Duplicado' : 'Conta não encontrada'
+    e.valor ? `R$ ${(Number(e.valor) || 0).toFixed(2)}` : "—",
+    e.motivo === 'duplicado' ? 'Duplicado'
+      : e.motivo === 'sacado_incompleto' ? `Sacado incompleto: ${e.detalhe || ''}`
+      : 'Conta não encontrada'
   ])
 
   doc.autoTable({
     head: [['Linha', 'Documento', 'Sacado', 'Código de Barras', 'Valor', 'Motivo']],
     body: tabelaErros,
-    startY: 70,
+    startY: 76,
     margin: margin,
     headStyles: {
       fillColor: [100, 100, 100],
