@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import jsPDF from 'jspdf'
 import { lerEntradasZip } from '../utils/zipEntries'
+import RetDownloadModal from '../components/Retorno/RetDownloadModal'
 import { prepararNovasRemessas, gerarNovasRemessas } from '../services/novasRemessasRet'
 import autoTable from 'jspdf-autotable'
 import { supabase } from '../lib/supabase'
@@ -469,6 +470,7 @@ export default function RetornoPage() {
   const [filtroArquivo, setFiltroArquivo] = useState('todos')
   const [selectedRows, setSelectedRows] = useState(new Set())
   const [openActionsMenu, setOpenActionsMenu] = useState(false)
+  const [showDownloadRet, setShowDownloadRet] = useState(false)
   const [vinculos, setVinculos] = useState({})       // chave -> { numLanca, cic }
   const [processandoRet, setProcessandoRet] = useState(false)
   const [retSalvos, setRetSalvos] = useState([])
@@ -1093,7 +1095,19 @@ Falhas: ${(r0.falhas || 0) + (r1.falhas || 0) + (r2.falhas || 0) + (bf.falhas ||
           <h1 className="text-2xl font-bold text-white">Retorno CNAB400</h1>
           <p className="text-sm text-[#666666] mt-1">Processamento de arquivos de retorno BMP MoneyPlus</p>
         </div>
+        {isMaster && (
+          <button
+            onClick={() => setShowDownloadRet(true)}
+            className="p-2 text-[#a3a3a3] hover:text-white border border-[#2a2a2a] hover:border-[#444444] rounded transition"
+            title="Baixar arquivos de retorno (.RET) salvos"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+          </button>
+        )}
       </div>
+      {showDownloadRet && <RetDownloadModal onClose={() => setShowDownloadRet(false)} />}
 
       {/* Upload — restrito a usuários Master */}
       {!isMaster && (

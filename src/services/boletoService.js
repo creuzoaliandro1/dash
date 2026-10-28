@@ -1299,6 +1299,44 @@ export const uploadRetFiles = async (entradas) => {
   return { ok, falhas }
 }
 
+// Nome mostrado ao usuário para uma chave do bucket (remove o "__<hash8>").
+export const retDisplayName = (key) => String(key || '').replace(/__[0-9a-f]{8}\.ret$/i, '.ret')
+
+// Lista TODOS os .ret do bucket 'retornos' (pagina de 1000 em 1000, sem limite).
+// Retorna [{ key, nome, tamanho, data }] do mais recente para o mais antigo.
+export const listRetFiles = async () => {
+  try {
+    const out = []
+    const PAGE = 1000
+    for (let offset = 0; ; offset += PAGE) {
+      const { data, error } = await supabase.storage.from('retornos')
+        .list('', { limit: PAGE, offset, sortBy: { column: 'created_at', order: 'desc' } })
+      if (error) throw error
+      for (const f of (data || [])) {
+        if (!f.id || !/\.ret$/i.test(f.name)) continue   // ignora pastas e outros arquivos
+        out.push({
+          key: f.name,
+          nome: retDisplayName(f.name),
+          tamanho: f.metadata?.size ?? null,
+          data: f.created_at || f.updated_at || null,
+        })
+      }
+      if (!data || data.length < PAGE) break
+    }
+    return { data: out, error: null }
+  } catch (err) {
+    console.error('[listRetFiles]', err)
+    return { data: [], error: err }
+  }
+}
+
+// Baixa o conteúdo (Blob) de um .ret do bucket 'retornos'.
+export const downloadRetFile = async (key) => {
+  const { data, error } = await supabase.storage.from('retornos').download(key)
+  if (error) return { data: null, error }
+  return { data, error: null }
+}
+
 // Gera URL assinada de download. `storageKey` = chave no bucket (ARQUIVO_KEY do
 // registro; para linhas antigas cai no nome sanitizado). `downloadName` = nome
 // mostrado ao usuário no arquivo baixado.
