@@ -1,7 +1,13 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 import { criarAntecipacao } from '../../services/boletoService'
+import { parseRemessaTrocaCedente, contaDaLinhaDigitavel, normalizaNossoNumero } from '../../utils/remessaTrocaCedente'
+
+const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const dataBr = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—')
+// Nome curto da conta a partir do sacador avalista (sem CNPJ na frente)
+const nomeConta = (s) => String(s || '').replace(/^[\d.\-/\s]+/, '').trim()
 
 // Colunas de capt_registrado (84 campos do Relatório de Gestão de Boletos).
 // key = coluna no Supabase | label = rótulo original do Excel.
@@ -153,6 +159,16 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
   const [showAcoes, setShowAcoes] = useState(false)
   const [gerandoRel, setGerandoRel] = useState(false)
   const [antecipando, setAntecipando] = useState(false)
+  // Filtros de data (AAAA-MM-DD) e conta (posição 24-30 da linha digitável)
+  const [inclusaoDe, setInclusaoDe] = useState('')
+  const [inclusaoAte, setInclusaoAte] = useState('')
+  const [emissaoDe, setEmissaoDe] = useState('')
+  const [emissaoAte, setEmissaoAte] = useState('')
+  const [contaFiltro, setContaFiltro] = useState('')
+  // Remessa de troca de cedente importada
+  const [remessa, setRemessa] = useState(null) // { arquivo, cedenteNome, conta, titulos: [{..., registroId}] }
+  const [soDaRemessa, setSoDaRemessa] = useState(false)
+  const remessaInputRef = useRef(null)
 
   useEffect(() => {
     let ativo = true
@@ -215,6 +231,85 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
     registros.forEach((r) => set.add(r.situacao_boleto ?? ''))
     return Array.from(set).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
   }, [registros])
+
+  // Contas presentes (pos. 24-30 da linha digitável) com o nome mais frequente do sacador avalista
+  const contasDisponiveis = useMemo(() => {
+    const mapa = new Map()
+    registros.forEach((r) => {
+      const conta = contaDaLinhaDigitavel(r.num_linha_digtvl)
+      if (conta.length !== 7) return
+      if (!mapa.has(conta)) mapa.set(conta, { conta, total: 0, nomes: new Map() })
+      const item = mapa.get(conta)
+      item.total += 1
+      const nome = nomeConta(r.nome_sacador_avalista)
+      if (nome) item.nomes.set(nome, (item.nomes.get(nome) || 0) + 1)
+    })
+    return Array.from(mapa.values())
+      .map(({ conta, total, nomes }) => {
+        const nome = Array.from(nomes.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+        return { conta, total, label: nome ? `${conta}-${nome}` : conta }
+      })
+      .sort((a, b) => a.conta.localeCompare(b.conta))
+  }, [registros])
+
+  // Conta digitada ou escolhida no combobox (só os dígitos antes do "-")
+  const contaFiltroDigitos = contaFiltro.split('-')[0].replace(/\D/g, '')
+
+  // Vincula cada título da remessa a um registro de capt_registrado:
+  // 1º conta + nosso número; 2º seu número + valor + vencimento.
+  const vincularRemessa = (dados, lista) => dados.titulos.map((t) => {
+    let achado = lista.find((r) =>
+      contaDaLinhaDigitavel(r.num_linha_digtvl) === t.conta &&
+      normalizaNossoNumero(r.identd_nosso_num) === t.nossoNumero
+    )
+    if (!achado) {
+      achado = lista.find((r) =>
+        [r.numero_documento, r.num_doc_tit].some((d) => String(d || '').trim() === t.seuNumero) &&
+        Math.abs((parseFloat(r.vlr_tit) || 0) - t.valor) < 0.005 &&
+        String(r.dt_venc_tit || '').slice(0, 10) === t.vencimento
+      )
+    }
+    return { ...t, registroId: achado ? achado.id : null, situacao: achado ? achado.situacao_boleto : null }
+  })
+
+  const handleImportarRemessa = async (e) => {
+    const arquivo = e.target.files?.[0]
+    e.target.value = ''
+    if (!arquivo) return
+    try {
+      const texto = await arquivo.text()
+      const dados = parseRemessaTrocaCedente(texto)
+      const titulos = vincularRemessa(dados, registros)
+      setRemessa({ arquivo: arquivo.name, cedenteNome: dados.cedenteNome, conta: dados.conta, titulos })
+      setSelecionados(new Set(titulos.filter((t) => t.registroId).map((t) => t.registroId)))
+      setSoDaRemessa(false)
+    } catch (err) {
+      console.error('[ContaRegistrado] Erro ao ler remessa:', err)
+      alert('Erro ao ler a remessa: ' + err.message)
+    }
+  }
+
+  const fecharRemessa = () => {
+    setRemessa(null)
+    setSoDaRemessa(false)
+  }
+
+  // Revincula se os registros forem recarregados com a remessa aberta
+  useEffect(() => {
+    setRemessa((prev) => (prev ? { ...prev, titulos: vincularRemessa(prev, registros) } : prev))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registros])
+
+  const idsRemessa = useMemo(
+    () => new Set((remessa?.titulos || []).filter((t) => t.registroId).map((t) => t.registroId)),
+    [remessa]
+  )
+
+  const filtrosAtivos = [inclusaoDe, inclusaoAte, emissaoDe, emissaoAte, contaFiltroDigitos].filter(Boolean).length
+
+  const limparFiltros = () => {
+    setInclusaoDe(''); setInclusaoAte(''); setEmissaoDe(''); setEmissaoAte(''); setContaFiltro('')
+  }
 
   const toggleStatus = (valor) => {
     setStatusOcultos((prev) => {
@@ -346,6 +441,20 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
     if (statusOcultos.size > 0) {
       base = base.filter((r) => !statusOcultos.has(r.situacao_boleto ?? ''))
     }
+    // Intervalos de data (Data de registro / Data de emissão)
+    const dentro = (v, de, ate) => {
+      const d = String(v || '').slice(0, 10)
+      if (!d) return !de && !ate
+      return (!de || d >= de) && (!ate || d <= ate)
+    }
+    if (inclusaoDe || inclusaoAte) base = base.filter((r) => dentro(r.dt_inclusao, inclusaoDe, inclusaoAte))
+    if (emissaoDe || emissaoAte) base = base.filter((r) => dentro(r.dt_ems_tit, emissaoDe, emissaoAte))
+    // Conta (pos. 24-30 da linha digitável): aceita digitação parcial
+    if (contaFiltroDigitos) {
+      base = base.filter((r) => contaDaLinhaDigitavel(r.num_linha_digtvl).startsWith(contaFiltroDigitos))
+    }
+    // Só os títulos da remessa importada
+    if (soDaRemessa && remessa) base = base.filter((r) => idsRemessa.has(r.id))
     const term = searchTerm.trim().toLowerCase()
     if (term) {
       base = base.filter((r) =>
@@ -368,7 +477,18 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
       })
     }
     return base
-  }, [registros, searchTerm, filtrarComNumLanca, statusOcultos, sortKey, sortDir])
+  }, [registros, searchTerm, filtrarComNumLanca, statusOcultos, sortKey, sortDir,
+    inclusaoDe, inclusaoAte, emissaoDe, emissaoAte, contaFiltroDigitos, soDaRemessa, remessa, idsRemessa])
+
+  const selecionadosOcultos = useMemo(() => {
+    if (selecionados.size === 0) return 0
+    const visiveis = new Set(filtrados.map((r) => r.id))
+    let n = 0
+    selecionados.forEach((id) => { if (!visiveis.has(id)) n += 1 })
+    return n
+  }, [selecionados, filtrados])
+
+  const inputData = 'w-full px-2 py-1 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none [color-scheme:dark]'
 
   return (
     <div className="flex flex-col gap-3 flex-1 min-h-0">
@@ -409,13 +529,51 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L14 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 018 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
             </svg>
-            Filtro
+            Filtro{filtrosAtivos > 0 ? ` (${filtrosAtivos})` : ''}
           </button>
           {showFilter && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setShowFilter(false)} />
-              <div className="absolute right-0 mt-1 z-20 w-64 max-h-96 overflow-auto bg-[#0f0f0f] border border-[#2a2a2a] rounded-md shadow-lg p-3">
-                <p className="text-[11px] uppercase tracking-wider text-[#666666] mb-2">Filtros</p>
+              <div className="absolute right-0 mt-1 z-20 w-80 max-h-[32rem] overflow-auto bg-[#0f0f0f] border border-[#2a2a2a] rounded-md shadow-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[11px] uppercase tracking-wider text-[#666666]">Filtros</p>
+                  {filtrosAtivos > 0 && (
+                    <button type="button" onClick={limparFiltros} className="text-[11px] text-[#a3a3a3] hover:text-white">
+                      Limpar
+                    </button>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-[#a3a3a3] mb-1">Conta</p>
+                <input
+                  type="text"
+                  list="conta-capt-contas"
+                  placeholder="Digite ou selecione (ex.: 0964630-Carretão)"
+                  value={contaFiltro}
+                  onChange={(e) => setContaFiltro(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs placeholder-[#666666] focus:border-white outline-none"
+                />
+                <datalist id="conta-capt-contas">
+                  {contasDisponiveis.map((c) => (
+                    <option key={c.conta} value={c.label}>{`${c.total} boleto(s)`}</option>
+                  ))}
+                </datalist>
+
+                <p className="text-[11px] text-[#a3a3a3] mt-3 mb-1">Data de registro</p>
+                <div className="flex items-center gap-1.5">
+                  <input type="date" value={inclusaoDe} onChange={(e) => setInclusaoDe(e.target.value)} className={inputData} />
+                  <span className="text-[11px] text-[#666666]">até</span>
+                  <input type="date" value={inclusaoAte} onChange={(e) => setInclusaoAte(e.target.value)} className={inputData} />
+                </div>
+
+                <p className="text-[11px] text-[#a3a3a3] mt-3 mb-1">Data de emissão</p>
+                <div className="flex items-center gap-1.5">
+                  <input type="date" value={emissaoDe} onChange={(e) => setEmissaoDe(e.target.value)} className={inputData} />
+                  <span className="text-[11px] text-[#666666]">até</span>
+                  <input type="date" value={emissaoAte} onChange={(e) => setEmissaoAte(e.target.value)} className={inputData} />
+                </div>
+
+                <div className="my-3 border-t border-[#1f1f1f]" />
                 <label className="flex items-center gap-2 cursor-pointer text-sm text-white">
                   <input
                     type="checkbox"
@@ -452,6 +610,27 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
             </>
           )}
         </div>
+
+        {/* Importar remessa de troca de cedente */}
+        <input
+          ref={remessaInputRef}
+          type="file"
+          accept=".rem,.txt,.REM,.TXT"
+          onChange={handleImportarRemessa}
+          className="hidden"
+        />
+        <button
+          type="button"
+          onClick={() => remessaInputRef.current?.click()}
+          disabled={loading}
+          title="Importar remessa de troca de cedente (CNAB400)"
+          className="flex items-center gap-1.5 px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-md text-white text-sm hover:border-white hover:bg-[#1a1a1a] transition disabled:opacity-50 whitespace-nowrap"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M17 8l-5-5-5 5M12 3v12" />
+          </svg>
+          Importar
+        </button>
 
         {/* Ação: baixar selecionados */}
         <div className="relative">
@@ -520,6 +699,91 @@ export default function ContaRegistradoTable({ reloadKey = 0, contaData = null }
 
       {syncMsg && (
         <div className="text-xs text-[#a3a3a3] -mt-1">{syncMsg}</div>
+      )}
+
+      {/* Card: títulos da remessa de troca de cedente importada */}
+      {remessa && (() => {
+        const encontrados = remessa.titulos.filter((t) => t.registroId).length
+        const total = remessa.titulos.reduce((s, t) => s + t.valor, 0)
+        const contaLabel = contasDisponiveis.find((c) => c.conta === remessa.conta)?.label || remessa.conta
+        return (
+          <div className="bg-[#0f0f0f] border border-[#2a2a2a] rounded-lg p-3 flex flex-col gap-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-white font-medium truncate">
+                  Remessa de troca de cedente — {remessa.cedenteNome || 'cedente'}
+                </p>
+                <p className="text-[11px] text-[#a3a3a3]">
+                  {remessa.arquivo} · Conta {contaLabel} · {remessa.titulos.length} título(s) · {brl(total)} ·{' '}
+                  <span className={encontrados === remessa.titulos.length ? 'text-emerald-400' : 'text-amber-400'}>
+                    {encontrados} de {remessa.titulos.length} encontrado(s) e selecionado(s)
+                  </span>
+                </p>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <label className="flex items-center gap-1.5 text-xs text-[#d4d4d4] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={soDaRemessa}
+                    onChange={(e) => setSoDaRemessa(e.target.checked)}
+                    className="w-3.5 h-3.5 cursor-pointer accent-white"
+                  />
+                  Mostrar só os da remessa
+                </label>
+                <button
+                  type="button"
+                  onClick={fecharRemessa}
+                  title="Fechar"
+                  className="text-[#a3a3a3] hover:text-white text-lg leading-none px-1"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="max-h-48 overflow-auto border border-[#1f1f1f] rounded">
+              <table className="w-full text-xs text-white border-collapse">
+                <thead className="sticky top-0 bg-[#141414]">
+                  <tr className="text-left text-[#a3a3a3]">
+                    <th className="px-2 py-1.5 font-semibold">Seq.</th>
+                    <th className="px-2 py-1.5 font-semibold">Nosso número</th>
+                    <th className="px-2 py-1.5 font-semibold">Seu número</th>
+                    <th className="px-2 py-1.5 font-semibold">Pagador</th>
+                    <th className="px-2 py-1.5 font-semibold">CPF/CNPJ</th>
+                    <th className="px-2 py-1.5 font-semibold">Emissão</th>
+                    <th className="px-2 py-1.5 font-semibold">Vencimento</th>
+                    <th className="px-2 py-1.5 font-semibold text-right">Valor</th>
+                    <th className="px-2 py-1.5 font-semibold">Na Conta Capt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {remessa.titulos.map((t) => (
+                    <tr key={t.sequencia} className="border-t border-[#1a1a1a] text-[#d4d4d4]">
+                      <td className="px-2 py-1 whitespace-nowrap">{t.sequencia}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{t.nossoNumero}-{t.nossoNumeroDv}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{t.seuNumero}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{t.sacadoNome || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{t.sacadoDoc || '—'}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{dataBr(t.emissao)}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{dataBr(t.vencimento)}</td>
+                      <td className="px-2 py-1 whitespace-nowrap text-right">{brl(t.valor)}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {t.registroId
+                          ? <span className="text-emerald-400">✓ {t.situacao || 'encontrado'}</span>
+                          : <span className="text-amber-400">não encontrado</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
+      {selecionadosOcultos > 0 && (
+        <div className="text-[11px] text-amber-400 -mt-1">
+          {selecionadosOcultos} selecionado(s) não aparece(m) na tabela por causa dos filtros/busca.
+        </div>
       )}
 
       <div className="flex-1 min-h-0 overflow-auto bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
