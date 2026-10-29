@@ -67,23 +67,42 @@ export function erroDadosSacado(boleto) {
   return err
 }
 
-// Sacado sem e-mail ou telefone válido: usa o e-mail/telefone do perfil (CONTAS)
-// da conta que está gerando. Não altera o objeto original; devolve uma cópia
-// só quando precisa completar. Dados válidos do sacado têm prioridade.
-export function completarContatoPeloPerfil(boleto, perfil) {
-  const email = texto(perfil?.email)
-  const telefone = texto(perfil?.telefone)
-  if (!boleto || (!email && !telefone)) return boleto
+// Campo do sacado -> campo do perfil (CONTAS). CONTAS não tem número do endereço.
+const CAMPOS_PERFIL = {
+  SACADO_ENDERECO: 'endereco',
+  SACADO_BAIRRO: 'bairro',
+  SACADO_CEP: 'cep',
+  SACADO_CIDADE: 'cidade',
+  SACADO_UF: 'uf',
+  SACADO_EMAIL: 'email',
+  SACADO_TELEFONE: 'telefone',
+}
+
+// Dados do perfil (CONTAS) da conta que está gerando; e-mail cai no do usuário logado.
+export function perfilParaSacado(conta) {
+  let user = {}
+  try { user = JSON.parse(localStorage.getItem('user') || '{}') } catch { /* sem usuário */ }
+  const perfil = {}
+  for (const col of Object.values(CAMPOS_PERFIL)) perfil[col] = texto(conta?.[col])
+  if (!perfil.email) perfil.email = texto(user.email)
+  return perfil
+}
+
+// Sacado com endereço/contato vazio ou inválido: completa campo a campo com o
+// perfil da conta que está gerando. Dados válidos do sacado têm prioridade.
+// Não altera o objeto original; devolve uma cópia só quando completa algo.
+export function completarSacadoPeloPerfil(boleto, perfil) {
+  if (!boleto || !perfil) return boleto
   const faltas = validarDadosSacado(boleto).faltando.map((f) => f.campo)
+  const usaChaveForm = Object.keys(boleto).some((k) => k.startsWith('SACADO_'))
   const novo = { ...boleto }
   let mudou = false
-  const preencher = (campo, coluna, valor) => {
-    if (!valor || !faltas.includes(campo)) return
-    novo[coluna] = valor
-    if (campo in novo) novo[campo] = valor
+  for (const [campo, coluna] of CAMPOS_SACADO_OBRIGATORIOS) {
+    const valor = texto(perfil[CAMPOS_PERFIL[campo]])
+    if (!valor || !faltas.includes(campo)) continue
+    if (usaChaveForm) novo[campo] = valor
+    else novo[coluna] = valor
     mudou = true
   }
-  preencher('SACADO_EMAIL', 'sacado_email', email)
-  preencher('SACADO_TELEFONE', 'sacado_telefone', telefone)
   return mudou ? novo : boleto
 }

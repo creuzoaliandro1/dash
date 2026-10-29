@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { generateBarcodeFromBoleto } from '../utils/boleto'
-import { validarDadosSacado, erroDadosSacado } from '../utils/validarSacado'
+import { validarDadosSacado, erroDadosSacado, completarSacadoPeloPerfil, perfilParaSacado } from '../utils/validarSacado'
 import { firebirdConfig } from '../config/firebird'
 import { smartFrom } from './firebirdQuery'
 import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
@@ -156,10 +156,12 @@ export const getNextNossoNumero = async (contaId) => {
 }
 
 // Criar novo boleto
-export const createBoleto = async (contaId, boletoData) => {
+// opts.permitirSacadoIncompleto: grava mesmo sem endereço/contato completo
+// (usado na geração do CNAB400, que já completou com o perfil o que deu).
+export const createBoleto = async (contaId, boletoData, opts = {}) => {
   try {
     // Endereço e contato do sacado são obrigatórios (checado antes de consumir o nosso_numero)
-    const erroSacado = erroDadosSacado(boletoData)
+    const erroSacado = opts.permitirSacadoIncompleto ? null : erroDadosSacado(boletoData)
     if (erroSacado) {
       console.warn('[BoletoService] Boleto bloqueado:', erroSacado.message)
       return { data: null, error: erroSacado }
@@ -2956,10 +2958,22 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
 // em capt_boletos (_hasCapt === false). Funciona tanto com registros de origem OPEITE quanto
 // REGISTRADO (capt_registrado). Retorna os objetos capt_boletos criados para uso imediato
 // na geração de remessa CNAB400.
-export const autoImportarParaCapt = async (contaId, records) => {
+// opts.perfilFallback (CNAB400): endereço/e-mail/telefone ausentes vêm do perfil
+// (CONTAS) da conta e o boleto é gravado mesmo se ainda faltar algo.
+export const autoImportarParaCapt = async (contaId, records, opts = {}) => {
   try {
     if (!contaId || !records || records.length === 0) {
       return { data: { imported: 0, skipped: 0, errors: 0, boletos: [] }, error: null }
+    }
+
+    let perfil = null
+    if (opts.perfilFallback) {
+      const { data: contaPerfil } = await supabase
+        .from('CONTAS')
+        .select('endereco, bairro, cidade, uf, cep, email, telefone')
+        .eq('id', contaId)
+        .maybeSingle()
+      perfil = perfilParaSacado(contaPerfil)
     }
 
     console.log(`[autoImportarParaCapt] ${records.length} registro(s) sem capt_boletos para conta ${contaId}`)
@@ -3079,7 +3093,9 @@ export const autoImportarParaCapt = async (contaId, records) => {
         DESCRICAO:        '',
       }
 
-      const { data: criado, error } = await createBoleto(contaId, payload)
+      const { data: criado, error } = perfil
+        ? await createBoleto(contaId, completarSacadoPeloPerfil(payload, perfil), { permitirSacadoIncompleto: true })
+        : await createBoleto(contaId, payload)
       if (error) {
         errors++
         errorDetails.push({ numero_documento: payload.NUM_TITULO, sacado_nome: payload.SACADO_NOME, message: error.message })

@@ -7,7 +7,7 @@ import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, carregarSacadosPorCic, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
-import { validarDadosSacado, completarContatoPeloPerfil } from '../utils/validarSacado'
+import { validarDadosSacado, completarSacadoPeloPerfil, perfilParaSacado } from '../utils/validarSacado'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -854,7 +854,7 @@ export default function BoletosPage() {
 
     if (semCapt.length > 0) {
       console.log(`[CNAB400] ${semCapt.length} registro(s) sem capt_boletos — importando automaticamente...`)
-      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
+      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt, { perfilFallback: true })
 
       if (importErr || !importResult) {
         fecharBarraCnab()
@@ -890,10 +890,8 @@ export default function BoletosPage() {
       return
     }
 
-    // Registro: endereço e contato do sacado obrigatórios — não gera nada se faltar
-    // (e-mail/telefone ausentes vêm do perfil da conta que está gerando)
-    boletosParaRemessa = await completarContatoSacadoComPerfil(boletosParaRemessa)
-    if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
+    // Endereço/contato do sacado ausentes vêm do perfil da conta que está gerando
+    boletosParaRemessa = await completarSacadoComPerfil(boletosParaRemessa)
 
     // Verificar (lendo capt_boletos direto do banco — não confiar no campo
     // 'situacao' já mesclado da view "Importados") se algum boleto selecionado
@@ -973,45 +971,19 @@ export default function BoletosPage() {
     }
   }
 
-  // Sacado sem e-mail/telefone válido: usa o e-mail e telefone do perfil (CONTAS)
-  // da conta ativa que está gerando o CNAB400. Só em memória — não grava no boleto.
-  const completarContatoSacadoComPerfil = async (boletos) => {
-    const precisa = boletos.some(b => validarDadosSacado(b).faltando
-      .some(f => f.campo === 'SACADO_EMAIL' || f.campo === 'SACADO_TELEFONE'))
-    if (!precisa) return boletos
+  // CNAB400: sacado com endereço/e-mail/telefone vazio ou inválido usa os dados do
+  // perfil (CONTAS) da conta ativa que está gerando. Não bloqueia a geração: o que
+  // nem o perfil tiver segue em branco. Só em memória — não grava no boleto.
+  const completarSacadoComPerfil = async (boletos) => {
+    if (!boletos.some(b => !validarDadosSacado(b).ok)) return boletos
     let conta = contaData
     if (!conta) conta = (await getContaInfo(getActiveContaId())).data
-    let user = {}
-    try { user = JSON.parse(localStorage.getItem('user') || '{}') } catch { /* sem usuário */ }
-    const perfil = { email: conta?.email || user.email || '', telefone: conta?.telefone || '' }
-    return boletos.map(b => completarContatoPeloPerfil(b, perfil))
-  }
-
-  // CNAB400 de Registro (01): bloqueia a geração se algum boleto tiver endereço/
-  // contato do sacado incompleto e lista os boletos com o que falta.
-  // Retorna true quando bloqueou.
-  const bloquearCnabSacadoIncompleto = (boletos, tipoOperacao) => {
-    if (tipoOperacao !== '01') return false
-    const incompletos = boletos
-      .map(b => ({ b, v: validarDadosSacado(b) }))
-      .filter(x => !x.v.ok)
-    if (incompletos.length === 0) return false
-    fecharBarraCnab()
-    const linhas = incompletos.slice(0, 20).map(({ b, v }) =>
-      `• Nº ${b.numero_documento || '—'} / Nosso nº ${b.nosso_numero || '—'} — ${b.sacado_nome || '—'}\n   Falta: ${v.mensagens.join(', ')}`
-    ).join('\n')
-    const resto = incompletos.length > 20 ? `\n... e mais ${incompletos.length - 20} boleto(s).` : ''
-    alert(
-      `CNAB400 NÃO gerado: ${incompletos.length} boleto(s) com dados do sacado incompletos.\n\n` +
-      `${linhas}${resto}\n\n` +
-      `Complete o cadastro (Editar boleto) e gere de novo.`
-    )
-    return true
+    const perfil = perfilParaSacado(conta)
+    return boletos.map(b => completarSacadoPeloPerfil(b, perfil))
   }
 
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
-    boletosParaRemessa = await completarContatoSacadoComPerfil(boletosParaRemessa)
-    if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
+    boletosParaRemessa = await completarSacadoComPerfil(boletosParaRemessa)
     setGeneratingCNAB400(true)
     // Barra de progresso continua (transform/compositor): segue avancando ate
     // ~90% mesmo enquanto a thread fica travada gerando o .REM. Se ja estiver
@@ -1168,7 +1140,7 @@ export default function BoletosPage() {
     let boletosParaRemessa = comCapt
 
     if (semCapt.length > 0) {
-      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt)
+      const { data: importResult, error: importErr } = await autoImportarParaCapt(activeId, semCapt, { perfilFallback: true })
       if (importErr || !importResult) {
         fecharBarraCnab()
         alert('Erro ao importar registros para capt_boletos: ' + (importErr?.message || 'erro desconhecido'))
