@@ -7,7 +7,7 @@ import ImportPreview from '../components/Boletos/ImportPreview'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, carregarSacadosPorCic, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
-import { validarDadosSacado } from '../utils/validarSacado'
+import { validarDadosSacado, completarContatoPeloPerfil } from '../utils/validarSacado'
 import { createAndDownloadZip } from '../utils/zipUtils'
 import { generateDuplicataPDF, generateCessaoDireitosBlob } from '../utils/duplicata'
 import { criarDocumentoAssinatura, CAPT_SIGNER, syncZapSignPendentes } from '../services/zapsignService'
@@ -891,6 +891,8 @@ export default function BoletosPage() {
     }
 
     // Registro: endereço e contato do sacado obrigatórios — não gera nada se faltar
+    // (e-mail/telefone ausentes vêm do perfil da conta que está gerando)
+    boletosParaRemessa = await completarContatoSacadoComPerfil(boletosParaRemessa)
     if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
 
     // Verificar (lendo capt_boletos direto do banco — não confiar no campo
@@ -971,6 +973,20 @@ export default function BoletosPage() {
     }
   }
 
+  // Sacado sem e-mail/telefone válido: usa o e-mail e telefone do perfil (CONTAS)
+  // da conta ativa que está gerando o CNAB400. Só em memória — não grava no boleto.
+  const completarContatoSacadoComPerfil = async (boletos) => {
+    const precisa = boletos.some(b => validarDadosSacado(b).faltando
+      .some(f => f.campo === 'SACADO_EMAIL' || f.campo === 'SACADO_TELEFONE'))
+    if (!precisa) return boletos
+    let conta = contaData
+    if (!conta) conta = (await getContaInfo(getActiveContaId())).data
+    let user = {}
+    try { user = JSON.parse(localStorage.getItem('user') || '{}') } catch { /* sem usuário */ }
+    const perfil = { email: conta?.email || user.email || '', telefone: conta?.telefone || '' }
+    return boletos.map(b => completarContatoPeloPerfil(b, perfil))
+  }
+
   // CNAB400 de Registro (01): bloqueia a geração se algum boleto tiver endereço/
   // contato do sacado incompleto e lista os boletos com o que falta.
   // Retorna true quando bloqueou.
@@ -994,6 +1010,7 @@ export default function BoletosPage() {
   }
 
   const doGerarRemessaCNAB400 = async (boletosParaRemessa, tipoOperacao) => {
+    boletosParaRemessa = await completarContatoSacadoComPerfil(boletosParaRemessa)
     if (bloquearCnabSacadoIncompleto(boletosParaRemessa, tipoOperacao)) return
     setGeneratingCNAB400(true)
     // Barra de progresso continua (transform/compositor): segue avancando ate

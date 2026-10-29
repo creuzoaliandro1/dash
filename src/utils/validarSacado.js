@@ -66,3 +66,24 @@ export function erroDadosSacado(boleto) {
   err.faltando = mensagens
   return err
 }
+
+// Sacado sem e-mail ou telefone válido: usa o e-mail/telefone do perfil (CONTAS)
+// da conta que está gerando. Não altera o objeto original; devolve uma cópia
+// só quando precisa completar. Dados válidos do sacado têm prioridade.
+export function completarContatoPeloPerfil(boleto, perfil) {
+  const email = texto(perfil?.email)
+  const telefone = texto(perfil?.telefone)
+  if (!boleto || (!email && !telefone)) return boleto
+  const faltas = validarDadosSacado(boleto).faltando.map((f) => f.campo)
+  const novo = { ...boleto }
+  let mudou = false
+  const preencher = (campo, coluna, valor) => {
+    if (!valor || !faltas.includes(campo)) return
+    novo[coluna] = valor
+    if (campo in novo) novo[campo] = valor
+    mudou = true
+  }
+  preencher('SACADO_EMAIL', 'sacado_email', email)
+  preencher('SACADO_TELEFONE', 'sacado_telefone', telefone)
+  return mudou ? novo : boleto
+}
