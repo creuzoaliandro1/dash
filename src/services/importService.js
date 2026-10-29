@@ -1,5 +1,6 @@
 import { createBoleto } from './boletoService'
 import { supabase } from '../lib/supabase'
+import { validarDadosSacado } from '../utils/validarSacado'
 
 /**
  * Parse Excel files (.xlsx, .xls) - SIMPLES e DIRETO
@@ -273,6 +274,31 @@ async function resolverMunicipiosIBGE(boletos) {
   }
 }
 
+// XML sem e-mail ou telefone válido do sacado (ex.: NF-e do GPVendas não traz
+// <email> e manda o fone sem DDD): usa o e-mail/telefone do perfil ativo.
+async function completarContatoPeloPerfil(boletos) {
+  const pendentes = boletos.filter((b) => {
+    const faltas = validarDadosSacado(b).faltando.map((f) => f.campo)
+    return faltas.includes('SACADO_EMAIL') || faltas.includes('SACADO_TELEFONE')
+  })
+  if (pendentes.length === 0) return
+
+  let user = {}
+  try { user = JSON.parse(localStorage.getItem('user') || '{}') } catch { /* sem usuário */ }
+  const contaId = localStorage.getItem('activeContaId') || user.id
+  let perfil = { email: user.email || '', telefone: '' }
+  if (contaId) {
+    const { data } = await supabase.from('CONTAS').select('email, telefone').eq('id', contaId).maybeSingle()
+    if (data) perfil = { email: data.email || perfil.email, telefone: data.telefone || '' }
+  }
+
+  for (const b of pendentes) {
+    const faltas = validarDadosSacado(b).faltando.map((f) => f.campo)
+    if (faltas.includes('SACADO_EMAIL') && perfil.email) b.SACADO_EMAIL = String(perfil.email).trim()
+    if (faltas.includes('SACADO_TELEFONE') && perfil.telefone) b.SACADO_TELEFONE = String(perfil.telefone).trim()
+  }
+}
+
 async function parseXMLFile(file) {
   const text = await file.text()
   const parser = new DOMParser()
@@ -307,6 +333,7 @@ async function parseXMLFile(file) {
   }
 
   await resolverMunicipiosIBGE(boletos)
+  await completarContatoPeloPerfil(boletos)
 
   // Anexa o arquivo XML original a cada boleto/parcela extraído do arquivo.
   // Isso permite que, ao confirmar a importação (ImportPreview), o XML seja
