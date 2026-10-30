@@ -511,9 +511,18 @@ function parseNFSe(xmlDoc) {
                     getElementText(xmlDoc, 'infCpl') || ''
 
     // DADOS DO TOMADOR (sacado) - PROCURAR ESPECIFICAMENTE NA TAG DO TOMADOR
-    // Tentar primeiro formato Ginfes: <TomadorServico>
-    let tomaElement = xmlDoc.getElementsByTagName('TomadorServico')[0]
-    let tomaRazao = getChildElementText(tomaElement, 'RazaoSocial')
+    // Tentar primeiro formato Ginfes/ABRASF: <TomadorServico> (v1/v3) ou <Tomador> (ABRASF 2.x)
+    const textoDe = (el, tags) => {
+      for (const t of tags) {
+        const v = getChildElementText(el, t).trim()
+        // Alguns emissores preenchem campo vazio com "****", "-", "S/N"...
+        if (v && !/^[*\-.\s]+$/.test(v)) return v
+      }
+      return ''
+    }
+    let tomaElement = xmlDoc.getElementsByTagName('TomadorServico')[0] ||
+                      xmlDoc.getElementsByTagName('Tomador')[0]
+    let tomaRazao = textoDe(tomaElement, ['RazaoSocial', 'Nome', 'NomeRazaoSocial'])
     let tomaCNPJ = ''
     let tomaEmail = ''
     let tomaEndereco = ''
@@ -528,32 +537,35 @@ function parseNFSe(xmlDoc) {
 
     // Se encontrou TomadorServico (Ginfes format), extrair os dados
     if (tomaElement && tomaRazao) {
-      // CNPJ está nested: TomadorServico > IdentificacaoTomador > CpfCnpj > Cnpj
-      const idTomadorElements = tomaElement.getElementsByTagName('IdentificacaoTomador')
-      if (idTomadorElements.length > 0) {
-        const cpfCnpjElements = idTomadorElements[0].getElementsByTagName('CpfCnpj')
-        if (cpfCnpjElements.length > 0) {
-          tomaCNPJ = getChildElementText(cpfCnpjElements[0], 'Cnpj') ||
-                     getChildElementText(cpfCnpjElements[0], 'Cpf') || ''
-        }
-      }
+      // CNPJ/CPF: TomadorServico > IdentificacaoTomador > CpfCnpj > Cnpj|Cpf
+      // (busca em qualquer nível; há emissor que manda CPF dentro de <Cnpj>)
+      const idTomador = tomaElement.getElementsByTagName('IdentificacaoTomador')[0] || tomaElement
+      tomaCNPJ = textoDe(idTomador, ['Cnpj', 'Cpf', 'CNPJ', 'CPF'])
 
-      // Email e Telefone estão em: TomadorServico > Contato
-      const contatoElements = tomaElement.getElementsByTagName('Contato')
-      if (contatoElements.length > 0) {
-        tomaEmail = getChildElementText(contatoElements[0], 'Email') || ''
-        tomaFone = getChildElementText(contatoElements[0], 'Telefone') || ''
-      }
+      // Email e Telefone: TomadorServico > Contato (ou soltos no tomador)
+      const contatoEl = tomaElement.getElementsByTagName('Contato')[0] || tomaElement
+      tomaEmail = textoDe(contatoEl, ['Email', 'email', 'EMail'])
+      tomaFone = textoDe(contatoEl, ['Telefone', 'telefone', 'Fone', 'fone'])
 
-      // Endereço está em: TomadorServico > Endereco
-      const enderecoElements = tomaElement.getElementsByTagName('Endereco')
-      if (enderecoElements.length > 0) {
-        tomaEndereco = getChildElementText(enderecoElements[0], 'Endereco') || ''
-        tomaBairro = getChildElementText(enderecoElements[0], 'Bairro') || ''
-        tomaCidade = getChildElementText(enderecoElements[0], 'Cidade') || ''
-        tomaUF = getChildElementText(enderecoElements[0], 'Uf') || ''
-        tomaCEP = getChildElementText(enderecoElements[0], 'Cep') || ''
+      // Endereço: TomadorServico > Endereco > (Endereco|Logradouro, Numero, Complemento,
+      // Bairro, CodigoMunicipio|Cidade, Uf, Cep)
+      const enderecoEl = tomaElement.getElementsByTagName('Endereco')[0] || tomaElement
+      tomaEndereco = textoDe(enderecoEl, ['Logradouro', 'Endereco', 'xLgr'])
+      // Quando o próprio <Endereco> não tem filhos, o texto dele é o logradouro
+      if (!tomaEndereco && enderecoEl !== tomaElement && enderecoEl.children.length === 0) {
+        tomaEndereco = (enderecoEl.textContent || '').trim()
       }
+      tomaNumero = textoDe(enderecoEl, ['Numero', 'nro', 'NumeroEndereco'])
+      tomaComplemento = textoDe(enderecoEl, ['Complemento', 'xCpl']).replace(/[;,\s]+$/, '')
+      tomaBairro = textoDe(enderecoEl, ['Bairro', 'xBairro'])
+      tomaCidade = textoDe(enderecoEl, ['Cidade', 'xMun', 'Municipio', 'NomeMunicipio', 'xMunicipio'])
+      // Cidade só como código IBGE (<CodigoMunicipio>): nome resolvido depois
+      // (parseXMLFile -> resolverMunicipiosIBGE)
+      if (/^\d+$/.test(tomaCidade)) { tomaCMun = tomaCidade; tomaCidade = '' }
+      if (!tomaCMun) tomaCMun = textoDe(enderecoEl, ['CodigoMunicipio', 'cMun', 'CodMunicipio'])
+      tomaUF = textoDe(enderecoEl, ['Uf', 'UF', 'Estado'])
+      if (!tomaUF && tomaCMun) tomaUF = UF_POR_CODIGO_IBGE[tomaCMun.slice(0, 2)] || ''
+      tomaCEP = textoDe(enderecoEl, ['Cep', 'CEP']).replace(/\D/g, '')
     }
     // Se não achou no formato Ginfes, tentar formato SPED: <toma>
     else {
