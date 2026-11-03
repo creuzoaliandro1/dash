@@ -595,10 +595,12 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       if (b.SACADO_NOME !== undefined) row.nom_rz_soc_pagdr = txt(b.SACADO_NOME)
       // Linha digitável sempre só dígitos (chave de deduplicação)
       row.num_linha_digtvl = String(b.CODIGO_BARRAS || src['Linha digitável'] || '').replace(/\D/g, '') || null
-      // Presente no relatório atual => título ativo (reativa devolvidos que reaparecem),
-      // exceto quando a negociação foi devolvida ao cedente anterior: grava o título,
-      // mas como 'devolvido' (não aparece na tela de Boletos).
-      row.status = /devolvid/i.test(String(row.status_negociacao || '')) ? 'devolvido' : 'ativo'
+      // 'devolvido' SÓ quando o relatório traz Status da negociação = "Devolvida para o
+      // cedente anterior" (não aparece na tela de Boletos). Qualquer outro valor => 'ativo'.
+      const stNeg = String(row.status_negociacao || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/\s+/g, ' ').trim()
+      row.status = stNeg === 'devolvida para o cedente anterior' ? 'devolvido' : 'ativo'
       return row
     }
 
@@ -612,9 +614,6 @@ export const importContaCaptToRegistrado = async (boletosData) => {
     //    ou só dígitos — por isso normalizamos os dois lados para comparar.
     //    existingMap: digits-only → { id, storedValue }
     const existingMap = new Map()
-    // Registros que já estavam em capt_registrado mas NÃO vieram no relatório atual
-    // (a lista é sempre completa) => devolvidos ao cedente de origem.
-    const devolvidoIds = []
 
     // Lê uma tabela inteira em páginas. Descobre o total com count e busca as
     // páginas em paralelo, em vez de uma por vez.
@@ -645,16 +644,14 @@ export const importContaCaptToRegistrado = async (boletosData) => {
         console.warn('[importContaCaptToRegistrado] Erro ao ler capt_boletos:', e.message); return []
       }),
     ])
-    // Sem a leitura completa de capt_registrado não dá para separar inserir/atualizar
-    // nem marcar devolvidos com segurança: aborta em vez de duplicar registros.
+    // Sem a leitura completa de capt_registrado não dá para separar inserir/atualizar:
+    // aborta em vez de duplicar registros.
     if (regRows === null) throw new Error('Falha ao ler capt_registrado. Tente novamente.')
+    // Títulos que NÃO vieram no relatório atual ficam como estão (sumir do relatório,
+    // ex.: por pagamento, não é devolução).
     regRows.forEach(r => {
       const norm = String(r.num_linha_digtvl || '').replace(/\D/g, '')
-      if (norm && linhasSet.has(norm)) {
-        existingMap.set(norm, r.id)
-      } else if (norm && String(r.status || '') !== 'devolvido') {
-        devolvidoIds.push(r.id)
-      }
+      if (norm && linhasSet.has(norm)) existingMap.set(norm, r.id)
     })
     console.log(`[importContaCaptToRegistrado] ${existingMap.size} registro(s) já existente(s) em capt_registrado`)
 
@@ -735,17 +732,8 @@ export const importContaCaptToRegistrado = async (boletosData) => {
       }
     }
 
-    // 6) Marcar como "devolvido" os registros que sumiram do relatório atual.
-    let devolvidos = 0
-    {
-      const DEV_BATCH = 100
-      for (let i = 0; i < devolvidoIds.length; i += DEV_BATCH) {
-        const chunk = devolvidoIds.slice(i, i + DEV_BATCH)
-        const { error } = await supabase.from('capt_registrado').update({ status: 'devolvido' }).in('id', chunk)
-        if (error) console.warn('[importContaCaptToRegistrado] Erro ao marcar devolvidos:', error.message)
-        else devolvidos += chunk.length
-      }
-    }
+    // 6) Devolvidos do lote: só os que o relatório marcou "Devolvida para o cedente anterior".
+    const devolvidos = rows.filter(r => r.status === 'devolvido').length
 
     // 7) Marca RET_CONTACAPT.TROCA_CEDENTE = 'true' quando a LINHA_DIGITAVEL do retorno
     //    existe em capt_registrado.num_linha_digtvl. Um 'true' NUNCA volta a 'false'

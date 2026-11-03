@@ -2372,7 +2372,7 @@ export default function BoletosPage() {
                       />
                       <span className="text-xs text-white">Devolvidos</span>
                     </label>
-                    <p className="text-[10px] text-[#666666] mt-1">Títulos devolvidos ao cedente de origem (sumiram do relatório da Conta Capt).</p>
+                    <p className="text-[10px] text-[#666666] mt-1">Títulos devolvidos ao cedente de origem (Status da negociação = "Devolvida para o cedente anterior").</p>
                   </div>
 
                   {/* Limpar filtros */}
