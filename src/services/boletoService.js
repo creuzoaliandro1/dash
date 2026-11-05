@@ -4,6 +4,7 @@ import { validarDadosSacado, erroDadosSacado, completarSacadoPeloPerfil, perfilP
 import { firebirdConfig } from '../config/firebird'
 import { smartFrom } from './firebirdQuery'
 import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
+import { montarNossoNumeroAntecipacao } from './nossoNumeroAntecipacao'
 
 // Calcula DV do nosso numero - algoritmo BMP274 CNAB400 (oficial)
 // Algoritmo:
@@ -3645,12 +3646,10 @@ export const criarAntecipacao = async (boletosParaAntecipar, contaData) => {
     }
 
     // 5. Preparar registros para OPEITE_WEB com COD_TITULO sequencial
-    const PREFIXO_NOSSO_NUMERO = '36877480' // 8 dígitos
     let codTituloAtual = proximoCodTituloInicial
     const registrosOPEITE_WEB = boletosParaAntecipar.map(boleto => {
-      // Construir NOSSO_NUMERO com prefixo (total 17 dígitos)
-      // Prefixo (8) + nosso_numero (9) = 17 dígitos
-      const nossoNumeroCompleto = PREFIXO_NOSSO_NUMERO + (boleto.nosso_numero || '').padStart(9, '0')
+      // NOSSO_NUMERO com prefixo (17 dígitos) — regra em nossoNumeroAntecipacao.js
+      const nossoNumeroCompleto = montarNossoNumeroAntecipacao(boleto.nosso_numero, contaData.cod_cedente)
 
       // NUMERO é varchar(8): se for numérico, remove zeros à esquerda; pega os últimos 8
       const numeroDocRaw = String(boleto.numero_documento || '').trim()
@@ -3738,12 +3737,11 @@ export const retornarAntecipacao = async (boletosParaRetornar, contaData) => {
       throw new Error('Conta sem cod_cedente definido')
     }
 
-    const PREFIXO_NOSSO_NUMERO = '36877480'
     const STATUS_PERMITE_RETORNO = 'R' // OPECAB_WEB.STATUS = 'R' => permite retornar
 
     // Monta as chaves NOSSO_NUMERO (mesma regra usada no criarAntecipacao)
     const chaves = (boletosParaRetornar || [])
-      .map(b => PREFIXO_NOSSO_NUMERO + String(b.nosso_numero || '').padStart(9, '0'))
+      .map(b => montarNossoNumeroAntecipacao(b.nosso_numero, contaData.cod_cedente))
       .filter(Boolean)
 
     if (chaves.length === 0) {

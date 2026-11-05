@@ -15,8 +15,7 @@
 
 import { firebirdApi } from './firebirdApi'
 import { writeThrough } from './firebirdRepo'
-
-const PREFIXO_NOSSO_NUMERO = '36877480' // 8 dígitos
+import { montarNossoNumeroAntecipacao } from './nossoNumeroAntecipacao'
 
 const trunc = (s, n) => (s == null ? '' : String(s).slice(0, n))
 const soDigitos = (s) => String(s ?? '').replace(/\D/g, '')
@@ -119,7 +118,7 @@ export async function criarAntecipacaoFirebird(boletosParaAntecipar, contaData) 
     for (const b of boletosParaAntecipar) {
       const numeroRaw = String(b.numero_documento || '').trim()
       const numero = (/^\d+$/.test(numeroRaw) ? numeroRaw.replace(/^0+/, '') : numeroRaw).slice(-8) || '0'
-      const nossoNumero = (PREFIXO_NOSSO_NUMERO + soDigitos(b.nosso_numero).padStart(9, '0')).slice(0, 30)
+      const nossoNumero = montarNossoNumeroAntecipacao(b.nosso_numero, codCedente)
 
       const reg = {
         COD_CEDENTE: codCedente,
@@ -177,7 +176,7 @@ export async function retornarAntecipacaoFirebird(boletosParaRetornar, contaData
     const borderosAfetados = new Set()
 
     for (const b of (boletosParaRetornar || [])) {
-      const chave = PREFIXO_NOSSO_NUMERO + soDigitos(b.nosso_numero).padStart(9, '0')
+      const chave = montarNossoNumeroAntecipacao(b.nosso_numero, codCedente)
 
       // Localiza o título por NOSSO_NUMERO.
       const busca = await firebirdApi.list('OPEITEWEB', { NOSSO_NUMERO: chave, limit: 10 })
