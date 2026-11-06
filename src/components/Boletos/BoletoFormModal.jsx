@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import FileAttachment from './FileAttachment'
+import { supabase } from '../../lib/supabase'
 import { validarDadosSacado } from '../../utils/validarSacado'
 
 // Converte registro snake_case do banco para chaves UPPERCASE do formulário
@@ -175,6 +176,32 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
     setPendingFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  // Chave NF: consulta a NF-e no Serpro (Edge Function serpro-consulta-nfe) e
+  // anexa o XML retornado aos documentos do boleto novo.
+  const [chaveNF, setChaveNF] = useState('')
+  const [nfConsulta, setNfConsulta] = useState({ loading: false, erro: '', resumo: null })
+
+  const handleConsultarNF = async () => {
+    const chave = chaveNF.replace(/\D/g, '')
+    if (chave.length !== 44) {
+      setNfConsulta({ loading: false, erro: 'A chave de acesso tem 44 dígitos.', resumo: null })
+      return
+    }
+    setNfConsulta({ loading: true, erro: '', resumo: null })
+    try {
+      const { data, error } = await supabase.functions.invoke('serpro-consulta-nfe', { body: { chave } })
+      if (error) throw error
+      if (!data?.ok) throw new Error(data?.error || 'Falha ao consultar a NF-e no Serpro.')
+      const nomeArquivo = `NFe_${data.chave}.xml`
+      const arquivo = new File([data.xml], nomeArquivo, { type: 'application/xml' })
+      // Consultar de novo a mesma chave substitui o XML anterior em vez de duplicar
+      setPendingFiles(prev => [...prev.filter(f => f.name !== nomeArquivo), arquivo])
+      setNfConsulta({ loading: false, erro: '', resumo: data.resumo })
+    } catch (err) {
+      setNfConsulta({ loading: false, erro: err?.message || String(err), resumo: null })
+    }
+  }
+
   const formatarTamanho = (bytes) => {
     if (!bytes) return '0 B'
     const k = 1024
@@ -217,6 +244,49 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
             <div className="p-4 bg-red-950/40 border border-red-900 rounded-lg">
               <p className="text-red-400 text-sm font-medium mb-1">Preencha os campos obrigatórios antes de continuar:</p>
               <p className="text-red-300 text-xs">{errors.join(' • ')}</p>
+            </div>
+          )}
+
+          {/* Seção: Chave NF — busca o XML da NF-e no Serpro (só no boleto novo) */}
+          {!boleto && (
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Chave NF</h3>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={chaveNF}
+                  onChange={(e) => setChaveNF(e.target.value.replace(/\D/g, '').slice(0, 44))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleConsultarNF() } }}
+                  placeholder="Chave de acesso da NF-e (44 dígitos)"
+                  className={inputCls + ' font-mono'}
+                />
+                <button
+                  type="button"
+                  onClick={handleConsultarNF}
+                  disabled={nfConsulta.loading || chaveNF.length !== 44}
+                  className="px-4 py-2 rounded text-sm font-medium transition whitespace-nowrap bg-white text-black hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {nfConsulta.loading ? 'Consultando...' : 'Consultar'}
+                </button>
+              </div>
+              <p className="text-[#666666] text-xs mt-1.5">{chaveNF.length}/44 dígitos — o XML da nota é anexado aos documentos do boleto</p>
+              {nfConsulta.erro && (
+                <p className="text-red-400 text-xs mt-2">{nfConsulta.erro}</p>
+              )}
+              {nfConsulta.resumo && (
+                <div className="mt-2 p-3 bg-[#111111] border border-[#2a2a2a] rounded text-xs text-[#a3a3a3] space-y-0.5">
+                  <p className="text-green-400 font-medium">XML da NF-e anexado ✓</p>
+                  <p>
+                    NF {nfConsulta.resumo.numero}{nfConsulta.resumo.serie ? `/${nfConsulta.resumo.serie}` : ''}
+                    {' • '}Emissão {nfConsulta.resumo.emissao ? nfConsulta.resumo.emissao.split('-').reverse().join('/') : '-'}
+                    {' • '}Valor R$ {nfConsulta.resumo.valor ? Number(nfConsulta.resumo.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '-'}
+                  </p>
+                  <p>Emitente: {nfConsulta.resumo.emitente?.nome || '-'}</p>
+                  <p>Destinatário: {nfConsulta.resumo.destinatario?.nome || '-'}</p>
+                  {nfConsulta.resumo.situacao && <p>Situação: {nfConsulta.resumo.situacao}</p>}
+                </div>
+              )}
             </div>
           )}
 
