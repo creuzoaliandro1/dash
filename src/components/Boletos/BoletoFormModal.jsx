@@ -202,6 +202,19 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
     }
   }
 
+  // Baixa um anexo que ainda não foi enviado (boleto não emitido): o arquivo
+  // só existe no navegador, então geramos um link temporário para ele.
+  const handleDownloadPendingFile = (file) => {
+    const url = URL.createObjectURL(file)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
   const formatarTamanho = (bytes) => {
     if (!bytes) return '0 B'
     const k = 1024
@@ -586,7 +599,14 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
                     {pendingFiles.map((file, idx) => (
                       <div key={idx} className="flex items-center justify-between p-3 bg-[#111111] border border-[#2a2a2a] rounded">
                         <div className="flex-1 min-w-0">
-                          <p className="text-white text-sm font-medium truncate">{file.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadPendingFile(file)}
+                            className="block max-w-full text-left text-white text-sm font-medium truncate hover:underline"
+                            title="Baixar arquivo"
+                          >
+                            {file.name}
+                          </button>
                           <p className="text-[#666666] text-xs">{formatarTamanho(file.size)}</p>
                         </div>
                         <button type="button" onClick={() => handleRemovePendingFile(idx)} className="p-2 text-[#a3a3a3] hover:text-red-500 transition ml-4 flex-shrink-0" title="Remover">
