@@ -90,6 +90,20 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const avalistaNome = _activeConta?.nome_correntista || _loggedUser.name || _loggedUser.nome || ''
   const avalistaCic = String(_activeConta?.cic || _loggedUser.cic || '').replace(/\D/g, '')
 
+  // XMLs de origem (importados ou vindos da Chave NF/Serpro). Ficam anexados a
+  // cada boleto ao importar; aqui o usuário já pode baixá-los antes de confirmar.
+  const xmlsOrigem = [...new Set(previewData.map(item => item._xmlFile).filter(Boolean))]
+  const baixarArquivo = (file) => {
+    const url = URL.createObjectURL(file)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
   const [dataWithInstalments, setDataWithInstalments] = useState(
     previewData.map(item => {
       // Relatório BTG: mantém o avalista vindo da coluna AD e NÃO preenche o CIC.
@@ -584,6 +598,22 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
               ? 'Consultando código de barras...'
               : `Revise os registros e selecione quais deseja importar (${selectedRows.size} de ${getTotalRecords()} selecionado(s)) — clique em uma linha para editar`}
           </p>
+          {xmlsOrigem.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs">
+              <span className="text-[#666666]">Arquivo{xmlsOrigem.length > 1 ? 's' : ''}:</span>
+              {xmlsOrigem.map((file, i) => (
+                <button
+                  key={`${file.name}-${i}`}
+                  type="button"
+                  onClick={() => baixarArquivo(file)}
+                  className="text-white font-mono hover:underline truncate max-w-full"
+                  title="Baixar arquivo"
+                >
+                  📄 {file.name}
+                </button>
+              ))}
+            </div>
+          )}
           {!checkingDedup && dedupOcultos > 0 && (
             <p className="text-xs text-[#1a7f1a] mt-0.5">
               {dedupOcultos} registro(s) ocultado(s) (já existentes ou pagos/cancelados)

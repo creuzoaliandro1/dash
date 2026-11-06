@@ -4,6 +4,7 @@ import BoletoFormModal from '../components/Boletos/BoletoFormModal'
 import BoletoTable, { getAntecipaStatus, getContaStatus, getAssinaStatus, getCedenteStatus } from '../components/Boletos/BoletoTable'
 import FileUpload from '../components/Boletos/FileUpload'
 import ImportPreview from '../components/Boletos/ImportPreview'
+import { processFilesForPreview } from '../services/importService'
 import { createBoleto, updateBoleto, updateBoletosByLancamentos, getBoletos, deleteBoleto, deletarBoletosJaRegistrados, createRemessa, uploadRemessaCNAB400, getContaInfo, incrementContaCnab400, getContaRemessaCount, getAllContas, getOPEITEByCedente, criarAntecipacao, importOpeiteToBoletos, retornarAntecipacao, getBoletosDoBordero, getBorderoData, getBoletosImportadosUnificados, markBoletosRemessa, checkBoletosJaRegistrados, checkBoletosJaGerados, regenerarNumeracaoBoletos, autoImportarParaCapt, insertCaptAssina, uploadAnexoBoleto, getRetContacaptFiltro, getContaCaptCapital } from '../services/boletoService'
 import { generateMultipleBoletoPDFs, generateCNAB400RemittanceFile, generateCNAB400TrocaCedenteFile, linhaDigitavelParaCodigoBarras } from '../utils/boleto'
 import { buscarRegistradosDasLinhas, codSacadoPorLancamento, carregarSacadosEndereco, carregarSacadosPorCic, captParaBoletoRemessa, faltasEnderecoBoleto, gerarRemessaCaptCapital } from '../services/remessaCaptCapital'
@@ -545,6 +546,17 @@ export default function BoletosPage() {
   const handleShowPreview = (data) => {
     setPreviewData(data)
     setShowPreview(true)
+  }
+
+  // Chave NF consultada no Serpro (form de novo boleto): o XML segue o mesmo
+  // caminho de "Importar" um .xml — fecha o form e abre a tela de importação.
+  // Se a leitura falhar, o erro volta para o form, que mantém o XML como anexo.
+  const handleNfXmlConsultada = async (file) => {
+    const result = await processFilesForPreview([file])
+    if (result.errors?.length > 0) throw new Error(result.errors.map(e => e.message).join(' '))
+    if (!result.total) throw new Error('Nenhum dado de boleto encontrado no XML da NF-e.')
+    setShowModal(false)
+    handleShowPreview(result.data)
   }
 
   const handleImportPreviewComplete = (result) => {
@@ -2451,6 +2463,7 @@ export default function BoletosPage() {
           onSave={handleSave}
           onClose={() => setShowModal(false)}
           contaId={getActiveContaId()}
+          onNfXml={handleNfXmlConsultada}
         />
       )}
 

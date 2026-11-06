@@ -142,7 +142,7 @@ const addDays = (dateStr, days) => {
   return d.toISOString().slice(0, 10)
 }
 
-export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
+export default function BoletoFormModal({ boleto, onSave, onClose, contaId, onNfXml }) {
   const [formData, setFormData] = useState(
     boleto ? boletoToFormData(boleto) : emptyFormData
   )
@@ -194,6 +194,23 @@ export default function BoletoFormModal({ boleto, onSave, onClose, contaId }) {
       if (!data?.ok) throw new Error(data?.error || 'Falha ao consultar a NF-e no Serpro.')
       const nomeArquivo = `NFe_${data.chave}.xml`
       const arquivo = new File([data.xml], nomeArquivo, { type: 'application/xml' })
+      // Com onNfXml (BoletosPage), o XML abre a tela "Visualizar dados para
+      // importação", como se tivesse sido importado. Se não der para ler os
+      // dados, cai no fluxo abaixo: o XML fica anexado a este boleto.
+      if (onNfXml) {
+        try {
+          await onNfXml(arquivo)
+          return
+        } catch (errLeitura) {
+          setPendingFiles(prev => [...prev.filter(f => f.name !== nomeArquivo), arquivo])
+          setNfConsulta({
+            loading: false,
+            erro: `XML obtido e anexado, mas não foi possível ler os dados para importação: ${errLeitura?.message || errLeitura}`,
+            resumo: data.resumo,
+          })
+          return
+        }
+      }
       // Consultar de novo a mesma chave substitui o XML anterior em vez de duplicar
       setPendingFiles(prev => [...prev.filter(f => f.name !== nomeArquivo), arquivo])
       setNfConsulta({ loading: false, erro: '', resumo: data.resumo })
