@@ -67,6 +67,17 @@ export function erroDadosSacado(boleto) {
   return err
 }
 
+// Número do endereço quando ele vem embutido no logradouro (SACADO do Efactor não
+// tem coluna própria). Prioriza o número logo após a vírgula ("RUA X, 236 - BOX 03"
+// -> 236); senão, o número no fim do texto ("RUA X 322" -> 322); senão 'SN'.
+export function numeroDoEndereco(endereco) {
+  const s = texto(endereco)
+  const aposVirgula = s.match(/,\s*(\d+)/)
+  if (aposVirgula) return aposVirgula[1]
+  const noFim = s.match(/\s(\d+)\s*$/)
+  return noFim ? noFim[1] : 'SN'
+}
+
 // Campo do sacado -> campo do perfil (CONTAS). CONTAS não tem número do endereço.
 const CAMPOS_PERFIL = {
   SACADO_ENDERECO: 'endereco',

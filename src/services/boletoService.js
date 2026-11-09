@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import { generateBarcodeFromBoleto } from '../utils/boleto'
-import { validarDadosSacado, erroDadosSacado, completarSacadoPeloPerfil, perfilParaSacado } from '../utils/validarSacado'
+import { validarDadosSacado, erroDadosSacado, completarSacadoPeloPerfil, perfilParaSacado, numeroDoEndereco } from '../utils/validarSacado'
 import { firebirdConfig } from '../config/firebird'
 import { smartFrom } from './firebirdQuery'
 import { criarAntecipacaoFirebird, retornarAntecipacaoFirebird } from './firebirdAntecipacao'
@@ -2885,6 +2885,15 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
       }
     }
 
+    // SACADO do Efactor não tem e-mail nem telefone: completa com o perfil (CONTAS)
+    // da conta, como na importação via CNAB400.
+    const { data: contaPerfil } = await supabase
+      .from('CONTAS')
+      .select('endereco, bairro, cidade, uf, cep, email, telefone')
+      .eq('id', contaId)
+      .maybeSingle()
+    const perfil = perfilParaSacado(contaPerfil)
+
     // 3) Importar cada registro (pulando duplicados) via createBoleto
     let imported = 0
     let skipped = 0
@@ -2907,6 +2916,7 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
         SACADO_NOME: sac.NOME_CORRENTISTA || rec.sacado_nome || '',
         SACADO_CIC: sac.CIC || rec.sacado_cic || '',
         SACADO_ENDERECO: sac.ENDERECO || '',
+        SACADO_NUMERO: numeroDoEndereco(sac.ENDERECO),
         SACADO_BAIRRO: sac.BAIRRO || '',
         SACADO_CIDADE: sac.CIDADE || '',
         SACADO_UF: sac.UF || '',
@@ -2921,7 +2931,7 @@ export const importOpeiteToBoletos = async (contaId, opeiteRecords) => {
         DESCRICAO: '',
       }
 
-      const { error } = await createBoleto(contaId, payload)
+      const { error } = await createBoleto(contaId, completarSacadoPeloPerfil(payload, perfil))
       if (error) {
         errors++
         errorDetails.push({ num_lancamento: rec.num_lancamento, message: error.message })
