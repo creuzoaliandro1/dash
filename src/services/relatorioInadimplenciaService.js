@@ -1,11 +1,27 @@
-// Relatório de Inadimplência: títulos de OPEITE com STATUS = 'IN' (tipos DUP,
-// CHE e PRO). Lê a réplica do Supabase, como o Relatório de Borderôs — os
+// Relatório de Inadimplência / Responsabilidade: títulos de OPEITE (tipos DUP,
+// CHE e PRO) com STATUS = 'IN' (inadimplência) e/ou 'DO'/'PR' (responsabilidade).
+// DC e CO nunca entram. Lê a réplica do Supabase, como o Relatório de Borderôs — os
 // filtros por intervalo (gte/lte) não são traduzidos para o Firebird.
 
 import { supabase } from '../lib/supabase'
 import { firebirdApi } from './firebirdApi'
 
 export const TIPOS_INADIMPLENCIA = ['DUP', 'CHE', 'PRO']
+export const STATUS_INADIMPLENCIA = ['IN']
+export const STATUS_RESPONSABILIDADE = ['DO', 'PR']
+
+// Status a buscar conforme os checkboxes da tela.
+export const statusSelecionados = (f) => [
+  ...(f.inadimplencia ? STATUS_INADIMPLENCIA : []),
+  ...(f.responsabilidade ? STATUS_RESPONSABILIDADE : []),
+]
+
+// Nome do relatório conforme os status incluídos.
+export function nomeRelatorio(f) {
+  if (f.responsabilidade && f.inadimplencia) return 'Responsabilidade + Inadimplência'
+  if (f.responsabilidade) return 'Responsabilidade'
+  return 'Inadimplência'
+}
 
 // Data de hoje (local) no formato YYYY-MM-DD.
 const hojeISO = () => {
@@ -34,27 +50,40 @@ async function emParalelo(itens, n, fn) {
  *  - taxa por título:  OPEITE.TAXA_OCORRE (% a.m.)
  *  - taxa do cedente:  CEDENTE.TAXA_OCORRENCIA (% a.m.) — usada quando o título não tem
  *  - saldo do título:  OPEITE.VR_SALDO (base da correção; senão VR_FACE)
+ * Lê só o necessário para os títulos que precisam de correção:
+ *  - cedentesIN: cedentes com títulos IN (em lote: OPEITE?COD_CEDENTE&STATUS=IN)
+ *  - chavesAvulsas: títulos DO/PR já vencidos (um a um pela PK)
+ *  - cedentesTaxa: cedentes cuja taxa padrão pode ser necessária
  * Retorna { titulos: Map(KEY -> {taxa, saldo}), cedentes: Map(cod -> taxa), ok }.
  */
-async function getParametrosAtraso(codCedentes) {
+async function getParametrosAtraso({ cedentesIN, chavesAvulsas, cedentesTaxa }) {
   const titulos = new Map()
   const cedentes = new Map()
   let ok = true
-  await emParalelo(codCedentes, 6, async (cod) => {
-    const [ite, ced] = await Promise.all([
-      firebirdApi.list('OPEITE', { COD_CEDENTE: cod, STATUS: 'IN', limit: 500 }),
-      firebirdApi.get('CEDENTE', String(cod)),
-    ])
-    if (ite.error || ced.error) ok = false
-    for (const t of ite.data?.rows || []) {
-      titulos.set(`${t.COD_CEDENTE}~${t.COD_OPERACAO}~${t.NUM_LANCAMENTO}`, {
-        taxa: num(t.TAXA_OCORRE),
-        saldo: num(t.VR_SALDO),
-      })
-    }
-    const row = ced.data?.row || ced.data
-    if (row && row.COD_CEDENTE != null) cedentes.set(Number(cod), num(row.TAXA_OCORRENCIA))
+  const guardar = (t) => titulos.set(`${t.COD_CEDENTE}~${t.COD_OPERACAO}~${t.NUM_LANCAMENTO}`, {
+    taxa: num(t.TAXA_OCORRE),
+    saldo: num(t.VR_SALDO),
   })
+  const tarefas = [
+    ...cedentesIN.map((cod) => async () => {
+      const r = await firebirdApi.list('OPEITE', { COD_CEDENTE: cod, STATUS: 'IN', limit: 500 })
+      if (r.error) ok = false
+      ;(r.data?.rows || []).forEach(guardar)
+    }),
+    ...chavesAvulsas.map((key) => async () => {
+      const r = await firebirdApi.get('OPEITE', key)
+      if (r.error) ok = false
+      const row = r.data?.row || r.data
+      if (row && row.COD_CEDENTE != null) guardar(row)
+    }),
+    ...cedentesTaxa.map((cod) => async () => {
+      const r = await firebirdApi.get('CEDENTE', String(cod))
+      if (r.error) ok = false
+      const row = r.data?.row || r.data
+      if (row && row.COD_CEDENTE != null) cedentes.set(Number(cod), num(row.TAXA_OCORRENCIA))
+    }),
+  ]
+  await emParalelo(tarefas, 6, (fn) => fn())
   return { titulos, cedentes, ok }
 }
 
@@ -79,21 +108,23 @@ const chunks = (arr, n) => {
 const temValor = (v) => v !== '' && v != null
 
 /**
- * Busca os títulos inadimplentes.
- * @param {object} f { codCedente, tipos: string[], dtVenciIni, dtVenciFim,
- *   vrFaceMin, vrFaceMax, dtEmissaoIni, dtEmissaoFim }
+ * Busca os títulos (inadimplência e/ou responsabilidade).
+ * @param {object} f { codCedente, tipos: string[], inadimplencia, responsabilidade,
+ *   dtVenciIni, dtVenciFim, vrFaceMin, vrFaceMax, dtEmissaoIni, dtEmissaoFim }
  * Vencimento considerado = DT_VENCI_NOVO (prorrogação) ou DT_VENCI.
  * Emissão = DT_LANCA (OPEITE não tem data de emissão própria).
  */
 export async function getTitulosInadimplentes(f) {
   try {
     const tipos = f.tipos?.length ? f.tipos : TIPOS_INADIMPLENCIA
+    const status = statusSelecionados(f)
+    if (status.length === 0) return { data: [], error: null, parametrosOk: true }
 
     const build = () => {
       let q = supabase
         .from('OPEITE')
         .select('COD_CEDENTE, COD_OPERACAO, NUM_LANCAMENTO, NUM_TITULO, DT_LANCA, TIPO_TITULO, VR_FACE, DT_VENCI, DT_VENCI_NOVO, STATUS, COD_SACADO')
-        .eq('STATUS', 'IN')
+        .in('STATUS', status)
         .in('TIPO_TITULO', tipos)
       if (temValor(f.codCedente)) q = q.eq('COD_CEDENTE', Number(f.codCedente))
       if (temValor(f.vrFaceMin)) q = q.gte('VR_FACE', Number(f.vrFaceMin))
@@ -144,8 +175,16 @@ export async function getTitulosInadimplentes(f) {
       ;(data || []).forEach((ce) => cedentes.set(ce.COD_CEDENTE, ce))
     }
 
-    const params = await getParametrosAtraso(codCedentes)
     const hoje = hojeISO()
+    const vencEfetivo = (t) => t.DT_VENCI_NOVO || t.DT_VENCI
+    const vencido = (t) => !!vencEfetivo(t) && diasEntre(vencEfetivo(t), hoje) > 0
+    // Precisam de correção: todos os IN e os DO/PR já vencidos.
+    const corrigir = filtrados.filter((t) => t.STATUS === 'IN' || vencido(t))
+    const params = await getParametrosAtraso({
+      cedentesIN: [...new Set(corrigir.filter((t) => t.STATUS === 'IN').map((t) => t.COD_CEDENTE))],
+      chavesAvulsas: corrigir.filter((t) => t.STATUS !== 'IN').map((t) => `${t.COD_CEDENTE}~${t.COD_OPERACAO}~${t.NUM_LANCAMENTO}`),
+      cedentesTaxa: [...new Set(corrigir.map((t) => t.COD_CEDENTE))],
+    })
 
     const rows = filtrados.map((t) => {
       const s = sacados.get(t.COD_SACADO)
@@ -163,8 +202,12 @@ export async function getTitulosInadimplentes(f) {
       else if (params.cedentes.get(Number(t.COD_CEDENTE)) != null) {
         TAXA_ATRASO = params.cedentes.get(Number(t.COD_CEDENTE)); ORIGEM_TAXA = 'CEDENTE'
       }
-      const BASE_CORRECAO = p?.saldo > 0 ? p.saldo : VR_FACE
-      const VR_CORRIGIDO = TAXA_ATRASO == null ? null : calcularCorrigido(BASE_CORRECAO, TAXA_ATRASO, DIAS_ATRASO)
+      let BASE_CORRECAO = p?.saldo > 0 ? p.saldo : VR_FACE
+      let VR_CORRIGIDO = TAXA_ATRASO == null ? null : calcularCorrigido(BASE_CORRECAO, TAXA_ATRASO, DIAS_ATRASO)
+      // Responsabilidade (DO/PR) ainda a vencer: corrigido repete o valor.
+      if (t.STATUS !== 'IN' && DIAS_ATRASO === 0) {
+        TAXA_ATRASO = null; ORIGEM_TAXA = 'A VENCER'; BASE_CORRECAO = VR_FACE; VR_CORRIGIDO = VR_FACE
+      }
 
       return {
         ...t,
@@ -189,22 +232,29 @@ export async function getTitulosInadimplentes(f) {
   }
 }
 
-// Códigos dos cedentes que têm ao menos um título inadimplente (STATUS = 'IN').
-export async function getCodCedentesInadimplentes() {
-  const cods = new Set()
+// Status presentes por cedente (IN, DO, PR) — usado para montar o combobox.
+// Retorna Map(COD_CEDENTE -> Set(STATUS)).
+export async function getStatusPorCedente() {
+  const m = new Map()
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('OPEITE')
-      .select('COD_CEDENTE')
-      .eq('STATUS', 'IN')
+      .select('COD_CEDENTE, STATUS')
+      .in('STATUS', [...STATUS_INADIMPLENCIA, ...STATUS_RESPONSABILIDADE])
       .in('TIPO_TITULO', TIPOS_INADIMPLENCIA)
       .order('COD_CEDENTE', { ascending: true })
+      .order('COD_OPERACAO', { ascending: true })
+      .order('NUM_LANCAMENTO', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error) return { data: null, error }
-    ;(data || []).forEach((r) => cods.add(Number(r.COD_CEDENTE)))
+    for (const r of data || []) {
+      const c = Number(r.COD_CEDENTE)
+      if (!m.has(c)) m.set(c, new Set())
+      m.get(c).add(r.STATUS)
+    }
     if (!data || data.length < PAGE) break
   }
-  return { data: cods, error: null }
+  return { data: m, error: null }
 }
 
 // Para totais: sem taxa definida, o título entra pelo valor de face.

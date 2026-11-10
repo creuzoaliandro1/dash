@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
-import { totaisPorCedente, corrigidoOuValor } from '../services/relatorioInadimplenciaService'
+import { totaisPorCedente, corrigidoOuValor, nomeRelatorio, statusSelecionados } from '../services/relatorioInadimplenciaService'
 
 const FS = 6.5
 
@@ -37,6 +37,7 @@ function descreverFiltros(f, nomeCedente) {
   intervalo('Valor', f.vrFaceMin, f.vrFaceMax, fmtMoeda)
   intervalo('Emissão', f.dtEmissaoIni, f.dtEmissaoFim)
   parts.push(`Tipos: ${(f.tipos || []).join(', ')}`)
+  parts.push(`Status: ${statusSelecionados(f).join(', ')}`)
   return parts.join('   ·   ')
 }
 
@@ -96,7 +97,7 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
-  doc.text('RELATÓRIO DE INADIMPLÊNCIA', mL, 14)
+  doc.text(`RELATÓRIO DE ${nomeRelatorio(filtros).toUpperCase()}`, mL, 14)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(FS)
   const agora = new Date()
@@ -202,7 +203,7 @@ export function generateInadimplenciaTotalPDF(grupos, filtros) {
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
-  doc.text('RELATÓRIO DE INADIMPLÊNCIA TOTAL', mL, 14)
+  doc.text(`RELATÓRIO DE ${nomeRelatorio(filtros).toUpperCase()} TOTAL`, mL, 14)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(FS)
   const agora = new Date()

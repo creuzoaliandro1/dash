@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
-import { getTitulosInadimplentes, getCodCedentesInadimplentes, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
+import { getTitulosInadimplentes, getStatusPorCedente, statusSelecionados, nomeRelatorio, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
 import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from '../utils/relatorioInadimplenciaPdf'
 
 const FILTROS_INICIAIS = {
@@ -9,6 +9,8 @@ const FILTROS_INICIAIS = {
   vrFaceMin: '', vrFaceMax: '',
   dtEmissaoIni: '', dtEmissaoFim: '',
   tipos: [...TIPOS_INADIMPLENCIA],
+  inadimplencia: true, // STATUS IN
+  responsabilidade: false, // STATUS DO e PR
 }
 
 const inputCls = 'px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition w-full'
@@ -136,7 +138,8 @@ function CedenteCombo({ cedentes, value, onChange }) {
 export default function RelatorioInadimplenciaPage() {
   const [f, setF] = useState(FILTROS_INICIAIS)
   const [aplicado, setAplicado] = useState(FILTROS_INICIAIS) // filtros da última busca
-  const [cedentes, setCedentes] = useState([])
+  const [todosCedentes, setTodosCedentes] = useState([])
+  const [statusPorCedente, setStatusPorCedente] = useState(null) // Map(cod -> Set(status))
   const [rows, setRows] = useState([])
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState('')
@@ -149,10 +152,9 @@ export default function RelatorioInadimplenciaPage() {
   const acoesRef = useRef(null)
 
   useEffect(() => {
-    // Combobox: só os cedentes com títulos inadimplentes
-    Promise.all([getCedentesRelatorio(), getCodCedentesInadimplentes()]).then(([ced, inad]) => {
-      const todos = ced.data || []
-      setCedentes(inad.data ? todos.filter((c) => inad.data.has(Number(c.COD_CEDENTE))) : todos)
+    Promise.all([getCedentesRelatorio(), getStatusPorCedente()]).then(([ced, st]) => {
+      setTodosCedentes(ced.data || [])
+      setStatusPorCedente(st.data)
     })
     buscar(FILTROS_INICIAIS)
   }, [])
@@ -165,13 +167,25 @@ export default function RelatorioInadimplenciaPage() {
     return () => document.removeEventListener('mousedown', fora)
   }, [])
 
+  // Combobox: só os cedentes com títulos nos status marcados (IN e/ou DO/PR)
+  const cedentes = useMemo(() => {
+    if (!statusPorCedente) return todosCedentes
+    const status = statusSelecionados(f)
+    return todosCedentes.filter((c) => {
+      const st = statusPorCedente.get(Number(c.COD_CEDENTE))
+      return st && status.some((x) => st.has(x))
+    })
+  }, [todosCedentes, statusPorCedente, f.inadimplencia, f.responsabilidade])
+
   const set = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }))
+  const toggle = (k) => () => setF((prev) => ({ ...prev, [k]: !prev[k] }))
   const toggleTipo = (t) =>
     setF((prev) => ({ ...prev, tipos: prev.tipos.includes(t) ? prev.tipos.filter((x) => x !== t) : [...prev.tipos, t] }))
 
   async function buscar(filtros) {
     setErro('')
     if (filtros.tipos.length === 0) { setErro('Selecione ao menos um tipo de título.'); return }
+    if (!filtros.inadimplencia && !filtros.responsabilidade) { setErro('Marque Inadimplência e/ou Responsabilidade.'); return }
     setCarregando(true)
     try {
       const { data, error, parametrosOk } = await getTitulosInadimplentes(filtros)
@@ -222,7 +236,8 @@ export default function RelatorioInadimplenciaPage() {
   const corrigidoGeral = rows.reduce((s, r) => s + corrigidoOuValor(r), 0)
   const porCedente = useMemo(() => (aplicado.codCedente === '' ? totaisPorCedente(rows) : []), [rows, aplicado.codCedente])
 
-  const nomeCedenteAplicado = nomeDe(cedentes.find((c) => String(c.COD_CEDENTE) === String(aplicado.codCedente)))
+  const nomeAplicado = nomeRelatorio(aplicado)
+  const nomeCedenteAplicado = nomeDe(todosCedentes.find((c) => String(c.COD_CEDENTE) === String(aplicado.codCedente)))
 
   const todosCedSel = porCedente.length > 0 && porCedente.every((g) => selCed.has(g.COD_CEDENTE))
   const algunsCedSel = !todosCedSel && porCedente.some((g) => selCed.has(g.COD_CEDENTE))
@@ -246,9 +261,9 @@ export default function RelatorioInadimplenciaPage() {
 
   const imprimirTotal = () => {
     setAcoesAberto(false)
-    if (cedentesSel.length === 0) { setErro('Marque ao menos um cedente para imprimir a inadimplência total.'); return }
+    if (cedentesSel.length === 0) { setErro('Marque ao menos um cedente para imprimir o total.'); return }
     const blob = generateInadimplenciaTotalPDF(cedentesSel, aplicado)
-    setTituloPdf(`Impressão: inadimplência total · ${cedentesSel.length} cedente(s) · ${fmtMoeda(cedentesSel.reduce((s, g) => s + g.total, 0))}`)
+    setTituloPdf(`Impressão: ${nomeAplicado} total · ${cedentesSel.length} cedente(s) · ${fmtMoeda(cedentesSel.reduce((s, g) => s + g.total, 0))}`)
     setPdfUrl(URL.createObjectURL(blob))
   }
 
@@ -256,15 +271,15 @@ export default function RelatorioInadimplenciaPage() {
     if (!pdfUrl) return
     const a = document.createElement('a')
     a.href = pdfUrl
-    a.download = `relatorio_inadimplencia_${new Date().toISOString().slice(0, 10)}.pdf`
+    a.download = `relatorio_${nomeAplicado.toLowerCase().normalize('NFD').replace(/[^a-z]+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`
     a.click()
   }
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div>
-        <h1 className="text-2xl font-bold text-white">Inadimplência</h1>
-        <p className="text-sm text-[#666666] mt-1">Títulos de OPEITE com status IN (DUP, CHE e PRO)</p>
+        <h1 className="text-2xl font-bold text-white">{nomeAplicado}</h1>
+        <p className="text-sm text-[#666666] mt-1">Títulos de OPEITE (DUP, CHE e PRO) — Inadimplência: status IN · Responsabilidade: status DO e PR</p>
       </div>
 
       {/* Filtros */}
@@ -287,6 +302,15 @@ export default function RelatorioInadimplenciaPage() {
                 {t}
               </label>
             ))}
+            <span className="w-px h-5 bg-[#2a2a2a] mx-1" />
+            <label className="flex items-center gap-1.5 text-sm text-white cursor-pointer" title="Títulos com status IN">
+              <input type="checkbox" checked={f.inadimplencia} onChange={toggle('inadimplencia')} className="w-4 h-4 accent-white cursor-pointer" />
+              Inadimplência
+            </label>
+            <label className="flex items-center gap-1.5 text-sm text-white cursor-pointer" title="Títulos com status DO e PR">
+              <input type="checkbox" checked={f.responsabilidade} onChange={toggle('responsabilidade')} className="w-4 h-4 accent-white cursor-pointer" />
+              Responsabilidade
+            </label>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => { setF(FILTROS_INICIAIS); setErro('') }} className="px-3 py-2 text-xs text-[#a3a3a3] hover:text-white transition">
@@ -312,7 +336,7 @@ export default function RelatorioInadimplenciaPage() {
                     title={aplicado.codCedente !== '' ? 'Disponível quando o filtro de cedente é Todos' : undefined}
                     className="w-full text-left px-3 py-2 text-xs text-white hover:bg-[#1a1a1a] disabled:text-[#555] disabled:hover:bg-transparent"
                   >
-                    Imprimir inadimplência total ({cedentesSel.length} cedente{cedentesSel.length === 1 ? '' : 's'})
+                    Imprimir total por cedente ({cedentesSel.length} cedente{cedentesSel.length === 1 ? '' : 's'})
                   </button>
                 </div>
               )}
@@ -327,7 +351,7 @@ export default function RelatorioInadimplenciaPage() {
       {aplicado.codCedente === '' && porCedente.length > 0 && (
         <div className={`${cardCls} p-5 flex flex-col gap-3 flex-shrink-0`}>
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Inadimplência por cedente</h2>
+            <h2 className="text-sm font-semibold text-white">{nomeAplicado} por cedente</h2>
             <span className="text-xs text-[#a3a3a3]">{porCedente.length} cedente(s) — <span className="text-white">{cedentesSel.length} marcado(s)</span></span>
           </div>
           <div className="max-h-64 overflow-auto">
@@ -428,7 +452,7 @@ export default function RelatorioInadimplenciaPage() {
                   <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(r.VR_FACE)}</td>
                   <td
                     className="py-1.5 px-2 text-right whitespace-nowrap"
-                    title={r.TAXA_ATRASO == null ? 'Taxa de atraso não definida em OPEITE nem em CEDENTE' : `${r.TAXA_ATRASO}% a.m. (${r.ORIGEM_TAXA}) sobre ${fmtMoeda(r.BASE_CORRECAO)}`}
+                    title={r.ORIGEM_TAXA === 'A VENCER' ? 'A vencer: corrigido = valor' : r.TAXA_ATRASO == null ? 'Taxa de atraso não definida em OPEITE nem em CEDENTE' : `${r.TAXA_ATRASO}% a.m. (${r.ORIGEM_TAXA}) sobre ${fmtMoeda(r.BASE_CORRECAO)}`}
                   >
                     {r.VR_CORRIGIDO == null ? '—' : fmtMoeda(r.VR_CORRIGIDO)}
                   </td>
@@ -456,7 +480,7 @@ export default function RelatorioInadimplenciaPage() {
               <button onClick={baixar} className="px-4 py-1.5 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition">Baixar PDF</button>
             </div>
           </div>
-          <iframe title="Relatório de Inadimplência" src={pdfUrl} className="h-[600px] w-full rounded-lg border border-[#1f1f1f] bg-white" />
+          <iframe title={`Relatório de ${nomeAplicado}`} src={pdfUrl} className="h-[600px] w-full rounded-lg border border-[#1f1f1f] bg-white" />
         </div>
       )}
     </div>
