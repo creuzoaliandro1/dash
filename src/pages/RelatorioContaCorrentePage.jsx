@@ -16,19 +16,12 @@ const fmtData = (d) => {
 }
 const nomeDe = (c) => (c ? (c.RAZAO_SOCIAL || c.NOME_FANTASIA || '') : '')
 
-// Padrão: primeiro dia do mês anterior.
-const inicioPadrao = () => {
-  const d = new Date()
-  const p = new Date(d.getFullYear(), d.getMonth() - 1, 1)
-  return `${p.getFullYear()}-${String(p.getMonth() + 1).padStart(2, '0')}-01`
-}
-
 const corDC = (dc) => (dc === 'D' ? 'text-[#ff8080]' : 'text-[#7ee2a8]')
 
 export default function RelatorioContaCorrentePage() {
   const [cedentes, setCedentes] = useState([])
   const [codCedente, setCodCedente] = useState('')
-  const [dtIni, setDtIni] = useState(inicioPadrao())
+  const [dtIni, setDtIni] = useState('') // vazio = desde a última vez que o saldo zerou
   const [extrato, setExtrato] = useState(null)
   const [aplicado, setAplicado] = useState(null) // { codCedente, dtIni, nomeCedente }
   const [carregando, setCarregando] = useState(false)
@@ -53,7 +46,6 @@ export default function RelatorioContaCorrentePage() {
     e.preventDefault()
     setErro('')
     if (!codCedente) { setErro('Selecione o cedente.'); return }
-    if (!dtIni) { setErro('Informe a data inicial.'); return }
     setCarregando(true)
     setPdfUrl(null)
     try {
@@ -61,7 +53,7 @@ export default function RelatorioContaCorrentePage() {
       if (error) throw error
       const nomeCedente = nomeDe(cedentes.find((c) => String(c.COD_CEDENTE) === String(codCedente)))
       setExtrato(data)
-      setAplicado({ codCedente, dtIni, nomeCedente })
+      setAplicado({ codCedente, dtIni: data.dtIni, desdeZerado: data.desdeZerado, nomeCedente })
     } catch (err) {
       setErro(`Erro ao ler a conta corrente: ${err?.message || err}`)
       setExtrato(null)
@@ -99,9 +91,15 @@ export default function RelatorioContaCorrentePage() {
             <span className={labelCls}>Cedente</span>
             <CedenteCombo cedentes={cedentes} value={codCedente} onChange={setCodCedente} permitirTodos={false} />
           </div>
-          <div className="flex flex-col gap-1.5 w-44">
+          <div className="flex flex-col gap-1.5 w-48">
             <span className={labelCls}>A partir de</span>
-            <input type="date" value={dtIni} onChange={(e) => setDtIni(e.target.value)} className={inputCls} />
+            <div className="flex items-center gap-1">
+              <input type="date" value={dtIni} onChange={(e) => setDtIni(e.target.value)} className={inputCls} title="Vazio = desde a última vez que o saldo ficou zerado" />
+              {dtIni && (
+                <button type="button" onClick={() => setDtIni('')} className="px-1.5 text-[#888] hover:text-white" title="Voltar para o último saldo zerado">×</button>
+              )}
+            </div>
+            <span className="text-[10px] text-[#666]">{dtIni ? 'Data informada' : 'Vazio: desde o último saldo zerado'}</span>
           </div>
           <div className="flex items-center gap-2">
             <button type="submit" disabled={carregando} className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50">
@@ -131,7 +129,7 @@ export default function RelatorioContaCorrentePage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-white font-semibold">{aplicado.codCedente} - {aplicado.nomeCedente}</p>
             <p className="text-xs text-[#a3a3a3]">
-              A partir de {fmtData(aplicado.dtIni)} · {extrato.lancamentos.length} lançamento(s) · saldo atual{' '}
+              A partir de {fmtData(aplicado.dtIni)}{aplicado.desdeZerado ? ' (último saldo zerado)' : ''} · {extrato.lancamentos.length} lançamento(s) · saldo atual{' '}
               <span className={corDC(dcSaldo(extrato.saldoFinal))}>{fmtValor(extrato.saldoFinal)} {dcSaldo(extrato.saldoFinal)}</span>
             </p>
           </div>
@@ -148,15 +146,8 @@ export default function RelatorioContaCorrentePage() {
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[#161616] text-[#a3a3a3]">
-                  <td className="py-1.5 px-2 whitespace-nowrap">{fmtData(extrato.dtSaldoAnterior)}</td>
-                  <td />
-                  <td />
-                  <td className="py-1.5 px-2 italic">Saldo anterior</td>
-                  <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtValor(extrato.saldoAnterior)}</td>
-                  <td className={`py-1.5 px-1 text-center ${corDC(dcSaldo(extrato.saldoAnterior))}`}>{dcSaldo(extrato.saldoAnterior)}</td>
-                </tr>
-                {extrato.lancamentos.map((l) => (
+                {/* Do mais novo para o mais antigo; o saldo anterior fica no fim */}
+                {[...extrato.lancamentos].reverse().map((l) => (
                   <tr key={l.ID} className="border-b border-[#161616] text-[#d4d4d4] hover:bg-[#111111]">
                     <td className="py-1.5 px-2 whitespace-nowrap">{fmtData(l.DATA)}</td>
                     <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtValor(l.VALOR)}</td>
@@ -169,6 +160,14 @@ export default function RelatorioContaCorrentePage() {
                 {extrato.lancamentos.length === 0 && (
                   <tr><td colSpan={6} className="py-6 text-center text-[#666666]">Nenhum lançamento a partir desta data.</td></tr>
                 )}
+                <tr className="border-b border-[#161616] text-[#a3a3a3]">
+                  <td className="py-1.5 px-2 whitespace-nowrap">{fmtData(extrato.dtSaldoAnterior)}</td>
+                  <td />
+                  <td />
+                  <td className="py-1.5 px-2 italic">Saldo anterior</td>
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtValor(extrato.saldoAnterior)}</td>
+                  <td className={`py-1.5 px-1 text-center ${corDC(dcSaldo(extrato.saldoAnterior))}`}>{dcSaldo(extrato.saldoAnterior)}</td>
+                </tr>
               </tbody>
             </table>
           </div>

@@ -102,10 +102,13 @@ function montarHistorico(x, titulos) {
 }
 
 /**
- * Extrato da conta corrente do cedente a partir de `dtIni` (YYYY-MM-DD).
+ * Extrato da conta corrente do cedente.
  * Saldo = créditos (C) - débitos (D), acumulado em ordem de data e nº da ocorrência.
  * Lançamentos com data posterior a hoje vão para "Lançamentos futuros" e não entram no saldo.
- * @returns {{ data: { saldoAnterior, dtSaldoAnterior, lancamentos, futuros, saldoFinal, saldoBloqueado } | null, error }}
+ * @param dtIni YYYY-MM-DD; vazio = a partir da última vez em que o saldo ficou zerado
+ *   (os lançamentos começam logo depois do que zerou a conta; se nunca zerou, desde o início).
+ * @returns {{ data: { saldoAnterior, dtSaldoAnterior, dtIni, desdeZerado, lancamentos (do mais antigo
+ *   ao mais novo), futuros, saldoFinal, saldoBloqueado } | null, error }}
  */
 export async function getExtratoContaCorrente(codCedente, dtIni) {
   try {
@@ -113,14 +116,33 @@ export async function getExtratoContaCorrente(codCedente, dtIni) {
     const hoje = hojeISO()
     const [todos, ced] = await Promise.all([lerCtaCorrente(cod), firebirdApi.get('CEDENTE', String(cod))])
 
-    const anteriores = todos.filter((x) => String(x.DT_REFERENCIA || '') < dtIni)
-    const periodo = todos.filter((x) => String(x.DT_REFERENCIA || '') >= dtIni && String(x.DT_REFERENCIA) <= hoje)
+    const sinal = (x) => (x.TIPO_LANCAMENTO === 'C' ? 1 : -1)
+    const ateHoje = todos.filter((x) => String(x.DT_REFERENCIA || '') <= hoje)
     const futuros = todos.filter((x) => String(x.DT_REFERENCIA || '') > hoje)
+
+    let anteriores, periodo, dtSaldoAnterior
+    const desdeZerado = !dtIni
+    if (desdeZerado) {
+      // Último lançamento depois do qual o saldo acumulado ficou em zero.
+      let acumulado = 0
+      let corte = -1
+      ateHoje.forEach((x, i) => {
+        acumulado += sinal(x) * centavos(x.VALOR)
+        if (acumulado === 0) corte = i
+      })
+      anteriores = ateHoje.slice(0, corte + 1)
+      periodo = ateHoje.slice(corte + 1)
+      dtSaldoAnterior = corte >= 0 ? ateHoje[corte].DT_REFERENCIA : (periodo[0] ? diaAnterior(periodo[0].DT_REFERENCIA) : hoje)
+      dtIni = corte >= 0 ? ateHoje[corte].DT_REFERENCIA : (periodo[0]?.DT_REFERENCIA || hoje)
+    } else {
+      anteriores = ateHoje.filter((x) => String(x.DT_REFERENCIA || '') < dtIni)
+      periodo = ateHoje.filter((x) => String(x.DT_REFERENCIA || '') >= dtIni)
+      dtSaldoAnterior = diaAnterior(dtIni)
+    }
 
     const numLancs = [...new Set([...periodo, ...futuros].map((x) => x.NUM_LANCAMENTO).filter((v) => v != null).map(Number))]
     const titulos = await lerTitulos(cod, numLancs)
 
-    const sinal = (x) => (x.TIPO_LANCAMENTO === 'C' ? 1 : -1)
     let saldo = anteriores.reduce((s, x) => s + sinal(x) * centavos(x.VALOR), 0)
     const saldoAnterior = saldo / 100
 
@@ -140,7 +162,9 @@ export async function getExtratoContaCorrente(codCedente, dtIni) {
     return {
       data: {
         saldoAnterior,
-        dtSaldoAnterior: diaAnterior(dtIni),
+        dtSaldoAnterior,
+        dtIni,
+        desdeZerado,
         lancamentos,
         futuros: futuros.map((x) => ({
           ID: x.NUM_OCORRENCIA,
