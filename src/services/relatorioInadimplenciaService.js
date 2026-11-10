@@ -189,6 +189,24 @@ export async function getTitulosInadimplentes(f) {
   }
 }
 
+// Códigos dos cedentes que têm ao menos um título inadimplente (STATUS = 'IN').
+export async function getCodCedentesInadimplentes() {
+  const cods = new Set()
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('OPEITE')
+      .select('COD_CEDENTE')
+      .eq('STATUS', 'IN')
+      .in('TIPO_TITULO', TIPOS_INADIMPLENCIA)
+      .order('COD_CEDENTE', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) return { data: null, error }
+    ;(data || []).forEach((r) => cods.add(Number(r.COD_CEDENTE)))
+    if (!data || data.length < PAGE) break
+  }
+  return { data: cods, error: null }
+}
+
 // Para totais: sem taxa definida, o título entra pelo valor de face.
 export const corrigidoOuValor = (r) => (r.VR_CORRIGIDO ?? r.VR_FACE)
 

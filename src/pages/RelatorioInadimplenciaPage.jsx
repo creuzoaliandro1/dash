@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
-import { getTitulosInadimplentes, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
+import { getTitulosInadimplentes, getCodCedentesInadimplentes, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
 import { generateRelatorioInadimplenciaPDF } from '../utils/relatorioInadimplenciaPdf'
 
 const FILTROS_INICIAIS = {
@@ -148,7 +148,11 @@ export default function RelatorioInadimplenciaPage() {
   const acoesRef = useRef(null)
 
   useEffect(() => {
-    getCedentesRelatorio().then(({ data }) => setCedentes(data))
+    // Combobox: só os cedentes com títulos inadimplentes
+    Promise.all([getCedentesRelatorio(), getCodCedentesInadimplentes()]).then(([ced, inad]) => {
+      const todos = ced.data || []
+      setCedentes(inad.data ? todos.filter((c) => inad.data.has(Number(c.COD_CEDENTE))) : todos)
+    })
     buscar(FILTROS_INICIAIS)
   }, [])
 
