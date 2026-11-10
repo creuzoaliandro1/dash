@@ -85,7 +85,7 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   ])
   const total = rows.reduce((s, t) => s + t.VR_FACE, 0)
   const totalCorrigido = rows.reduce((s, t) => s + corrigidoOuValor(t), 0)
-  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] }
+  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255], lineWidth: { top: 0.3 }, lineColor: [0, 0, 0] }
   body.push([
     { content: `TOTAL (${rows.length} título${rows.length === 1 ? '' : 's'})`, colSpan: nCols - 2, styles: totStyle },
     { content: fmtMoeda(total), styles: totStyle },
@@ -195,7 +195,7 @@ export function generateInadimplenciaTotalPDF(grupos, filtros) {
   const qtd = grupos.reduce((s, g) => s + g.qtd, 0)
   const total = grupos.reduce((s, g) => s + g.total, 0)
   const totalCorrigido = grupos.reduce((s, g) => s + g.corrigido, 0)
-  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] }
+  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255], lineWidth: { top: 0.3 }, lineColor: [0, 0, 0] }
   const body = grupos.map((g) => [
     String(g.COD_CEDENTE),
     cut(g.NOME_CEDENTE || '—', 70),
