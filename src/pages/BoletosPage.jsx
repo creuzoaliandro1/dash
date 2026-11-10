@@ -2279,17 +2279,19 @@ export default function BoletosPage() {
                     </div>
                   </div>
 
-                  {/* Cedente */}
-                  <div className="mb-3">
-                    <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Cedente</label>
-                    <select value={cedenteFiltro} onChange={(e) => setCedenteFiltro(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
-                      <option value="">Todos</option>
-                      {cedenteOptions.map(ced => {
-                        const nome = contaNomePorCedente(ced)
-                        return <option key={ced} value={ced}>{nome ? `${ced} — ${nome}` : ced}</option>
-                      })}
-                    </select>
-                  </div>
+                  {/* Cedente — só para o perfil master */}
+                  {userType === 'M' && (
+                    <div className="mb-3">
+                      <label className="text-xs text-[#666666] uppercase font-semibold mb-1 block">Cedente</label>
+                      <select value={cedenteFiltro} onChange={(e) => setCedenteFiltro(e.target.value)} className="w-full px-2 py-1.5 bg-[#111111] border border-[#2a2a2a] rounded text-white text-xs focus:border-white outline-none transition">
+                        <option value="">Todos</option>
+                        {cedenteOptions.map(ced => {
+                          const nome = contaNomePorCedente(ced)
+                          return <option key={ced} value={ced}>{nome ? `${ced} — ${nome}` : ced}</option>
+                        })}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Ocorrência */}
                   <div className="mb-3">
