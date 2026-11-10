@@ -1,8 +1,8 @@
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
-import { totaisPorCedente } from '../services/relatorioInadimplenciaService'
+import { totaisPorCedente, corrigidoOuValor } from '../services/relatorioInadimplenciaService'
 
-const FS = 7
+const FS = 6.5
 
 const fmtMoeda = (v) =>
   (parseFloat(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -41,35 +41,36 @@ function descreverFiltros(f, nomeCedente) {
 }
 
 /**
- * PDF (A4 paisagem) com os títulos inadimplentes selecionados, na ordem da tela.
+ * PDF (A4 retrato) com os títulos inadimplentes selecionados, na ordem da tela.
  * Com cedente "Todos", inclui ao final o somatório por cedente.
  * @returns {Blob}
  */
 export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
   const mL = 10
   const mR = pageW - 10
   const contentW = mR - mL
 
+  const SACADO = 4 // índice da coluna que absorve a largura restante
   const cols = [
-    { h: 'CEDENTE', w: 0, align: 'left' },
-    { h: 'OPER.', w: 13, align: 'center' },
-    { h: 'Nº LANÇ.', w: 15, align: 'center' },
-    { h: 'Nº TÍTULO', w: 22, align: 'left' },
-    { h: 'TIPO', w: 10, align: 'center' },
-    { h: 'SACADO', w: 62, align: 'left' },
-    { h: 'CPF/CNPJ', w: 28, align: 'center' },
-    { h: 'EMISSÃO', w: 17, align: 'center' },
-    { h: 'VENCIMENTO', w: 19, align: 'center' },
-    { h: 'VALOR', w: 22, align: 'right' },
+    { h: 'OPER.', w: 10, align: 'center' },
+    { h: 'Nº LANÇ.', w: 12, align: 'center' },
+    { h: 'Nº TÍTULO', w: 17, align: 'left' },
+    { h: 'TIPO', w: 8, align: 'center' },
+    { h: 'SACADO', w: 0, align: 'left' },
+    { h: 'CPF/CNPJ', w: 25, align: 'center' },
+    { h: 'EMISSÃO', w: 14, align: 'center' },
+    { h: 'VENC.', w: 15, align: 'center' },
+    { h: 'DIAS', w: 9, align: 'center' },
+    { h: 'VALOR', w: 18, align: 'right' },
+    { h: 'CORRIGIDO', w: 19, align: 'right' },
   ]
-  cols[0].w = contentW - cols.reduce((s, c) => s + c.w, 0)
+  cols[SACADO].w = contentW - cols.reduce((s, c) => s + c.w, 0)
   const nCols = cols.length
 
   const body = rows.map((t) => [
-    `${t.COD_CEDENTE} - ${cut(t.NOME_CEDENTE, 30)}`,
     String(t.COD_OPERACAO ?? ''),
     String(t.NUM_LANCAMENTO ?? ''),
     String(t.NUM_TITULO || ''),
@@ -78,12 +79,17 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
     fmtCnpjCpf(t.CIC_SACADO),
     fmtData(t.DT_LANCA),
     `${fmtData(t.VENCIMENTO)}${t.PRORROGADO ? '*' : ''}`,
+    String(t.DIAS_ATRASO ?? ''),
     fmtMoeda(t.VR_FACE),
+    t.VR_CORRIGIDO == null ? '—' : fmtMoeda(t.VR_CORRIGIDO),
   ])
   const total = rows.reduce((s, t) => s + t.VR_FACE, 0)
+  const totalCorrigido = rows.reduce((s, t) => s + corrigidoOuValor(t), 0)
+  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] }
   body.push([
-    { content: `TOTAL (${rows.length} título${rows.length === 1 ? '' : 's'})`, colSpan: nCols - 1, styles: { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] } },
-    { content: fmtMoeda(total), styles: { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] } },
+    { content: `TOTAL (${rows.length} título${rows.length === 1 ? '' : 's'})`, colSpan: nCols - 2, styles: totStyle },
+    { content: fmtMoeda(total), styles: totStyle },
+    { content: fmtMoeda(totalCorrigido), styles: totStyle },
   ])
 
   doc.setFont('helvetica', 'bold')
@@ -96,7 +102,9 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   const filtrosTxt = doc.splitTextToSize(descreverFiltros(filtros, nomeCedente), contentW)
   doc.text(filtrosTxt, mL, 19)
   let y = 19 + filtrosTxt.length * 3
-  doc.text('* vencimento prorrogado (DT_VENCI_NOVO)', mL, y)
+  doc.text('* vencimento prorrogado (DT_VENCI_NOVO)   ·   Dias = dias de atraso até hoje', mL, y)
+  y += 3
+  doc.text('Corrigido = saldo × (1 + taxa)^(dias/30); taxa % a.m. de OPEITE.TAXA_OCORRE ou, se vazia, CEDENTE.TAXA_OCORRENCIA', mL, y)
   y += 2
 
   const tableStyles = {
@@ -129,21 +137,23 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
     doc.autoTable({
       ...tableStyles,
       startY: sy + 2,
-      tableWidth: 160,
-      head: [['CÓD.', 'CEDENTE', 'QTD', 'TOTAL']],
+      tableWidth: contentW,
+      head: [['CÓD.', 'CEDENTE', 'QTD', 'TOTAL', 'CORRIGIDO']],
       body: [
-        ...grupos.map((g) => [String(g.COD_CEDENTE), cut(g.NOME_CEDENTE, 60), String(g.qtd), fmtMoeda(g.total)]),
+        ...grupos.map((g) => [String(g.COD_CEDENTE), cut(g.NOME_CEDENTE, 60), String(g.qtd), fmtMoeda(g.total), fmtMoeda(g.corrigido)]),
         [
-          { content: 'TOTAL GERAL', colSpan: 2, styles: { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] } },
-          { content: String(rows.length), styles: { fontStyle: 'bold', halign: 'center', fillColor: [215, 215, 215] } },
-          { content: fmtMoeda(total), styles: { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] } },
+          { content: 'TOTAL GERAL', colSpan: 2, styles: totStyle },
+          { content: String(rows.length), styles: { ...totStyle, halign: 'center' } },
+          { content: fmtMoeda(total), styles: totStyle },
+          { content: fmtMoeda(totalCorrigido), styles: totStyle },
         ],
       ],
       columnStyles: {
         0: { cellWidth: 14, halign: 'center' },
-        1: { cellWidth: 100, halign: 'left' },
+        1: { cellWidth: contentW - 14 - 16 - 30 - 30, halign: 'left' },
         2: { cellWidth: 16, halign: 'center' },
         3: { cellWidth: 30, halign: 'right' },
+        4: { cellWidth: 30, halign: 'right' },
       },
     })
   }

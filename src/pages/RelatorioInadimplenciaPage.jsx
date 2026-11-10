@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
-import { getTitulosInadimplentes, totaisPorCedente, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
+import { getTitulosInadimplentes, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
 import { generateRelatorioInadimplenciaPDF } from '../utils/relatorioInadimplenciaPdf'
 
 const FILTROS_INICIAIS = {
@@ -30,7 +30,6 @@ const fmtCic = (cic) => {
 const nomeDe = (c) => (c ? (c.RAZAO_SOCIAL || c.NOME_FANTASIA || '') : '')
 
 const COLUNAS = [
-  { key: 'COD_CEDENTE', label: 'Cedente' },
   { key: 'COD_OPERACAO', label: 'Oper.', cls: 'text-center' },
   { key: 'NUM_LANCAMENTO', label: 'Nº Lanç.', cls: 'text-center' },
   { key: 'NUM_TITULO', label: 'Nº Título' },
@@ -39,7 +38,9 @@ const COLUNAS = [
   { key: 'CIC_SACADO', label: 'CPF/CNPJ' },
   { key: 'DT_LANCA', label: 'Emissão', cls: 'text-center' },
   { key: 'VENCIMENTO', label: 'Vencimento', cls: 'text-center' },
+  { key: 'DIAS_ATRASO', label: 'Dias atraso', cls: 'text-center' },
   { key: 'VR_FACE', label: 'Valor', cls: 'text-right' },
+  { key: 'VR_CORRIGIDO', label: 'Corrigido', cls: 'text-right' },
 ]
 
 function Intervalo({ label, tipo, de, ate, onDe, onAte, step }) {
@@ -139,6 +140,7 @@ export default function RelatorioInadimplenciaPage() {
   const [rows, setRows] = useState([])
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState('')
+  const [aviso, setAviso] = useState('')
   const [sel, setSel] = useState(new Set())
   const [sort, setSort] = useState({ key: 'VENCIMENTO', dir: 'asc' })
   const [acoesAberto, setAcoesAberto] = useState(false)
@@ -167,8 +169,9 @@ export default function RelatorioInadimplenciaPage() {
     if (filtros.tipos.length === 0) { setErro('Selecione ao menos um tipo de título.'); return }
     setCarregando(true)
     try {
-      const { data, error } = await getTitulosInadimplentes(filtros)
+      const { data, error, parametrosOk } = await getTitulosInadimplentes(filtros)
       if (error) throw error
+      setAviso(parametrosOk ? '' : 'Não foi possível ler todas as taxas de atraso no Firebird — alguns títulos estão sem valor corrigido.')
       setRows(data)
       setAplicado(filtros)
       setSel(new Set(data.map((r) => r.KEY))) // começa com todos selecionados
@@ -187,7 +190,6 @@ export default function RelatorioInadimplenciaPage() {
     const mult = dir === 'asc' ? 1 : -1
     return [...rows].sort((a, b) => {
       let x = a[key], y = b[key]
-      if (key === 'COD_CEDENTE') { x = Number(x); y = Number(y) }
       if (x == null || x === '') return 1
       if (y == null || y === '') return -1
       if (typeof x === 'number' && typeof y === 'number') return (x - y) * mult
@@ -210,6 +212,8 @@ export default function RelatorioInadimplenciaPage() {
   const selecionados = ordenados.filter((r) => sel.has(r.KEY))
   const totalSel = selecionados.reduce((s, r) => s + r.VR_FACE, 0)
   const totalGeral = rows.reduce((s, r) => s + r.VR_FACE, 0)
+  const corrigidoSel = selecionados.reduce((s, r) => s + corrigidoOuValor(r), 0)
+  const corrigidoGeral = rows.reduce((s, r) => s + corrigidoOuValor(r), 0)
   const porCedente = useMemo(() => (aplicado.codCedente === '' ? totaisPorCedente(rows) : []), [rows, aplicado.codCedente])
 
   const nomeCedenteAplicado = nomeDe(cedentes.find((c) => String(c.COD_CEDENTE) === String(aplicado.codCedente)))
@@ -267,6 +271,7 @@ export default function RelatorioInadimplenciaPage() {
           </div>
         </div>
         {erro && <p className="text-xs text-[#ff8080]">{erro}</p>}
+        {aviso && <p className="text-xs text-[#e0b050]">{aviso}</p>}
       </form>
 
       {/* Somatório por cedente (cedente = Todos) */}
@@ -284,6 +289,7 @@ export default function RelatorioInadimplenciaPage() {
                   <th className="text-left py-2 px-2 font-semibold">Cedente</th>
                   <th className="text-center py-2 px-2 font-semibold">Títulos</th>
                   <th className="text-right py-2 px-2 font-semibold">Total</th>
+                  <th className="text-right py-2 px-2 font-semibold">Corrigido</th>
                 </tr>
               </thead>
               <tbody>
@@ -293,6 +299,7 @@ export default function RelatorioInadimplenciaPage() {
                     <td className="py-1.5 px-2">{g.NOME_CEDENTE}</td>
                     <td className="py-1.5 px-2 text-center">{g.qtd}</td>
                     <td className="py-1.5 px-2 text-right">{fmtMoeda(g.total)}</td>
+                    <td className="py-1.5 px-2 text-right">{fmtMoeda(g.corrigido)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -301,6 +308,7 @@ export default function RelatorioInadimplenciaPage() {
                   <td className="py-2 px-2" colSpan={2}>Total geral</td>
                   <td className="py-2 px-2 text-center">{rows.length}</td>
                   <td className="py-2 px-2 text-right">{fmtMoeda(totalGeral)}</td>
+                  <td className="py-2 px-2 text-right">{fmtMoeda(corrigidoGeral)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -312,7 +320,7 @@ export default function RelatorioInadimplenciaPage() {
       <div className={`${cardCls} p-5 flex flex-col gap-3 flex-1 min-h-[300px]`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-[#a3a3a3]">
-            {rows.length} título(s) · {fmtMoeda(totalGeral)} — <span className="text-white">{sel.size} selecionado(s) · {fmtMoeda(totalSel)}</span>
+            {rows.length} título(s) · {fmtMoeda(totalGeral)} (corrigido {fmtMoeda(corrigidoGeral)}) — <span className="text-white">{sel.size} selecionado(s) · {fmtMoeda(totalSel)} (corrigido {fmtMoeda(corrigidoSel)})</span>
           </p>
           <div ref={acoesRef} className="relative">
             <button type="button" onClick={() => setAcoesAberto((v) => !v)} className="px-4 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-xs font-medium rounded hover:bg-[#222] transition flex items-center gap-2">
@@ -357,9 +365,6 @@ export default function RelatorioInadimplenciaPage() {
                   <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(r.KEY)} onChange={() => toggleUm(r.KEY)} className="w-4 h-4 accent-white cursor-pointer" />
                   </td>
-                  <td className="py-1.5 px-2 whitespace-nowrap" title={r.NOME_CEDENTE}>
-                    <span className="text-[#888] mr-1">{r.COD_CEDENTE}</span>{String(r.NOME_CEDENTE).slice(0, 28)}
-                  </td>
                   <td className="py-1.5 px-2 text-center">{r.COD_OPERACAO}</td>
                   <td className="py-1.5 px-2 text-center">{r.NUM_LANCAMENTO}</td>
                   <td className="py-1.5 px-2">{r.NUM_TITULO}</td>
@@ -370,7 +375,14 @@ export default function RelatorioInadimplenciaPage() {
                   <td className="py-1.5 px-2 text-center whitespace-nowrap" title={r.PRORROGADO ? `Original: ${fmtData(r.DT_VENCI)}` : undefined}>
                     {fmtData(r.VENCIMENTO)}{r.PRORROGADO ? '*' : ''}
                   </td>
+                  <td className="py-1.5 px-2 text-center">{r.DIAS_ATRASO}</td>
                   <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(r.VR_FACE)}</td>
+                  <td
+                    className="py-1.5 px-2 text-right whitespace-nowrap"
+                    title={r.TAXA_ATRASO == null ? 'Taxa de atraso não definida em OPEITE nem em CEDENTE' : `${r.TAXA_ATRASO}% a.m. (${r.ORIGEM_TAXA}) sobre ${fmtMoeda(r.BASE_CORRECAO)}`}
+                  >
+                    {r.VR_CORRIGIDO == null ? '—' : fmtMoeda(r.VR_CORRIGIDO)}
+                  </td>
                 </tr>
               ))}
               {!carregando && rows.length === 0 && (
@@ -382,7 +394,7 @@ export default function RelatorioInadimplenciaPage() {
             </tbody>
           </table>
         </div>
-        <p className="text-[10px] text-[#555]">* vencimento prorrogado (DT_VENCI_NOVO). Emissão = data de lançamento (DT_LANCA).</p>
+        <p className="text-[10px] text-[#555]">* vencimento prorrogado (DT_VENCI_NOVO). Emissão = data de lançamento (DT_LANCA). Corrigido = saldo × (1 + taxa)^(dias/30), com a taxa % a.m. de OPEITE.TAXA_OCORRE ou, se vazia, CEDENTE.TAXA_OCORRENCIA.</p>
       </div>
 
       {/* Pré-visualização da impressão */}
