@@ -109,7 +109,7 @@ const temValor = (v) => v !== '' && v != null
 
 /**
  * Busca os títulos (inadimplência e/ou responsabilidade).
- * @param {object} f { codCedente, tipos: string[], inadimplencia, responsabilidade,
+ * @param {object} f { codCedente, codBordero, tipos: string[], inadimplencia, responsabilidade,
  *   dtVenciIni, dtVenciFim, vrFaceMin, vrFaceMax, dtEmissaoIni, dtEmissaoFim }
  * Vencimento considerado = DT_VENCI_NOVO (prorrogação) ou DT_VENCI.
  * Emissão = DT_LANCA (OPEITE não tem data de emissão própria).
@@ -120,6 +120,20 @@ export async function getTitulosInadimplentes(f) {
     const status = statusSelecionados(f)
     if (status.length === 0) return { data: [], error: null, parametrosOk: true }
 
+    // Borderô: OPEITE não tem COD_BORDERO; a ligação é OPECABWEB
+    // (COD_CEDENTE, COD_BORDERO) -> COD_OPERACAO.
+    let operacoesBordero = null // Set("ced~oper") ou null (sem filtro)
+    if (temValor(f.codBordero)) {
+      let qb = supabase.from('OPECABWEB').select('COD_CEDENTE, COD_OPERACAO').eq('COD_BORDERO', Number(f.codBordero))
+      if (temValor(f.codCedente)) qb = qb.eq('COD_CEDENTE', Number(f.codCedente))
+      const { data, error } = await qb
+      if (error) throw error
+      const pares = (data || []).filter((b) => b.COD_OPERACAO != null)
+      if (pares.length === 0) return { data: [], error: null, parametrosOk: true }
+      operacoesBordero = new Set(pares.map((b) => `${b.COD_CEDENTE}~${b.COD_OPERACAO}`))
+      f = { ...f, _cedentesBordero: [...new Set(pares.map((b) => Number(b.COD_CEDENTE)))], _operacoesBordero: [...new Set(pares.map((b) => Number(b.COD_OPERACAO)))] }
+    }
+
     const build = () => {
       let q = supabase
         .from('OPEITE')
@@ -127,6 +141,7 @@ export async function getTitulosInadimplentes(f) {
         .in('STATUS', status)
         .in('TIPO_TITULO', tipos)
       if (temValor(f.codCedente)) q = q.eq('COD_CEDENTE', Number(f.codCedente))
+      if (f._cedentesBordero) q = q.in('COD_CEDENTE', f._cedentesBordero).in('COD_OPERACAO', f._operacoesBordero)
       if (temValor(f.vrFaceMin)) q = q.gte('VR_FACE', Number(f.vrFaceMin))
       if (temValor(f.vrFaceMax)) q = q.lte('VR_FACE', Number(f.vrFaceMax))
       if (f.dtEmissaoIni) q = q.gte('DT_LANCA', f.dtEmissaoIni)
@@ -147,6 +162,7 @@ export async function getTitulosInadimplentes(f) {
 
     // Vencimento efetivo (considera prorrogação) — filtrado aqui.
     const filtrados = titulos.filter((t) => {
+      if (operacoesBordero && !operacoesBordero.has(`${t.COD_CEDENTE}~${t.COD_OPERACAO}`)) return false
       const v = t.DT_VENCI_NOVO || t.DT_VENCI || ''
       if (f.dtVenciIni && (!v || v < f.dtVenciIni)) return false
       if (f.dtVenciFim && (!v || v > f.dtVenciFim)) return false

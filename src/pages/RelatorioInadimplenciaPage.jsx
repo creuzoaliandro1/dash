@@ -6,6 +6,7 @@ import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from
 
 const FILTROS_INICIAIS = {
   codCedente: '',
+  codBordero: '',
   dtVenciIni: '', dtVenciFim: '',
   vrFaceMin: '', vrFaceMax: '',
   dtEmissaoIni: '', dtEmissaoFim: '',
@@ -212,6 +213,10 @@ export default function RelatorioInadimplenciaPage() {
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Cedente</span>
             <CedenteCombo cedentes={cedentes} value={f.codCedente} onChange={set('codCedente')} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className={labelCls}>Borderô</span>
+            <input type="number" min="1" step="1" value={f.codBordero} onChange={(e) => set('codBordero')(e.target.value)} className={inputCls} placeholder="Nº do borderô (COD_BORDERO)" />
           </div>
           <Intervalo label="Vencimento" tipo="date" de={f.dtVenciIni} ate={f.dtVenciFim} onDe={set('dtVenciIni')} onAte={set('dtVenciFim')} />
           <Intervalo label="Valor" tipo="number" step="0.01" de={f.vrFaceMin} ate={f.vrFaceMax} onDe={set('vrFaceMin')} onAte={set('vrFaceMax')} />

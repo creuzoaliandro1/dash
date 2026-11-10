@@ -90,6 +90,10 @@ LEFT JOIN CEDENTE c ON c.COD_CEDENTE = o.COD_CEDENTE
 WHERE o.STATUS IN (:status)                 -- nunca DC nem CO
   AND o.TIPO_TITULO IN (:tipos)
   AND (:codCedente   IS NULL OR o.COD_CEDENTE = :codCedente)
+  AND (:codBordero   IS NULL OR EXISTS (SELECT 1 FROM OPECABWEB b
+         WHERE b.COD_BORDERO  = :codBordero
+           AND b.COD_CEDENTE  = o.COD_CEDENTE
+           AND b.COD_OPERACAO = o.COD_OPERACAO))
   AND (:valorMin     IS NULL OR o.VR_FACE >= :valorMin)
   AND (:valorMax     IS NULL OR o.VR_FACE <= :valorMax)
   AND (:emissaoIni   IS NULL OR o.DT_LANCA >= :emissaoIni)
@@ -100,6 +104,10 @@ ORDER BY o.COD_CEDENTE, o.COD_OPERACAO, o.NUM_LANCAMENTO
 ```
 
 Observação: com filtro de vencimento, títulos **sem** vencimento ficam de fora.
+
+Borderô: OPEITE não tem `COD_BORDERO`. O filtro passa por `OPECABWEB`
+(`COD_CEDENTE`, `COD_BORDERO` → `COD_OPERACAO`); só entram títulos de borderôs
+enviados pela web que já viraram operação.
 
 ### 2.3 Campos calculados por título
 
@@ -173,7 +181,7 @@ WHERE STATUS IN (:status) AND TIPO_TITULO IN ('DUP','CHE','PRO')
 ### 2.6 Saídas (PDF, A4 retrato)
 
 **Relatório de títulos** — cabeçalho: título, "Emitido em dd/mm/aaaa hh:mm" e linha
-de filtros (`Cedente: … · Vencimento: … · Valor: … · Emissão: … · Tipos: … · Status: …`).
+de filtros (`Cedente: … · Borderô: … (se filtrado) · Vencimento: … · Valor: … · Emissão: … · Tipos: … · Status: …`).
 Sem rodapé.
 
 | Coluna | Origem |

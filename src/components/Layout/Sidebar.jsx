@@ -321,7 +321,7 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
                       : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
                   }`}
                 >
-                  Inadimplência
+                  Responsabilidade
                 </button>
                 <button
                   onClick={() => setCurrentPage('relatorio-conta-corrente')}
