@@ -53,10 +53,11 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   const mR = pageW - 10
   const contentW = mR - mL
 
-  const SACADO = 4 // índice da coluna que absorve a largura restante
+  const SACADO = 5 // índice da coluna que absorve a largura restante
   const cols = [
+    { h: 'CED.', w: 9, align: 'center' },
     { h: 'OPER.', w: 10, align: 'center' },
-    { h: 'Nº LANÇ.', w: 12, align: 'center' },
+    { h: 'Nº LANÇ.', w: 13, align: 'center' },
     { h: 'Nº TÍTULO', w: 17, align: 'left' },
     { h: 'TIPO', w: 8, align: 'center' },
     { h: 'SACADO', w: 0, align: 'left' },
@@ -71,6 +72,7 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   const nCols = cols.length
 
   const body = rows.map((t) => [
+    String(t.COD_CEDENTE ?? ''),
     String(t.COD_OPERACAO ?? ''),
     String(t.NUM_LANCAMENTO ?? ''),
     String(t.NUM_TITULO || ''),
