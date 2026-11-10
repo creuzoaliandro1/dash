@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
 import { getTitulosInadimplentes, getCodCedentesInadimplentes, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
-import { generateRelatorioInadimplenciaPDF } from '../utils/relatorioInadimplenciaPdf'
+import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from '../utils/relatorioInadimplenciaPdf'
 
 const FILTROS_INICIAIS = {
   codCedente: '',
@@ -142,6 +142,7 @@ export default function RelatorioInadimplenciaPage() {
   const [erro, setErro] = useState('')
   const [aviso, setAviso] = useState('')
   const [sel, setSel] = useState(new Set())
+  const [selCed, setSelCed] = useState(new Set()) // cedentes marcados no somatório (filtro = Todos)
   const [sort, setSort] = useState({ key: 'VENCIMENTO', dir: 'asc' })
   const [acoesAberto, setAcoesAberto] = useState(false)
   const [pdfUrl, setPdfUrl] = useState(null)
@@ -179,6 +180,7 @@ export default function RelatorioInadimplenciaPage() {
       setRows(data)
       setAplicado(filtros)
       setSel(new Set(data.map((r) => r.KEY))) // começa com todos selecionados
+      setSelCed(new Set(data.map((r) => r.COD_CEDENTE)))
       setPdfUrl(null)
     } catch (err) {
       setErro(`Erro ao buscar títulos: ${err?.message || err}`)
@@ -222,10 +224,31 @@ export default function RelatorioInadimplenciaPage() {
 
   const nomeCedenteAplicado = nomeDe(cedentes.find((c) => String(c.COD_CEDENTE) === String(aplicado.codCedente)))
 
+  const todosCedSel = porCedente.length > 0 && porCedente.every((g) => selCed.has(g.COD_CEDENTE))
+  const algunsCedSel = !todosCedSel && porCedente.some((g) => selCed.has(g.COD_CEDENTE))
+  const toggleTodosCed = () => setSelCed(todosCedSel ? new Set() : new Set(porCedente.map((g) => g.COD_CEDENTE)))
+  const toggleCed = (c) => setSelCed((prev) => {
+    const n = new Set(prev)
+    n.has(c) ? n.delete(c) : n.add(c)
+    return n
+  })
+  const cedentesSel = porCedente.filter((g) => selCed.has(g.COD_CEDENTE))
+
+  const [tituloPdf, setTituloPdf] = useState('')
+
   const imprimir = () => {
     setAcoesAberto(false)
     if (selecionados.length === 0) { setErro('Selecione ao menos um título para imprimir.'); return }
     const blob = generateRelatorioInadimplenciaPDF(selecionados, aplicado, nomeCedenteAplicado)
+    setTituloPdf(`Impressão: ${selecionados.length} título(s) · ${fmtMoeda(totalSel)}`)
+    setPdfUrl(URL.createObjectURL(blob))
+  }
+
+  const imprimirTotal = () => {
+    setAcoesAberto(false)
+    if (cedentesSel.length === 0) { setErro('Marque ao menos um cedente para imprimir a inadimplência total.'); return }
+    const blob = generateInadimplenciaTotalPDF(cedentesSel, aplicado)
+    setTituloPdf(`Impressão: inadimplência total · ${cedentesSel.length} cedente(s) · ${fmtMoeda(cedentesSel.reduce((s, g) => s + g.total, 0))}`)
     setPdfUrl(URL.createObjectURL(blob))
   }
 
@@ -272,6 +295,28 @@ export default function RelatorioInadimplenciaPage() {
             <button type="submit" disabled={carregando} className="px-4 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50">
               {carregando ? 'Filtrando...' : 'Filtrar'}
             </button>
+            <div ref={acoesRef} className="relative">
+              <button type="button" onClick={() => setAcoesAberto((v) => !v)} className="px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm font-medium rounded hover:bg-[#222] transition flex items-center gap-2">
+                Ações
+                <svg className={`w-3 h-3 transition ${acoesAberto ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {acoesAberto && (
+                <div className="absolute right-0 z-20 mt-1 w-72 bg-[#111111] border border-[#2a2a2a] rounded shadow-lg py-1">
+                  <button type="button" onClick={imprimir} disabled={sel.size === 0} className="w-full text-left px-3 py-2 text-xs text-white hover:bg-[#1a1a1a] disabled:text-[#555] disabled:hover:bg-transparent">
+                    Imprimir títulos selecionados ({sel.size})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={imprimirTotal}
+                    disabled={aplicado.codCedente !== '' || cedentesSel.length === 0}
+                    title={aplicado.codCedente !== '' ? 'Disponível quando o filtro de cedente é Todos' : undefined}
+                    className="w-full text-left px-3 py-2 text-xs text-white hover:bg-[#1a1a1a] disabled:text-[#555] disabled:hover:bg-transparent"
+                  >
+                    Imprimir inadimplência total ({cedentesSel.length} cedente{cedentesSel.length === 1 ? '' : 's'})
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         {erro && <p className="text-xs text-[#ff8080]">{erro}</p>}
@@ -283,12 +328,22 @@ export default function RelatorioInadimplenciaPage() {
         <div className={`${cardCls} p-5 flex flex-col gap-3 flex-shrink-0`}>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-white">Inadimplência por cedente</h2>
-            <span className="text-xs text-[#a3a3a3]">{porCedente.length} cedente(s)</span>
+            <span className="text-xs text-[#a3a3a3]">{porCedente.length} cedente(s) — <span className="text-white">{cedentesSel.length} marcado(s)</span></span>
           </div>
           <div className="max-h-64 overflow-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-[#0a0a0a]">
                 <tr className="text-[#666666] uppercase tracking-wider border-b border-[#1f1f1f]">
+                  <th className="py-2 px-2 w-8">
+                    <input
+                      type="checkbox"
+                      checked={todosCedSel}
+                      ref={(el) => { if (el) el.indeterminate = algunsCedSel }}
+                      onChange={toggleTodosCed}
+                      className="w-4 h-4 accent-white cursor-pointer"
+                      title="Marcar todos os cedentes"
+                    />
+                  </th>
                   <th className="text-left py-2 px-2 font-semibold">Cód.</th>
                   <th className="text-left py-2 px-2 font-semibold">Cedente</th>
                   <th className="text-center py-2 px-2 font-semibold">Títulos</th>
@@ -298,7 +353,10 @@ export default function RelatorioInadimplenciaPage() {
               </thead>
               <tbody>
                 {porCedente.map((g) => (
-                  <tr key={g.COD_CEDENTE} className="border-b border-[#161616] text-[#d4d4d4]">
+                  <tr key={g.COD_CEDENTE} onClick={() => toggleCed(g.COD_CEDENTE)} className={`border-b border-[#161616] cursor-pointer hover:bg-[#111111] ${selCed.has(g.COD_CEDENTE) ? 'text-[#d4d4d4]' : 'text-[#666]'}`}>
+                    <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={selCed.has(g.COD_CEDENTE)} onChange={() => toggleCed(g.COD_CEDENTE)} className="w-4 h-4 accent-white cursor-pointer" />
+                    </td>
                     <td className="py-1.5 px-2">{g.COD_CEDENTE}</td>
                     <td className="py-1.5 px-2">{g.NOME_CEDENTE}</td>
                     <td className="py-1.5 px-2 text-center">{g.qtd}</td>
@@ -309,7 +367,7 @@ export default function RelatorioInadimplenciaPage() {
               </tbody>
               <tfoot>
                 <tr className="text-white font-semibold">
-                  <td className="py-2 px-2" colSpan={2}>Total geral</td>
+                  <td className="py-2 px-2" colSpan={3}>Total geral</td>
                   <td className="py-2 px-2 text-center">{rows.length}</td>
                   <td className="py-2 px-2 text-right">{fmtMoeda(totalGeral)}</td>
                   <td className="py-2 px-2 text-right">{fmtMoeda(corrigidoGeral)}</td>
@@ -326,19 +384,6 @@ export default function RelatorioInadimplenciaPage() {
           <p className="text-xs text-[#a3a3a3]">
             {rows.length} título(s) · {fmtMoeda(totalGeral)} (corrigido {fmtMoeda(corrigidoGeral)}) — <span className="text-white">{sel.size} selecionado(s) · {fmtMoeda(totalSel)} (corrigido {fmtMoeda(corrigidoSel)})</span>
           </p>
-          <div ref={acoesRef} className="relative">
-            <button type="button" onClick={() => setAcoesAberto((v) => !v)} className="px-4 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-xs font-medium rounded hover:bg-[#222] transition flex items-center gap-2">
-              Ações
-              <svg className={`w-3 h-3 transition ${acoesAberto ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-            </button>
-            {acoesAberto && (
-              <div className="absolute right-0 z-20 mt-1 w-56 bg-[#111111] border border-[#2a2a2a] rounded shadow-lg py-1">
-                <button type="button" onClick={imprimir} disabled={sel.size === 0} className="w-full text-left px-3 py-2 text-xs text-white hover:bg-[#1a1a1a] disabled:text-[#555] disabled:hover:bg-transparent">
-                  Imprimir selecionados ({sel.size})
-                </button>
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="overflow-auto flex-1 min-h-0 border border-[#1f1f1f] rounded">
@@ -405,7 +450,7 @@ export default function RelatorioInadimplenciaPage() {
       {pdfUrl && (
         <div className="flex flex-col gap-2 flex-shrink-0">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-[#a3a3a3]">Impressão: {selecionados.length} título(s) · {fmtMoeda(totalSel)}</p>
+            <p className="text-xs text-[#a3a3a3]">{tituloPdf}</p>
             <div className="flex items-center gap-2">
               <button onClick={() => setPdfUrl(null)} className="px-3 py-1.5 text-xs text-[#a3a3a3] hover:text-white transition">Fechar</button>
               <button onClick={baixar} className="px-4 py-1.5 bg-white text-black text-xs font-medium rounded hover:opacity-90 transition">Baixar PDF</button>

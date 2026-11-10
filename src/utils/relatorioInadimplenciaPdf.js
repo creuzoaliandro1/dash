@@ -167,3 +167,85 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
 
   return doc.output('blob')
 }
+
+/**
+ * PDF (A4 retrato) da inadimplência total por cedente — mesmo padrão do relatório
+ * de títulos, mas cada linha é um cedente com o total inadimplente dele.
+ * @param {Array} grupos linhas de totaisPorCedente() (só os cedentes marcados)
+ * @returns {Blob}
+ */
+export function generateInadimplenciaTotalPDF(grupos, filtros) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const mL = 10
+  const mR = pageW - 10
+  const contentW = mR - mL
+
+  const CEDENTE = 1 // coluna que absorve a largura restante
+  const cols = [
+    { h: 'CÓD.', w: 14, align: 'center' },
+    { h: 'CEDENTE', w: 0, align: 'left' },
+    { h: 'QTD TÍTULOS', w: 20, align: 'center' },
+    { h: 'VALOR', w: 28, align: 'right' },
+    { h: 'CORRIGIDO', w: 28, align: 'right' },
+  ]
+  cols[CEDENTE].w = contentW - cols.reduce((s, c) => s + c.w, 0)
+
+  const qtd = grupos.reduce((s, g) => s + g.qtd, 0)
+  const total = grupos.reduce((s, g) => s + g.total, 0)
+  const totalCorrigido = grupos.reduce((s, g) => s + g.corrigido, 0)
+  const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [215, 215, 215] }
+  const body = grupos.map((g) => [
+    String(g.COD_CEDENTE),
+    cut(g.NOME_CEDENTE || '—', 70),
+    String(g.qtd),
+    fmtMoeda(g.total),
+    fmtMoeda(g.corrigido),
+  ])
+  body.push([
+    { content: `TOTAL (${grupos.length} cedente${grupos.length === 1 ? '' : 's'})`, colSpan: 2, styles: totStyle },
+    { content: String(qtd), styles: { ...totStyle, halign: 'center' } },
+    { content: fmtMoeda(total), styles: totStyle },
+    { content: fmtMoeda(totalCorrigido), styles: totStyle },
+  ])
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.text('RELATÓRIO DE INADIMPLÊNCIA TOTAL', mL, 14)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(FS)
+  const agora = new Date()
+  doc.text(`Emitido em ${agora.toLocaleDateString('pt-BR')} ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`, mR, 14, { align: 'right' })
+  const filtrosTxt = doc.splitTextToSize(descreverFiltros(filtros, ''), contentW)
+  doc.text(filtrosTxt, mL, 19)
+  const y = 19 + filtrosTxt.length * 3 - 1
+
+  doc.autoTable({
+    theme: 'plain',
+    margin: { left: mL, right: pageW - mR, top: 12, bottom: 12 },
+    styles: { font: 'helvetica', fontSize: FS, cellPadding: { top: 0.7, bottom: 0.7, left: 1, right: 1 }, textColor: 20, overflow: 'ellipsize' },
+    headStyles: { fontStyle: 'bold', halign: 'center', fillColor: [255, 255, 255], lineWidth: { bottom: 0.3 }, lineColor: [40, 40, 40] },
+    showHead: 'everyPage',
+    startY: y,
+    head: [cols.map((c) => c.h)],
+    body,
+    columnStyles: cols.reduce((acc, c, i) => { acc[i] = { cellWidth: c.w, halign: c.align }; return acc }, {}),
+    didParseCell: (d) => {
+      if (d.section === 'head') d.cell.styles.halign = cols[d.column.index].align === 'left' ? 'left' : 'center'
+    },
+  })
+
+  const nPag = doc.internal.getNumberOfPages()
+  for (let p = 1; p <= nPag; p++) {
+    doc.setPage(p)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(FS)
+    doc.setTextColor(110)
+    doc.text('Capt — Relatório de Inadimplência Total', mL, pageH - 6)
+    doc.text(`Página ${p} de ${nPag}`, mR, pageH - 6, { align: 'right' })
+    doc.setTextColor(0)
+  }
+
+  return doc.output('blob')
+}
