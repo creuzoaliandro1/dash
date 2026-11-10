@@ -19,6 +19,7 @@ import SincronizarPage from './pages/SincronizarPage'
 import WhatsAppPage from './pages/WhatsAppPage'
 import RelatorioBorderosPage from './pages/RelatorioBorderosPage'
 import RelatorioInadimplenciaPage from './pages/RelatorioInadimplenciaPage'
+import RelatorioContaCorrentePage from './pages/RelatorioContaCorrentePage'
 import MainLayout from './components/Layout/MainLayout'
 
 export default function App() {
@@ -94,6 +95,7 @@ export default function App() {
       {currentPage === 'whatsapp' && isMaster && <WhatsAppPage />}
       {currentPage === 'relatorio-borderos' && isMaster && <RelatorioBorderosPage />}
       {currentPage === 'relatorio-inadimplencia' && isMaster && <RelatorioInadimplenciaPage />}
+      {currentPage === 'relatorio-conta-corrente' && isMaster && <RelatorioContaCorrentePage />}
       {currentPage === 'relatorios' && <div className="text-white">Relatórios</div>}
       {currentPage === 'settings' && <div className="text-white">Configurações</div>}
     </MainLayout>

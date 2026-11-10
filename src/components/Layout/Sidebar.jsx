@@ -323,6 +323,16 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
                 >
                   Inadimplência
                 </button>
+                <button
+                  onClick={() => setCurrentPage('relatorio-conta-corrente')}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm font-medium rounded transition ${
+                    currentPage === 'relatorio-conta-corrente'
+                      ? 'bg-[#1a1a1a] text-white'
+                      : 'text-[#a3a3a3] hover:bg-[#111111] hover:text-white'
+                  }`}
+                >
+                  Conta Corrente
+                </button>
               </div>
             )}
           </div>
