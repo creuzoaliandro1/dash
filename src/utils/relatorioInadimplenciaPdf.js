@@ -101,11 +101,7 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   doc.text(`Emitido em ${agora.toLocaleDateString('pt-BR')} ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`, mR, 14, { align: 'right' })
   const filtrosTxt = doc.splitTextToSize(descreverFiltros(filtros, nomeCedente), contentW)
   doc.text(filtrosTxt, mL, 19)
-  let y = 19 + filtrosTxt.length * 3
-  doc.text('* vencimento prorrogado (DT_VENCI_NOVO)   ·   Dias = dias de atraso até hoje', mL, y)
-  y += 3
-  doc.text('Corrigido = saldo × (1 + taxa)^(dias/30); taxa % a.m. de OPEITE.TAXA_OCORRE ou, se vazia, CEDENTE.TAXA_OCORRENCIA', mL, y)
-  y += 2
+  const y = 19 + filtrosTxt.length * 3 - 1
 
   const tableStyles = {
     theme: 'plain',
