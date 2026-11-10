@@ -156,17 +156,6 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
     })
   }
 
-  const nPag = doc.internal.getNumberOfPages()
-  for (let p = 1; p <= nPag; p++) {
-    doc.setPage(p)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(FS)
-    doc.setTextColor(110)
-    doc.text('Capt — Relatório de Inadimplência', mL, pageH - 6)
-    doc.text(`Página ${p} de ${nPag}`, mR, pageH - 6, { align: 'right' })
-    doc.setTextColor(0)
-  }
-
   return doc.output('blob')
 }
 
@@ -179,7 +168,6 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
 export function generateInadimplenciaTotalPDF(grupos, filtros) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
-  const pageH = doc.internal.pageSize.getHeight()
   const mL = 10
   const mR = pageW - 10
   const contentW = mR - mL
@@ -237,17 +225,6 @@ export function generateInadimplenciaTotalPDF(grupos, filtros) {
       if (d.section === 'head') d.cell.styles.halign = cols[d.column.index].align === 'left' ? 'left' : 'center'
     },
   })
-
-  const nPag = doc.internal.getNumberOfPages()
-  for (let p = 1; p <= nPag; p++) {
-    doc.setPage(p)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(FS)
-    doc.setTextColor(110)
-    doc.text('Capt — Relatório de Inadimplência Total', mL, pageH - 6)
-    doc.text(`Página ${p} de ${nPag}`, mR, pageH - 6, { align: 'right' })
-    doc.setTextColor(0)
-  }
 
   return doc.output('blob')
 }
