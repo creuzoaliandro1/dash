@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
-import { getTitulosInadimplentes, getStatusPorCedente, statusSelecionados, nomeRelatorio, totaisPorCedente, corrigidoOuValor, agruparTitulos, AGRUPAMENTOS, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
+import { getTitulosInadimplentes, getStatusPorCedente, statusSelecionados, nomeRelatorio, totaisPorCedente, corrigidoOuValor, agruparTitulos, getBorderosCedente, AGRUPAMENTOS, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
 import CedenteCombo from '../components/Relatorios/CedenteCombo'
 import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from '../utils/relatorioInadimplenciaPdf'
 
@@ -60,6 +60,60 @@ function Intervalo({ label, tipo, de, ate, onDe, onAte, step }) {
   )
 }
 
+// Combobox dos borderôs do cedente (mais recente primeiro): nº, data, valor e qtd de títulos.
+function BorderoCombo({ borderos, carregando, value, onChange }) {
+  const [aberto, setAberto] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    const fora = (e) => { if (ref.current && !ref.current.contains(e.target)) setAberto(false) }
+    document.addEventListener('mousedown', fora)
+    return () => document.removeEventListener('mousedown', fora)
+  }, [])
+  const atual = borderos.find((b) => String(b.COD_BORDERO) === String(value))
+  const descricao = (b) => `Nº ${b.COD_BORDERO} · ${fmtData(b.DT_RECEPCAO)} · ${fmtMoeda(b.total)} · ${b.qtd} título${b.qtd === 1 ? '' : 's'}`
+  const escolher = (v) => { onChange(v); setAberto(false) }
+  const texto = carregando ? 'Carregando borderôs...' : value === '' ? `Todos (${borderos.length} borderô${borderos.length === 1 ? '' : 's'})` : atual ? descricao(atual) : `Nº ${value}`
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setAberto((v) => !v)} className={`${inputCls} text-left flex items-center justify-between gap-2`}>
+        <span className="truncate">{texto}</span>
+        <svg className={`w-3 h-3 flex-shrink-0 transition ${aberto ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {aberto && (
+        <div className="absolute z-20 mt-1 w-full min-w-[22rem] max-h-72 overflow-auto bg-[#111111] border border-[#2a2a2a] rounded shadow-lg">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-[#111111] text-[#666666] uppercase tracking-wider">
+              <tr>
+                <th className="text-left py-1.5 px-3 font-semibold">Nº</th>
+                <th className="text-center py-1.5 px-2 font-semibold">Data</th>
+                <th className="text-right py-1.5 px-2 font-semibold">Valor total</th>
+                <th className="text-center py-1.5 px-3 font-semibold">Títulos</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr onClick={() => escolher('')} className={`cursor-pointer hover:bg-[#1a1a1a] ${value === '' ? 'text-white font-semibold' : 'text-[#a3a3a3]'}`}>
+                <td colSpan={4} className="py-1.5 px-3">Todos</td>
+              </tr>
+              {borderos.map((b) => (
+                <tr key={b.COD_BORDERO} onClick={() => escolher(String(b.COD_BORDERO))} className={`cursor-pointer hover:bg-[#1a1a1a] ${String(b.COD_BORDERO) === String(value) ? 'text-white font-semibold' : 'text-[#d4d4d4]'}`}>
+                  <td className="py-1.5 px-3">{b.COD_BORDERO}</td>
+                  <td className="py-1.5 px-2 text-center">{fmtData(b.DT_RECEPCAO)}</td>
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(b.total)}</td>
+                  <td className="py-1.5 px-3 text-center">{b.qtd}</td>
+                </tr>
+              ))}
+              {!carregando && borderos.length === 0 && (
+                <tr><td colSpan={4} className="py-1.5 px-3 text-[#666666]">Nenhum borderô para este cedente</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function RelatorioInadimplenciaPage() {
   const [f, setF] = useState(FILTROS_INICIAIS)
   const [aplicado, setAplicado] = useState(FILTROS_INICIAIS) // filtros da última busca
@@ -73,6 +127,18 @@ export default function RelatorioInadimplenciaPage() {
   const [selCed, setSelCed] = useState(new Set()) // cedentes marcados no somatório (filtro = Todos)
   const [sort, setSort] = useState({ key: 'VENCIMENTO', dir: 'asc' })
   const [agrupamento, setAgrupamento] = useState('nenhum') // nenhum | cedente | sacado
+  const [borderos, setBorderos] = useState([]) // borderôs do cedente escolhido
+  const [carregandoBorderos, setCarregandoBorderos] = useState(false)
+
+  useEffect(() => {
+    if (f.codCedente === '') { setBorderos([]); return }
+    let ativo = true
+    setCarregandoBorderos(true)
+    getBorderosCedente(f.codCedente).then(({ data }) => {
+      if (ativo) { setBorderos(data || []); setCarregandoBorderos(false) }
+    })
+    return () => { ativo = false }
+  }, [f.codCedente])
   const [acoesAberto, setAcoesAberto] = useState(false)
   const [pdfUrl, setPdfUrl] = useState(null)
   const acoesRef = useRef(null)
@@ -216,18 +282,21 @@ export default function RelatorioInadimplenciaPage() {
 
       {/* Filtros */}
       <form onSubmit={filtrar} className={`${cardCls} p-5 flex flex-col gap-4 flex-shrink-0`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Cedente</span>
-            <CedenteCombo cedentes={cedentes} value={f.codCedente} onChange={set('codCedente')} />
+            <CedenteCombo
+              cedentes={cedentes}
+              value={f.codCedente}
+              onChange={(v) => setF((prev) => (String(prev.codCedente) === String(v) ? prev : { ...prev, codCedente: v, codBordero: '' }))}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Borderô</span>
-            <input type="number" min="1" step="1" value={f.codBordero} onChange={(e) => set('codBordero')(e.target.value)} className={inputCls} placeholder="Nº do borderô (COD_BORDERO)" />
+            {f.codCedente !== ''
+              ? <BorderoCombo borderos={borderos} carregando={carregandoBorderos} value={f.codBordero} onChange={set('codBordero')} />
+              : <input type="number" min="1" step="1" value={f.codBordero} onChange={(e) => set('codBordero')(e.target.value)} className={inputCls} placeholder="Nº do borderô (COD_BORDERO)" />}
           </div>
-          <Intervalo label="Vencimento" tipo="date" de={f.dtVenciIni} ate={f.dtVenciFim} onDe={set('dtVenciIni')} onAte={set('dtVenciFim')} />
-          <Intervalo label="Valor" tipo="number" step="0.01" de={f.vrFaceMin} ate={f.vrFaceMax} onDe={set('vrFaceMin')} onAte={set('vrFaceMax')} />
-          <Intervalo label="Emissão" tipo="date" de={f.dtEmissaoIni} ate={f.dtEmissaoFim} onDe={set('dtEmissaoIni')} onAte={set('dtEmissaoFim')} />
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Agrupamento</span>
             <div className="flex flex-col gap-1">
@@ -239,6 +308,11 @@ export default function RelatorioInadimplenciaPage() {
               ))}
             </div>
           </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Intervalo label="Vencimento" tipo="date" de={f.dtVenciIni} ate={f.dtVenciFim} onDe={set('dtVenciIni')} onAte={set('dtVenciFim')} />
+          <Intervalo label="Valor" tipo="number" step="0.01" de={f.vrFaceMin} ate={f.vrFaceMax} onDe={set('vrFaceMin')} onAte={set('vrFaceMax')} />
+          <Intervalo label="Emissão" tipo="date" de={f.dtEmissaoIni} ate={f.dtEmissaoFim} onDe={set('dtEmissaoIni')} onAte={set('dtEmissaoFim')} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">

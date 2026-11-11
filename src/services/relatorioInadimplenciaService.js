@@ -248,6 +248,50 @@ export async function getTitulosInadimplentes(f) {
   }
 }
 
+/**
+ * Borderôs de um cedente (OPECABWEB), do mais recente para o mais antigo,
+ * com valor total e quantidade de títulos (somados de OPEITEWEB).
+ * Retorna [{ COD_BORDERO, DT_RECEPCAO, COD_OPERACAO, qtd, total }].
+ */
+export async function getBorderosCedente(codCedente) {
+  try {
+    const { data: cabs, error } = await supabase
+      .from('OPECABWEB')
+      .select('COD_BORDERO, DT_RECEPCAO, HR_RECEPCAO, COD_OPERACAO')
+      .eq('COD_CEDENTE', Number(codCedente))
+      .order('DT_RECEPCAO', { ascending: false })
+      .order('COD_BORDERO', { ascending: false })
+    if (error) throw error
+    const tot = new Map()
+    const cods = (cabs || []).map((c) => c.COD_BORDERO)
+    for (const c of chunks(cods, CHUNK)) {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error: e2 } = await supabase
+          .from('OPEITEWEB')
+          .select('COD_BORDERO, COD_TITULO, VR_FACE')
+          .eq('COD_CEDENTE', Number(codCedente))
+          .in('COD_BORDERO', c)
+          .order('COD_BORDERO', { ascending: true })
+          .order('COD_TITULO', { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (e2) throw e2
+        for (const i of data || []) {
+          const t = tot.get(i.COD_BORDERO) || { qtd: 0, total: 0 }
+          t.qtd += 1
+          t.total += parseFloat(i.VR_FACE) || 0
+          tot.set(i.COD_BORDERO, t)
+        }
+        if (!data || data.length < PAGE) break
+      }
+    }
+    const rows = (cabs || []).map((c) => ({ ...c, ...(tot.get(c.COD_BORDERO) || { qtd: 0, total: 0 }) }))
+    return { data: rows, error: null }
+  } catch (error) {
+    console.error('[relatorioInadimplencia] borderôs:', error)
+    return { data: [], error }
+  }
+}
+
 // Status presentes por cedente (IN, DO, PR) — usado para montar o combobox.
 // Retorna Map(COD_CEDENTE -> Set(STATUS)).
 export async function getStatusPorCedente() {

@@ -107,7 +107,10 @@ Observação: com filtro de vencimento, títulos **sem** vencimento ficam de for
 
 Borderô: OPEITE não tem `COD_BORDERO`. O filtro passa por `OPECABWEB`
 (`COD_CEDENTE`, `COD_BORDERO` → `COD_OPERACAO`); só entram títulos de borderôs
-enviados pela web que já viraram operação.
+enviados pela web que já viraram operação. Com um cedente escolhido, a tela troca o
+campo por uma lista dos borderôs dele (`OPECABWEB` por `DT_RECEPCAO` desc, depois
+`COD_BORDERO` desc), mostrando nº, data de recepção, valor total e quantidade de
+títulos (soma/contagem de `OPEITEWEB` do borderô). Sem cedente, o nº é digitado.
 
 ### 2.3 Campos calculados por título
 
