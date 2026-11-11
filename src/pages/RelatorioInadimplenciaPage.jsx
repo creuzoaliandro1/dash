@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { getCedentesRelatorio } from '../services/relatorioBorderosService'
-import { getTitulosInadimplentes, getStatusPorCedente, statusSelecionados, nomeRelatorio, totaisPorCedente, corrigidoOuValor, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
+import { getTitulosInadimplentes, getStatusPorCedente, statusSelecionados, nomeRelatorio, totaisPorCedente, corrigidoOuValor, agruparTitulos, AGRUPAMENTOS, TIPOS_INADIMPLENCIA } from '../services/relatorioInadimplenciaService'
 import CedenteCombo from '../components/Relatorios/CedenteCombo'
 import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from '../utils/relatorioInadimplenciaPdf'
 
@@ -72,6 +72,7 @@ export default function RelatorioInadimplenciaPage() {
   const [sel, setSel] = useState(new Set())
   const [selCed, setSelCed] = useState(new Set()) // cedentes marcados no somatório (filtro = Todos)
   const [sort, setSort] = useState({ key: 'VENCIMENTO', dir: 'asc' })
+  const [agrupamento, setAgrupamento] = useState('nenhum') // nenhum | cedente | sacado
   const [acoesAberto, setAcoesAberto] = useState(false)
   const [pdfUrl, setPdfUrl] = useState(null)
   const acoesRef = useRef(null)
@@ -154,7 +155,13 @@ export default function RelatorioInadimplenciaPage() {
     return n
   })
 
-  const selecionados = ordenados.filter((r) => sel.has(r.KEY))
+  const grupos = useMemo(() => agruparTitulos(ordenados, agrupamento), [ordenados, agrupamento])
+  const agrupado = agrupamento !== 'nenhum'
+  // Ordem de impressão = ordem da tela (agrupada, se for o caso)
+  const selecionados = grupos.flatMap((g) => g.rows).filter((r) => sel.has(r.KEY))
+  const rotuloGrupo = (g) => (agrupamento === 'cedente'
+    ? `Cedente ${g.cod} - ${g.nome || '—'}`
+    : `Sacado: ${g.nome || '(sem sacado)'}${g.cic ? ` · ${fmtCic(g.cic)}` : ''}`)
   const totalSel = selecionados.reduce((s, r) => s + r.VR_FACE, 0)
   const totalGeral = rows.reduce((s, r) => s + r.VR_FACE, 0)
   const corrigidoSel = selecionados.reduce((s, r) => s + corrigidoOuValor(r), 0)
@@ -179,7 +186,7 @@ export default function RelatorioInadimplenciaPage() {
   const imprimir = () => {
     setAcoesAberto(false)
     if (selecionados.length === 0) { setErro('Selecione ao menos um título para imprimir.'); return }
-    const blob = generateRelatorioInadimplenciaPDF(selecionados, aplicado, nomeCedenteAplicado)
+    const blob = generateRelatorioInadimplenciaPDF(selecionados, aplicado, nomeCedenteAplicado, agrupamento)
     setTituloPdf(`Impressão: ${selecionados.length} título(s) · ${fmtMoeda(totalSel)}`)
     setPdfUrl(URL.createObjectURL(blob))
   }
@@ -221,6 +228,17 @@ export default function RelatorioInadimplenciaPage() {
           <Intervalo label="Vencimento" tipo="date" de={f.dtVenciIni} ate={f.dtVenciFim} onDe={set('dtVenciIni')} onAte={set('dtVenciFim')} />
           <Intervalo label="Valor" tipo="number" step="0.01" de={f.vrFaceMin} ate={f.vrFaceMax} onDe={set('vrFaceMin')} onAte={set('vrFaceMax')} />
           <Intervalo label="Emissão" tipo="date" de={f.dtEmissaoIni} ate={f.dtEmissaoFim} onDe={set('dtEmissaoIni')} onAte={set('dtEmissaoFim')} />
+          <div className="flex flex-col gap-1.5">
+            <span className={labelCls}>Agrupamento</span>
+            <div className="flex flex-col gap-1">
+              {AGRUPAMENTOS.map((a) => (
+                <label key={a.value} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+                  <input type="radio" name="agrupamento" value={a.value} checked={agrupamento === a.value} onChange={() => setAgrupamento(a.value)} className="w-4 h-4 accent-white cursor-pointer" />
+                  {a.label}
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -362,7 +380,14 @@ export default function RelatorioInadimplenciaPage() {
               </tr>
             </thead>
             <tbody>
-              {ordenados.map((r) => (
+              {grupos.map((g) => (
+                <Fragment key={g.chave}>
+                {agrupado && (
+                  <tr className="bg-[#141414] border-b border-[#1f1f1f]">
+                    <td colSpan={COLUNAS.length + 1} className="py-2 px-2 text-white font-semibold">{rotuloGrupo(g)}</td>
+                  </tr>
+                )}
+                {g.rows.map((r) => (
                 <tr key={r.KEY} onClick={() => toggleUm(r.KEY)} className={`border-b border-[#161616] cursor-pointer ${sel.has(r.KEY) ? 'text-[#e5e5e5]' : 'text-[#666]'} hover:bg-[#111111]`}>
                   <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(r.KEY)} onChange={() => toggleUm(r.KEY)} className="w-4 h-4 accent-white cursor-pointer" />
@@ -386,6 +411,15 @@ export default function RelatorioInadimplenciaPage() {
                     {r.VR_CORRIGIDO == null ? '—' : fmtMoeda(r.VR_CORRIGIDO)}
                   </td>
                 </tr>
+                ))}
+                {agrupado && (
+                  <tr className="border-b border-[#2a2a2a] text-white font-semibold">
+                    <td colSpan={COLUNAS.length - 1} className="py-1.5 px-2 text-right">Subtotal ({g.qtd} título{g.qtd === 1 ? '' : 's'})</td>
+                    <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(g.total)}</td>
+                    <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(g.corrigido)}</td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
               {!carregando && rows.length === 0 && (
                 <tr><td colSpan={COLUNAS.length + 1} className="py-8 text-center text-[#666666]">Nenhum título inadimplente com esses filtros.</td></tr>

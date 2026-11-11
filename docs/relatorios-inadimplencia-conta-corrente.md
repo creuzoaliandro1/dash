@@ -181,8 +181,18 @@ WHERE STATUS IN (:status) AND TIPO_TITULO IN ('DUP','CHE','PRO')
 ### 2.6 Saídas (PDF, A4 retrato)
 
 **Relatório de títulos** — cabeçalho: título, "Emitido em dd/mm/aaaa hh:mm" e linha
-de filtros (`Cedente: … · Borderô: … (se filtrado) · Vencimento: … · Valor: … · Emissão: … · Tipos: … · Status: …`).
+de filtros (`Cedente: … · Borderô: … (se filtrado) · Vencimento: … · Valor: … · Emissão: … · Tipos: … · Status: …`, mais `Agrupado por cedente/sacado` quando houver).
 Sem rodapé.
+
+**Agrupamento** (rádio na tela: Sem agrupar · Por Cedente · Por Sacado; vale para a
+tabela da tela e para este PDF, sem nova busca):
+- Por Cedente: grupos por `COD_CEDENTE`; Por Sacado: grupos por `COD_SACADO`.
+- Grupos em ordem alfabética do nome (cedente: razão social/fantasia; sacado:
+  `NOME_CORRENTISTA`); dentro do grupo, a ordem da tela.
+- Cada grupo tem uma linha de cabeçalho (código/nome do cedente, ou nome + CPF/CNPJ do
+  sacado) e uma linha `SUBTOTAL (n títulos)` com Valor e Corrigido; no fim, o TOTAL geral.
+- Agrupado por cedente, o "Somatório por cedente" do fim do PDF é omitido (repetiria
+  os subtotais).
 
 | Coluna | Origem |
 |---|---|

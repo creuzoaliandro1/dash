@@ -276,6 +276,39 @@ export async function getStatusPorCedente() {
 // Para totais: sem taxa definida, o título entra pelo valor de face.
 export const corrigidoOuValor = (r) => (r.VR_CORRIGIDO ?? r.VR_FACE)
 
+export const AGRUPAMENTOS = [
+  { value: 'nenhum', label: 'Sem agrupar' },
+  { value: 'cedente', label: 'Por Cedente' },
+  { value: 'sacado', label: 'Por Sacado' },
+]
+
+/**
+ * Agrupa os títulos (na ordem recebida) por cedente ou sacado.
+ * Grupos em ordem alfabética do nome; dentro do grupo, mantém a ordem recebida.
+ * Retorna [{ chave, cod, nome, cic, rows, qtd, total, corrigido }]; 'nenhum' → um grupo só.
+ */
+export function agruparTitulos(rows, modo) {
+  if (modo !== 'cedente' && modo !== 'sacado') {
+    return [{ chave: 'todos', cod: null, nome: '', cic: '', rows, qtd: rows.length, total: rows.reduce((s, r) => s + r.VR_FACE, 0), corrigido: rows.reduce((s, r) => s + corrigidoOuValor(r), 0) }]
+  }
+  const m = new Map()
+  for (const r of rows) {
+    const chave = modo === 'cedente' ? `c${r.COD_CEDENTE}` : `s${r.COD_SACADO ?? ''}`
+    if (!m.has(chave)) {
+      const g = modo === 'cedente'
+        ? { cod: r.COD_CEDENTE, nome: r.NOME_CEDENTE || '', cic: '' }
+        : { cod: r.COD_SACADO, nome: r.NOME_SACADO || '', cic: r.CIC_SACADO || '' }
+      m.set(chave, { chave, ...g, rows: [], qtd: 0, total: 0, corrigido: 0 })
+    }
+    const g = m.get(chave)
+    g.rows.push(r)
+    g.qtd += 1
+    g.total += r.VR_FACE
+    g.corrigido += corrigidoOuValor(r)
+  }
+  return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR') || a.chave.localeCompare(b.chave))
+}
+
 // Somatório por cedente (usado quando o filtro de cedente é "Todos").
 export function totaisPorCedente(rows) {
   const m = new Map()

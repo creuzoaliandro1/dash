@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import 'jspdf-autotable'
-import { totaisPorCedente, corrigidoOuValor, nomeRelatorio, statusSelecionados } from '../services/relatorioInadimplenciaService'
+import { totaisPorCedente, corrigidoOuValor, nomeRelatorio, statusSelecionados, agruparTitulos } from '../services/relatorioInadimplenciaService'
 
 const FS = 6.5
 
@@ -44,10 +44,11 @@ function descreverFiltros(f, nomeCedente) {
 
 /**
  * PDF (A4 retrato) com os títulos inadimplentes selecionados, na ordem da tela.
- * Com cedente "Todos", inclui ao final o somatório por cedente.
+ * agrupamento 'cedente' | 'sacado': cabeçalho e subtotal por grupo.
+ * Com cedente "Todos" (e sem agrupar por cedente), inclui ao final o somatório por cedente.
  * @returns {Blob}
  */
-export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
+export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente, agrupamento = 'nenhum') {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
@@ -73,7 +74,7 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   cols[SACADO].w = contentW - cols.reduce((s, c) => s + c.w, 0)
   const nCols = cols.length
 
-  const body = rows.map((t) => [
+  const linha = (t) => [
     String(t.COD_CEDENTE ?? ''),
     String(t.COD_OPERACAO ?? ''),
     String(t.NUM_LANCAMENTO ?? ''),
@@ -86,10 +87,31 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
     String(t.DIAS_ATRASO ?? ''),
     fmtMoeda(t.VR_FACE),
     t.VR_CORRIGIDO == null ? '—' : fmtMoeda(t.VR_CORRIGIDO),
-  ])
+  ]
   const total = rows.reduce((s, t) => s + t.VR_FACE, 0)
   const totalCorrigido = rows.reduce((s, t) => s + corrigidoOuValor(t), 0)
   const totStyle = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255], lineWidth: { top: 0.3 }, lineColor: [0, 0, 0] }
+
+  const agrupado = agrupamento === 'cedente' || agrupamento === 'sacado'
+  const body = []
+  if (!agrupado) {
+    rows.forEach((t) => body.push(linha(t)))
+  } else {
+    const grpStyle = { fontStyle: 'bold', halign: 'left', fillColor: [235, 235, 235] }
+    const subStyle = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255], lineWidth: { top: 0.1 }, lineColor: [120, 120, 120] }
+    for (const g of agruparTitulos(rows, agrupamento)) {
+      const rotulo = agrupamento === 'cedente'
+        ? `CEDENTE ${g.cod} - ${cut(g.nome || '—', 70)}`
+        : `SACADO: ${cut(g.nome || '(sem sacado)', 70)}${g.cic ? `   ${fmtCnpjCpf(g.cic)}` : ''}`
+      body.push([{ content: rotulo, colSpan: nCols, styles: grpStyle }])
+      g.rows.forEach((t) => body.push(linha(t)))
+      body.push([
+        { content: `SUBTOTAL (${g.qtd} título${g.qtd === 1 ? '' : 's'})`, colSpan: nCols - 2, styles: subStyle },
+        { content: fmtMoeda(g.total), styles: subStyle },
+        { content: fmtMoeda(g.corrigido), styles: subStyle },
+      ])
+    }
+  }
   body.push([
     { content: `TOTAL (${rows.length} título${rows.length === 1 ? '' : 's'})`, colSpan: nCols - 2, styles: totStyle },
     { content: fmtMoeda(total), styles: totStyle },
@@ -103,7 +125,8 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
   doc.setFontSize(FS)
   const agora = new Date()
   doc.text(`Emitido em ${agora.toLocaleDateString('pt-BR')} ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`, mR, 14, { align: 'right' })
-  const filtrosTxt = doc.splitTextToSize(descreverFiltros(filtros, nomeCedente), contentW)
+  const descAgrup = agrupamento === 'cedente' ? '   ·   Agrupado por cedente' : agrupamento === 'sacado' ? '   ·   Agrupado por sacado' : ''
+  const filtrosTxt = doc.splitTextToSize(descreverFiltros(filtros, nomeCedente) + descAgrup, contentW)
   doc.text(filtrosTxt, mL, 19)
   const y = 19 + filtrosTxt.length * 3 - 1
 
@@ -126,8 +149,8 @@ export function generateRelatorioInadimplenciaPDF(rows, filtros, nomeCedente) {
     },
   })
 
-  // Somatório por cedente quando o filtro é "Todos"
-  if (!filtros.codCedente) {
+  // Somatório por cedente quando o filtro é "Todos" (dispensado se já agrupado por cedente)
+  if (!filtros.codCedente && agrupamento !== 'cedente') {
     const grupos = totaisPorCedente(rows)
     let sy = doc.lastAutoTable.finalY + 8
     if (sy > pageH - 30) { doc.addPage(); sy = 16 }
