@@ -6,7 +6,7 @@ import { generateRelatorioInadimplenciaPDF, generateInadimplenciaTotalPDF } from
 
 const FILTROS_INICIAIS = {
   codCedente: '',
-  codBordero: '',
+  codOperacao: '',
   dtVenciIni: '', dtVenciFim: '',
   vrFaceMin: '', vrFaceMax: '',
   dtEmissaoIni: '', dtEmissaoFim: '',
@@ -69,8 +69,8 @@ function BorderoCombo({ borderos, carregando, value, onChange }) {
     document.addEventListener('mousedown', fora)
     return () => document.removeEventListener('mousedown', fora)
   }, [])
-  const atual = borderos.find((b) => String(b.COD_BORDERO) === String(value))
-  const descricao = (b) => `Nº ${b.COD_BORDERO} · ${fmtData(b.DT_RECEPCAO)} · ${fmtMoeda(b.total)} · ${b.qtd} título${b.qtd === 1 ? '' : 's'}`
+  const atual = borderos.find((b) => String(b.COD_OPERACAO) === String(value))
+  const descricao = (b) => `Nº ${b.COD_OPERACAO} · ${fmtData(b.DATA)} · ${fmtMoeda(b.VR_FACE)} · ${b.QTD_TITULOS} título${b.QTD_TITULOS === 1 ? '' : 's'}`
   const escolher = (v) => { onChange(v); setAberto(false) }
   const texto = carregando ? 'Carregando borderôs...' : value === '' ? `Todos (${borderos.length} borderô${borderos.length === 1 ? '' : 's'})` : atual ? descricao(atual) : `Nº ${value}`
 
@@ -96,11 +96,11 @@ function BorderoCombo({ borderos, carregando, value, onChange }) {
                 <td colSpan={4} className="py-1.5 px-3">Todos</td>
               </tr>
               {borderos.map((b) => (
-                <tr key={b.COD_BORDERO} onClick={() => escolher(String(b.COD_BORDERO))} className={`cursor-pointer hover:bg-[#1a1a1a] ${String(b.COD_BORDERO) === String(value) ? 'text-white font-semibold' : 'text-[#d4d4d4]'}`}>
-                  <td className="py-1.5 px-3">{b.COD_BORDERO}</td>
-                  <td className="py-1.5 px-2 text-center">{fmtData(b.DT_RECEPCAO)}</td>
-                  <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(b.total)}</td>
-                  <td className="py-1.5 px-3 text-center">{b.qtd}</td>
+                <tr key={b.COD_OPERACAO} onClick={() => escolher(String(b.COD_OPERACAO))} className={`cursor-pointer hover:bg-[#1a1a1a] ${String(b.COD_OPERACAO) === String(value) ? 'text-white font-semibold' : 'text-[#d4d4d4]'}`}>
+                  <td className="py-1.5 px-3">{b.COD_OPERACAO}</td>
+                  <td className="py-1.5 px-2 text-center">{fmtData(b.DATA)}</td>
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoeda(b.VR_FACE)}</td>
+                  <td className="py-1.5 px-3 text-center">{b.QTD_TITULOS}</td>
                 </tr>
               ))}
               {!carregando && borderos.length === 0 && (
@@ -288,14 +288,14 @@ export default function RelatorioInadimplenciaPage() {
             <CedenteCombo
               cedentes={cedentes}
               value={f.codCedente}
-              onChange={(v) => setF((prev) => (String(prev.codCedente) === String(v) ? prev : { ...prev, codCedente: v, codBordero: '' }))}
+              onChange={(v) => setF((prev) => (String(prev.codCedente) === String(v) ? prev : { ...prev, codCedente: v, codOperacao: '' }))}
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Borderô</span>
             {f.codCedente !== ''
-              ? <BorderoCombo borderos={borderos} carregando={carregandoBorderos} value={f.codBordero} onChange={set('codBordero')} />
-              : <input type="number" min="1" step="1" value={f.codBordero} onChange={(e) => set('codBordero')(e.target.value)} className={inputCls} placeholder="Nº do borderô (COD_BORDERO)" />}
+              ? <BorderoCombo borderos={borderos} carregando={carregandoBorderos} value={f.codOperacao} onChange={set('codOperacao')} />
+              : <input type="number" min="1" step="1" value={f.codOperacao} onChange={(e) => set('codOperacao')(e.target.value)} className={inputCls} placeholder="Nº do borderô (COD_OPERACAO)" />}
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={labelCls}>Agrupamento</span>

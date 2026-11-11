@@ -33,7 +33,7 @@ function descreverFiltros(f, nomeCedente) {
     else if (b) parts.push(`${label}: até ${fmt(b)}`)
   }
   parts.push(f.codCedente ? `Cedente: ${f.codCedente}${nomeCedente ? ` - ${nomeCedente}` : ''}` : 'Cedente: Todos')
-  if (f.codBordero) parts.push(`Borderô: ${f.codBordero}`)
+  if (f.codOperacao) parts.push(`Borderô: ${f.codOperacao}`)
   intervalo('Vencimento', f.dtVenciIni, f.dtVenciFim)
   intervalo('Valor', f.vrFaceMin, f.vrFaceMax, fmtMoeda)
   intervalo('Emissão', f.dtEmissaoIni, f.dtEmissaoFim)

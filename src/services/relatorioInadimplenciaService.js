@@ -109,7 +109,7 @@ const temValor = (v) => v !== '' && v != null
 
 /**
  * Busca os títulos (inadimplência e/ou responsabilidade).
- * @param {object} f { codCedente, codBordero, tipos: string[], inadimplencia, responsabilidade,
+ * @param {object} f { codCedente, codOperacao, tipos: string[], inadimplencia, responsabilidade,
  *   dtVenciIni, dtVenciFim, vrFaceMin, vrFaceMax, dtEmissaoIni, dtEmissaoFim }
  * Vencimento considerado = DT_VENCI_NOVO (prorrogação) ou DT_VENCI.
  * Emissão = DT_LANCA (OPEITE não tem data de emissão própria).
@@ -120,20 +120,6 @@ export async function getTitulosInadimplentes(f) {
     const status = statusSelecionados(f)
     if (status.length === 0) return { data: [], error: null, parametrosOk: true }
 
-    // Borderô: OPEITE não tem COD_BORDERO; a ligação é OPECABWEB
-    // (COD_CEDENTE, COD_BORDERO) -> COD_OPERACAO.
-    let operacoesBordero = null // Set("ced~oper") ou null (sem filtro)
-    if (temValor(f.codBordero)) {
-      let qb = supabase.from('OPECABWEB').select('COD_CEDENTE, COD_OPERACAO').eq('COD_BORDERO', Number(f.codBordero))
-      if (temValor(f.codCedente)) qb = qb.eq('COD_CEDENTE', Number(f.codCedente))
-      const { data, error } = await qb
-      if (error) throw error
-      const pares = (data || []).filter((b) => b.COD_OPERACAO != null)
-      if (pares.length === 0) return { data: [], error: null, parametrosOk: true }
-      operacoesBordero = new Set(pares.map((b) => `${b.COD_CEDENTE}~${b.COD_OPERACAO}`))
-      f = { ...f, _cedentesBordero: [...new Set(pares.map((b) => Number(b.COD_CEDENTE)))], _operacoesBordero: [...new Set(pares.map((b) => Number(b.COD_OPERACAO)))] }
-    }
-
     const build = () => {
       let q = supabase
         .from('OPEITE')
@@ -141,7 +127,8 @@ export async function getTitulosInadimplentes(f) {
         .in('STATUS', status)
         .in('TIPO_TITULO', tipos)
       if (temValor(f.codCedente)) q = q.eq('COD_CEDENTE', Number(f.codCedente))
-      if (f._cedentesBordero) q = q.in('COD_CEDENTE', f._cedentesBordero).in('COD_OPERACAO', f._operacoesBordero)
+      // "Borderô" na tela = operação (OPEITE.COD_OPERACAO; numeração por cedente)
+      if (temValor(f.codOperacao)) q = q.eq('COD_OPERACAO', Number(f.codOperacao))
       if (temValor(f.vrFaceMin)) q = q.gte('VR_FACE', Number(f.vrFaceMin))
       if (temValor(f.vrFaceMax)) q = q.lte('VR_FACE', Number(f.vrFaceMax))
       if (f.dtEmissaoIni) q = q.gte('DT_LANCA', f.dtEmissaoIni)
@@ -162,7 +149,6 @@ export async function getTitulosInadimplentes(f) {
 
     // Vencimento efetivo (considera prorrogação) — filtrado aqui.
     const filtrados = titulos.filter((t) => {
-      if (operacoesBordero && !operacoesBordero.has(`${t.COD_CEDENTE}~${t.COD_OPERACAO}`)) return false
       const v = t.DT_VENCI_NOVO || t.DT_VENCI || ''
       if (f.dtVenciIni && (!v || v < f.dtVenciIni)) return false
       if (f.dtVenciFim && (!v || v > f.dtVenciFim)) return false
@@ -249,42 +235,24 @@ export async function getTitulosInadimplentes(f) {
 }
 
 /**
- * Borderôs de um cedente (OPECABWEB), do mais recente para o mais antigo,
- * com valor total e quantidade de títulos (somados de OPEITEWEB).
- * Retorna [{ COD_BORDERO, DT_RECEPCAO, COD_OPERACAO, qtd, total }].
+ * Borderôs (operações) de um cedente, de OPECAB, do mais recente para o mais antigo.
+ * Retorna [{ COD_OPERACAO, DATA, VR_FACE, QTD_TITULOS }].
  */
 export async function getBorderosCedente(codCedente) {
   try {
-    const { data: cabs, error } = await supabase
-      .from('OPECABWEB')
-      .select('COD_BORDERO, DT_RECEPCAO, HR_RECEPCAO, COD_OPERACAO')
-      .eq('COD_CEDENTE', Number(codCedente))
-      .order('DT_RECEPCAO', { ascending: false })
-      .order('COD_BORDERO', { ascending: false })
-    if (error) throw error
-    const tot = new Map()
-    const cods = (cabs || []).map((c) => c.COD_BORDERO)
-    for (const c of chunks(cods, CHUNK)) {
-      for (let from = 0; ; from += PAGE) {
-        const { data, error: e2 } = await supabase
-          .from('OPEITEWEB')
-          .select('COD_BORDERO, COD_TITULO, VR_FACE')
-          .eq('COD_CEDENTE', Number(codCedente))
-          .in('COD_BORDERO', c)
-          .order('COD_BORDERO', { ascending: true })
-          .order('COD_TITULO', { ascending: true })
-          .range(from, from + PAGE - 1)
-        if (e2) throw e2
-        for (const i of data || []) {
-          const t = tot.get(i.COD_BORDERO) || { qtd: 0, total: 0 }
-          t.qtd += 1
-          t.total += parseFloat(i.VR_FACE) || 0
-          tot.set(i.COD_BORDERO, t)
-        }
-        if (!data || data.length < PAGE) break
-      }
+    const rows = []
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('OPECAB')
+        .select('COD_OPERACAO, DATA, VR_FACE, QTD_TITULOS')
+        .eq('COD_CEDENTE', Number(codCedente))
+        .order('DATA', { ascending: false, nullsFirst: false })
+        .order('COD_OPERACAO', { ascending: false })
+        .range(from, from + PAGE - 1)
+      if (error) throw error
+      rows.push(...(data || []))
+      if (!data || data.length < PAGE) break
     }
-    const rows = (cabs || []).map((c) => ({ ...c, ...(tot.get(c.COD_BORDERO) || { qtd: 0, total: 0 }) }))
     return { data: rows, error: null }
   } catch (error) {
     console.error('[relatorioInadimplencia] borderôs:', error)

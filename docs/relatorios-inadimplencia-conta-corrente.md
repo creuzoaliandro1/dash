@@ -90,10 +90,7 @@ LEFT JOIN CEDENTE c ON c.COD_CEDENTE = o.COD_CEDENTE
 WHERE o.STATUS IN (:status)                 -- nunca DC nem CO
   AND o.TIPO_TITULO IN (:tipos)
   AND (:codCedente   IS NULL OR o.COD_CEDENTE = :codCedente)
-  AND (:codBordero   IS NULL OR EXISTS (SELECT 1 FROM OPECABWEB b
-         WHERE b.COD_BORDERO  = :codBordero
-           AND b.COD_CEDENTE  = o.COD_CEDENTE
-           AND b.COD_OPERACAO = o.COD_OPERACAO))
+  AND (:codOperacao  IS NULL OR o.COD_OPERACAO = :codOperacao)   -- "Borderô" na tela
   AND (:valorMin     IS NULL OR o.VR_FACE >= :valorMin)
   AND (:valorMax     IS NULL OR o.VR_FACE <= :valorMax)
   AND (:emissaoIni   IS NULL OR o.DT_LANCA >= :emissaoIni)
@@ -105,12 +102,11 @@ ORDER BY o.COD_CEDENTE, o.COD_OPERACAO, o.NUM_LANCAMENTO
 
 Observação: com filtro de vencimento, títulos **sem** vencimento ficam de fora.
 
-Borderô: OPEITE não tem `COD_BORDERO`. O filtro passa por `OPECABWEB`
-(`COD_CEDENTE`, `COD_BORDERO` → `COD_OPERACAO`); só entram títulos de borderôs
-enviados pela web que já viraram operação. Com um cedente escolhido, a tela troca o
-campo por uma lista dos borderôs dele (`OPECABWEB` por `DT_RECEPCAO` desc, depois
-`COD_BORDERO` desc), mostrando nº, data de recepção, valor total e quantidade de
-títulos (soma/contagem de `OPEITEWEB` do borderô). Sem cedente, o nº é digitado.
+Borderô: na tela, "borderô" é a operação (`OPEITE.COD_OPERACAO`, numerada por
+cedente). Com um cedente escolhido, o campo vira uma lista das operações dele, de
+`OPECAB` (`DATA` desc, depois `COD_OPERACAO` desc), mostrando nº, data, valor total
+(`VR_FACE`) e quantidade de títulos (`QTD_TITULOS`). Sem cedente, o nº é digitado e
+vale para todos os cedentes.
 
 ### 2.3 Campos calculados por título
 
