@@ -215,6 +215,30 @@ linha preta acima (sem fundo). Com cedente "todos", segue o bloco
 **Relatório total por cedente** — mesmo cabeçalho; uma linha por cedente:
 CÓD., CEDENTE, QTD TÍTULOS, VALOR, CORRIGIDO; linha `TOTAL (n cedentes)`.
 
+### 2.7 Análise de sacados (checkbox "Análise", começa desmarcado)
+
+Exige cedente **e** borderô (`COD_OPERACAO`). Com ela marcada, o Filtrar ignora os
+checkboxes Inadimplência/Responsabilidade, o agrupamento e os filtros de data/valor;
+usa só os **tipos** marcados.
+
+1. Sacados = `COD_SACADO` distintos de `OPEITE` com `COD_CEDENTE = :cedente AND
+   COD_OPERACAO = :borderô`.
+2. Para cada sacado, **todos** os títulos dele em `OPEITE`, de **todos os cedentes**,
+   lidos do **Firebird** (a réplica não tem `DT_OCORRE`/`VR_PAGO`).
+3. Grupos por sacado (sacados em ordem alfabética):
+   - **A vencer / Responsabilidade** — `STATUS IN ('DO','PR')`, detalhados (mesmos
+     campos calculados de 2.3), com subtotal de Valor e Corrigido.
+   - **Inadimplência** — `STATUS = 'IN'`, detalhados, com subtotal (só aparece se houver).
+   - **Pagos até o vencimento** — `STATUS = 'CO'` com `DT_OCORRE <= vencimento`
+     (`COALESCE(DT_VENCI_NOVO, DT_VENCI)`; se cair em sábado/domingo, vale até a
+     segunda-feira). Só quantidade e soma de `VR_FACE`.
+   - **Pagos após o vencimento** — demais `CO`. Só quantidade e soma de `VR_FACE`.
+   - `DC` não entra.
+4. Títulos do próprio borderô vêm marcados (► na tela, `>` no PDF).
+
+PDF "ANÁLISE DE SACADOS": cabeçalho com cedente, borderô e tipos; por sacado, uma
+linha de cabeçalho (nome + CPF/CNPJ), as seções acima e os dois totais de CO.
+
 ---
 
 ## 3. Conta Corrente (extrato do cedente)

@@ -253,3 +253,113 @@ export function generateInadimplenciaTotalPDF(grupos, filtros) {
 
   return doc.output('blob')
 }
+
+/**
+ * PDF (A4 retrato) da Análise dos sacados de um borderô: por sacado, títulos DO/PR
+ * e IN detalhados com subtotal, e os CO só em total (pagos até / após o vencimento).
+ * @param {Array} sacados linhas de getAnaliseSacados() + somaAVencer/somaIN
+ * @returns {Blob}
+ */
+export function generateAnaliseSacadosPDF(sacados, filtros, nomeCedente) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const mL = 10
+  const mR = pageW - 10
+  const contentW = mR - mL
+
+  const cols = [
+    { h: 'CED.', w: 12, align: 'center' },
+    { h: 'OPER.', w: 11, align: 'center' },
+    { h: 'Nº TÍTULO', w: 0, align: 'left' },
+    { h: 'TIPO', w: 9, align: 'center' },
+    { h: 'STATUS', w: 11, align: 'center' },
+    { h: 'EMISSÃO', w: 16, align: 'center' },
+    { h: 'VENC.', w: 17, align: 'center' },
+    { h: 'DIAS', w: 10, align: 'center' },
+    { h: 'VALOR', w: 22, align: 'right' },
+    { h: 'CORRIGIDO', w: 22, align: 'right' },
+  ]
+  cols[2].w = contentW - cols.reduce((s, c) => s + c.w, 0)
+  const nCols = cols.length
+
+  const sacStyle = { fontStyle: 'bold', halign: 'left', fillColor: [225, 225, 225] }
+  const secStyle = { fontStyle: 'bold', halign: 'left', fillColor: [255, 255, 255], textColor: 60 }
+  const subStyle = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255], lineWidth: { top: 0.1 }, lineColor: [120, 120, 120] }
+  const coStyle = { halign: 'left', fillColor: [255, 255, 255] }
+  const coVal = { fontStyle: 'bold', halign: 'right', fillColor: [255, 255, 255] }
+
+  const body = []
+  const secao = (titulo, rows, soma) => {
+    body.push([{ content: titulo, colSpan: nCols, styles: secStyle }])
+    if (rows.length === 0) body.push([{ content: 'Nenhum título', colSpan: nCols, styles: { textColor: 120 } }])
+    rows.forEach((t) => body.push([
+      `${t.DO_BORDERO ? '> ' : ''}${t.COD_CEDENTE ?? ''}`,
+      String(t.COD_OPERACAO ?? ''),
+      String(t.NUM_TITULO || ''),
+      cut(t.TIPO_TITULO, 4),
+      String(t.STATUS || ''),
+      fmtData(t.DT_LANCA),
+      `${fmtData(t.VENCIMENTO)}${t.PRORROGADO ? '*' : ''}`,
+      String(t.DIAS_ATRASO ?? ''),
+      fmtMoeda(t.VR_FACE),
+      t.VR_CORRIGIDO == null ? '—' : fmtMoeda(t.VR_CORRIGIDO),
+    ]))
+    body.push([
+      { content: `SUBTOTAL (${soma.qtd} título${soma.qtd === 1 ? '' : 's'})`, colSpan: nCols - 2, styles: subStyle },
+      { content: fmtMoeda(soma.total), styles: subStyle },
+      { content: fmtMoeda(soma.corrigido), styles: subStyle },
+    ])
+  }
+  const resumoCO = (titulo, r) => body.push([
+    { content: `${titulo} — ${r.qtd} título${r.qtd === 1 ? '' : 's'}`, colSpan: nCols - 2, styles: coStyle },
+    { content: fmtMoeda(r.total), styles: coVal },
+    { content: '', styles: coStyle },
+  ])
+
+  for (const s of sacados) {
+    body.push([{ content: `SACADO: ${cut(s.NOME_SACADO || '(sem nome)', 70)}${s.CIC_SACADO ? `   ${fmtCnpjCpf(s.CIC_SACADO)}` : ''}`, colSpan: nCols, styles: sacStyle }])
+    secao('A VENCER / RESPONSABILIDADE (DO, PR)', s.aVencer, s.somaAVencer)
+    if (s.inadimplentes.length > 0) secao('INADIMPLÊNCIA (IN)', s.inadimplentes, s.somaIN)
+    resumoCO('PAGOS ATÉ O VENCIMENTO (CO)', s.coEmDia)
+    resumoCO('PAGOS APÓS O VENCIMENTO (CO)', s.coAtraso)
+  }
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.text('ANÁLISE DE SACADOS', mL, 14)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(FS)
+  const agora = new Date()
+  doc.text(`Emitido em ${agora.toLocaleDateString('pt-BR')} ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`, mR, 14, { align: 'right' })
+  const desc = [
+    `Cedente: ${filtros.codCedente}${nomeCedente ? ` - ${nomeCedente}` : ''}`,
+    `Borderô: ${filtros.codOperacao}`,
+    `Tipos: ${(filtros.tipos || []).join(', ')}`,
+    `${sacados.length} sacado(s) — todos os títulos de cada sacado, em todos os cedentes`,
+  ].join('   ·   ')
+  const filtrosTxt = doc.splitTextToSize(desc, contentW)
+  doc.text(filtrosTxt, mL, 19)
+  const y = 19 + filtrosTxt.length * 3 - 1
+
+  doc.autoTable({
+    theme: 'plain',
+    margin: { left: mL, right: pageW - mR, top: 12, bottom: 14 },
+    styles: { font: 'helvetica', fontSize: FS, cellPadding: { top: 0.7, bottom: 0.7, left: 1, right: 1 }, textColor: 20, overflow: 'ellipsize' },
+    headStyles: { fontStyle: 'bold', halign: 'center', fillColor: [255, 255, 255], lineWidth: { bottom: 0.3 }, lineColor: [40, 40, 40] },
+    showHead: 'everyPage',
+    startY: y,
+    head: [cols.map((c) => c.h)],
+    body,
+    columnStyles: cols.reduce((acc, c, i) => { acc[i] = { cellWidth: c.w, halign: c.align }; return acc }, {}),
+    didParseCell: (d) => {
+      if (d.section === 'head') d.cell.styles.halign = cols[d.column.index].align === 'left' ? 'left' : 'center'
+    },
+  })
+
+  let fy = doc.lastAutoTable.finalY + 5
+  if (fy > doc.internal.pageSize.getHeight() - 12) { doc.addPage(); fy = 16 }
+  doc.setFontSize(FS - 0.5)
+  doc.text('> título deste borderô.  * vencimento prorrogado.  CO em dia = pago (DT_OCORRE) até o vencimento; vencimento em sábado/domingo vale até a segunda-feira.', mL, fy)
+
+  return doc.output('blob')
+}
