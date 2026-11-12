@@ -2478,6 +2478,33 @@ export const getBoletosImportadosUnificados = async (contaData) => {
       return merged
     }
 
+    // Firebird (OPEITE) é a fonte da verdade sobre a baixa. capt_registrado vem do
+    // relatório BTG/BMP e NÃO é atualizada quando o título some do relatório (pago/
+    // baixado) — fica "Vencido" para sempre. Por isso, um registrado AVULSO cujo
+    // num_lanca existe na OPEITE com STATUS fora de DO/IN/PR (ex.: CO = liquidado)
+    // está baixado e não deve aparecer. Só consulta os candidatos a avulso do perfil.
+    const _OPE_ABERTO = new Set(['DO', 'IN', 'PR'])
+    const opeFechadoLancSet = new Set()
+    {
+      const lancsAbertosCarregados = new Set(opeiteRecs.map((o) => _lancaNum(o.num_lancamento)).filter((n) => n != null))
+      const candidatos = [...new Set(regRecs
+        .filter((r) => r._numLanca != null && !lancsAbertosCarregados.has(r._numLanca)
+          && !!perfilContaBase && r._contaLinha === perfilContaBase
+          && (_regSituacaoAtiva(r._situacaoReg) || r._devolvido))
+        .map((r) => r._numLanca))]
+      const CH = 500
+      for (let i = 0; i < candidatos.length; i += CH) {
+        const { data, error } = await smartFrom('OPEITE')
+          .select('NUM_LANCAMENTO, STATUS')
+          .in('NUM_LANCAMENTO', candidatos.slice(i, i + CH))
+        if (error) { console.warn('[Unificado] OPEITE status dos registrados:', error.message); continue }
+        for (const o of data || []) {
+          const st = String(o.STATUS || '').trim().toUpperCase()
+          if (st && !_OPE_ABERTO.has(st)) opeFechadoLancSet.add(_lancaNum(o.NUM_LANCAMENTO))
+        }
+      }
+    }
+
     const todasKeys = new Set([...regByKey.keys(), ...opeByKey.keys(), ...captByKey.keys()])
     const rows = []
     for (const k of todasKeys) {
@@ -2545,6 +2572,7 @@ export const getBoletosImportadosUnificados = async (contaData) => {
         const registradoAvulsoVisivel = !!Ri && !Oi && !Ci
           && !!perfilContaBase && Ri._contaLinha === perfilContaBase
           && (_regSituacaoAtiva(Ri._situacaoReg) || Ri._devolvido)
+          && !(Ri._numLanca != null && opeFechadoLancSet.has(Ri._numLanca))
         if (!(Ci || Oi || registradoAvulsoVisivel)) continue
 
         rows.push(buildMerged(Ri, Oi, Ci))
