@@ -46,6 +46,29 @@ function normalizarDataAno4(value) {
   return `${dd}/${mm}/${yy.slice(0, 4)}`
 }
 
+// Data que não existe no calendário (ex.: 29/02/2027, 31/04/2026): devolve as
+// duas datas válidas vizinhas — último dia do mês e 1º dia do mês seguinte.
+// Aceita dd/mm/aaaa, dd/mm/aa e aaaa-mm-dd; retorna null se a data existe.
+function dataInexistente(valor) {
+  const s = String(valor || '').trim()
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/)
+  let dia, mes, ano
+  if (m) { dia = +m[1]; mes = +m[2]; ano = m[3].length === 2 ? 2000 + +m[3] : +m[3] }
+  else {
+    m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (!m) return null
+    ano = +m[1]; mes = +m[2]; dia = +m[3]
+  }
+  if (mes < 1 || mes > 12 || dia < 1) return null
+  const ultimoDia = new Date(ano, mes, 0).getDate()
+  if (dia <= ultimoDia) return null
+  const fmt = (d, mm, a) => `${String(d).padStart(2, '0')}/${String(mm).padStart(2, '0')}/${a}`
+  return {
+    anterior: fmt(ultimoDia, mes, ano),
+    posterior: mes === 12 ? fmt(1, 1, ano + 1) : fmt(1, mes + 1, ano),
+  }
+}
+
 // Campo editável do popup — salva no blur, máscara automática para datas
 function DetailField({ label, field, isDate, currentValue, onSave, required, invalid }) {
   const [local, setLocal] = useState(currentValue ?? '')
@@ -428,6 +451,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   }
 
   const handleImport = async () => {
+    if (datasInexistentes.length > 0) return // a gravação falharia: escolher a data antes
     setIsImporting(true)
     const inicioImport = Date.now()
     console.log(`[ImportPreview] ⏱️ Iniciando importação de ${selectedRows.size} boletos`)
@@ -599,6 +623,26 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   }))
   const faltasPopup = detailPopup ? validarDadosSacado(detailEditData).faltando.map(f => f.campo) : []
 
+  // Datas que não existem (ex.: 29/02/2027): a gravação falharia e o registro seria
+  // perdido. Pergunta, uma por vez, qual data válida adotar.
+  const datasInexistentes = []
+  dataWithInstalments.forEach((item, itemIdx) => item._records.forEach((record, recordIdx) => {
+    for (const [campo, rotulo] of [['VENCIMENTO', 'vencimento'], ['EMISSAO', 'data de emissão']]) {
+      const sugestao = dataInexistente(record[campo])
+      if (sugestao) datasInexistentes.push({ itemIdx, recordIdx, campo, rotulo, valor: record[campo], titulo: record.NUM_TITULO, sacado: record.SACADO_NOME, ...sugestao })
+    }
+  }))
+  const dataPendente = !checkingDedup && !detailPopup && !instalmentModal ? datasInexistentes[0] : null
+
+  const adotarData = ({ itemIdx, recordIdx, campo }, novaData) => {
+    const newData = [...dataWithInstalments]
+    newData[itemIdx] = {
+      ...newData[itemIdx],
+      _records: newData[itemIdx]._records.map((r, i) => (i === recordIdx ? { ...r, [campo]: novaData } : r)),
+    }
+    setDataWithInstalments(newData)
+  }
+
   const saveDetailField = (field, val) => {
     setDetailEditData(prev => ({ ...prev, [field]: val }))
   }
@@ -706,11 +750,11 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                     className="w-3 h-3 cursor-pointer accent-white flex-shrink-0"
                   />
                   {/* Emissão */}
-                  <div className="w-[58px] flex-shrink-0 text-[#a3a3a3]">{formatarDataBrasileira(record.EMISSAO) || '—'}</div>
+                  <div className={`w-[58px] flex-shrink-0 ${dataInexistente(record.EMISSAO) ? 'text-red-400 font-semibold' : 'text-[#a3a3a3]'}`}>{formatarDataBrasileira(record.EMISSAO) || '—'}</div>
                   {/* Número */}
                   <div className="w-[90px] flex-shrink-0 text-white font-mono truncate">{record.NUM_TITULO || '—'}</div>
                   {/* Vencimento */}
-                  <div className="w-[58px] flex-shrink-0 text-white">{formatarDataBrasileira(record.VENCIMENTO) || '—'}</div>
+                  <div className={`w-[58px] flex-shrink-0 ${dataInexistente(record.VENCIMENTO) ? 'text-red-400 font-semibold' : 'text-white'}`}>{formatarDataBrasileira(record.VENCIMENTO) || '—'}</div>
                   {/* Valor */}
                   <div className="w-[80px] flex-shrink-0 text-white font-mono text-right">{formatarValorBrasileiro(record.VALOR)}</div>
                   {/* Nome */}
@@ -802,7 +846,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
               className="px-6 py-2 bg-transparent text-white text-sm font-medium border border-[#2a2a2a] rounded hover:bg-[#111111] transition disabled:opacity-50">
               Cancelar
             </button>
-            <button onClick={handleImport} disabled={isImporting || checkingDedup || selecionadosValidos === 0}
+            <button onClick={handleImport} disabled={isImporting || checkingDedup || selecionadosValidos === 0 || datasInexistentes.length > 0}
+              title={datasInexistentes.length > 0 ? 'Há data que não existe no calendário — escolha a data a adotar' : undefined}
               className="px-6 py-2 bg-white text-black text-sm font-medium rounded hover:opacity-90 transition disabled:opacity-50">
               {isImporting ? 'Importando...' : checkingDedup ? 'Consultando...' : `Importar (${selecionadosValidos})`}
             </button>
@@ -904,6 +949,44 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 className="px-5 py-2 text-sm bg-white text-black font-medium rounded hover:opacity-90 transition">
                 Salvar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Data inexistente no calendário: escolher a data válida a adotar */}
+      {dataPendente && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-[#111111] border border-[#2a2a2a] rounded-lg w-full max-w-md shadow-2xl">
+            <div className="px-5 py-3 border-b border-[#2a2a2a]">
+              <h3 className="text-sm font-semibold text-white">Data inexistente</h3>
+            </div>
+            <div className="p-5 space-y-3 text-sm">
+              <p className="text-[#d4d4d4]">
+                O {dataPendente.rotulo} <span className="text-red-400 font-mono font-semibold">{dataPendente.valor}</span> não existe no calendário.
+              </p>
+              <p className="text-xs text-[#888888]">
+                Título <span className="text-white font-mono">{dataPendente.titulo || '—'}</span>
+                {dataPendente.sacado ? <> — {dataPendente.sacado}</> : null}
+              </p>
+              <p className="text-[#d4d4d4]">Qual data deseja adotar?</p>
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => adotarData(dataPendente, dataPendente.anterior)}
+                  className="flex-1 px-4 py-2.5 bg-white text-black font-mono font-semibold rounded hover:opacity-90 transition"
+                >
+                  {dataPendente.anterior}
+                </button>
+                <button
+                  onClick={() => adotarData(dataPendente, dataPendente.posterior)}
+                  className="flex-1 px-4 py-2.5 bg-white text-black font-mono font-semibold rounded hover:opacity-90 transition"
+                >
+                  {dataPendente.posterior}
+                </button>
+              </div>
+              {datasInexistentes.length > 1 && (
+                <p className="text-[11px] text-[#666666]">Mais {datasInexistentes.length - 1} data(s) inexistente(s) para ajustar em seguida.</p>
+              )}
             </div>
           </div>
         </div>
