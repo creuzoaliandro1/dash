@@ -2,6 +2,7 @@ import { createBoleto } from './boletoService'
 import { supabase } from '../lib/supabase'
 import { validarDadosSacado } from '../utils/validarSacado'
 import { extrairChavesNFeDoPDF } from './pdfChaveNF'
+import { extrairDanfses } from './danfseParser'
 
 /**
  * Parse Excel files (.xlsx, .xls) - SIMPLES e DIRETO
@@ -651,62 +652,89 @@ function parseNFSe(xmlDoc) {
       STATUS: 'pendente',
     }
 
-    // --- Parcelas embutidas na Discriminação ---
-    // Algumas NFSe trazem na descrição a forma de pagamento no formato:
-    //   "BOLETO ( 12/07/2026,12/08/2026,27/08/2026,12/09/2026 )"
-    // Cada data é o vencimento de uma parcela. O valor total é dividido
-    // igualmente entre as parcelas (sobra de centavos vai nas primeiras).
-    // Aceita pontuação solta entre BOLETO e o parêntese (ex.: "BOLETO ; ( ... )").
-    const mBoleto = (descricao || '').match(/BOLETO[\s;:,.\-]*\(([^)]*)\)/i)
-    if (mBoleto) {
-      const datas = mBoleto[1]
-        .split(',')
-        // Normaliza sujeira de digitação: remove espaços internos e
-        // colapsa barras repetidas (ex.: "18//07/2026" -> "18/07/2026")
-        .map(s => s.trim().replace(/\s+/g, '').replace(/\/{2,}/g, '/'))
-        .filter(s => /^\d{2}\/\d{2}\/\d{4}$/.test(s))
-
-      if (datas.length > 0) {
-        const n = datas.length
-        const totalCents = Math.round((valorLimpo || 0) * 100)
-        const baseCents = Math.floor(totalCents / n)
-        const resto = totalCents - baseCents * n // 0..n-1 centavos
-        const valores = datas.map((_, i) => (baseCents + (i < resto ? 1 : 0)) / 100)
-
-        const parcelas = datas.map((dueDate, i) => ({
-          number: `${numero}-${i + 1}`,
-          dueDate, // já vem em DD/MM/YYYY
-          value: valores[i],
-          emission: emissaoBR,
-        }))
-
-        console.log(`[NFSe Parser] BOLETO com ${n} parcela(s) detectado:`, datas.join(', '))
-
-        const primeira = parcelas[0]
-        return [{
-          ...sacadoFields,
-          NUM_TITULO: primeira.number,
-          NOSSO_NUMERO: primeira.number,
-          EMISSAO: primeira.emission,
-          VENCIMENTO: primeira.dueDate,
-          VALOR: primeira.value,
-          _parcelas: parcelas,
-        }]
-      }
-    }
-
-    return [{
-      ...sacadoFields,
-      NUM_TITULO: numero,
-      NOSSO_NUMERO: numero,
-      EMISSAO: emissaoBR,
-      VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
-      VALOR: valorLimpo,
-    }]
+    return boletosDaNFSe(sacadoFields, numero, valorLimpo, emissaoBR, descricao)
   } catch (error) {
     console.error('[NFSe Parser] Erro:', error)
     return []
   }
+}
+
+// Monta o(s) boleto(s) de uma NFS-e (usado pelo XML e pelo DANFSe em PDF).
+// Parcelas embutidas na descrição, no formato:
+//   "BOLETO ( 12/07/2026,12/08/2026,27/08/2026,12/09/2026 )"
+// Cada data é o vencimento de uma parcela. O valor total é dividido
+// igualmente entre as parcelas (sobra de centavos vai nas primeiras).
+// Aceita pontuação solta entre BOLETO e o parêntese (ex.: "BOLETO ; ( ... )").
+// Sem parcelas: um boleto com vencimento em 30 dias.
+function boletosDaNFSe(sacadoFields, numero, valorLimpo, emissaoBR, descricao) {
+  const mBoleto = (descricao || '').match(/BOLETO[\s;:,.\-]*\(([^)]*)\)/i)
+  if (mBoleto) {
+    const datas = mBoleto[1]
+      .split(',')
+      // Normaliza sujeira de digitação: remove espaços internos e
+      // colapsa barras repetidas (ex.: "18//07/2026" -> "18/07/2026")
+      .map(s => s.trim().replace(/\s+/g, '').replace(/\/{2,}/g, '/'))
+      .filter(s => /^\d{2}\/\d{2}\/\d{4}$/.test(s))
+
+    if (datas.length > 0) {
+      const n = datas.length
+      const totalCents = Math.round((valorLimpo || 0) * 100)
+      const baseCents = Math.floor(totalCents / n)
+      const resto = totalCents - baseCents * n // 0..n-1 centavos
+      const valores = datas.map((_, i) => (baseCents + (i < resto ? 1 : 0)) / 100)
+
+      const parcelas = datas.map((dueDate, i) => ({
+        number: `${numero}-${i + 1}`,
+        dueDate, // já vem em DD/MM/YYYY
+        value: valores[i],
+        emission: emissaoBR,
+      }))
+
+      console.log(`[NFSe] BOLETO com ${n} parcela(s) detectado:`, datas.join(', '))
+
+      const primeira = parcelas[0]
+      return [{
+        ...sacadoFields,
+        NUM_TITULO: primeira.number,
+        NOSSO_NUMERO: primeira.number,
+        EMISSAO: primeira.emission,
+        VENCIMENTO: primeira.dueDate,
+        VALOR: primeira.value,
+        _parcelas: parcelas,
+      }]
+    }
+  }
+
+  return [{
+    ...sacadoFields,
+    NUM_TITULO: numero,
+    NOSSO_NUMERO: numero,
+    EMISSAO: emissaoBR,
+    VENCIMENTO: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR'),
+    VALOR: valorLimpo,
+  }]
+}
+
+// DANFSe (PDF da NFS-e Padrão Nacional) -> boletos, no mesmo formato do XML de NFS-e.
+// Sacado = tomador; o prestador fica em _EMITENTE (checkbox "Emissor da NF" no avalista).
+async function boletosDoDanfse(nota, file) {
+  const sacadoFields = {
+    ...nota.tomador,
+    SACADO_NOME: nota.tomador.SACADO_NOME || 'CLIENTE SEM NOME',
+    DESCRICAO: nota.descricao || '',
+    STATUS: 'pendente',
+    _EMITENTE: nota.prestador || undefined,
+    _CHAVE_NFSE: nota.chave,
+  }
+  // Valor a cobrar = valor líquido (já descontadas as retenções, ex.: ISS retido),
+  // como no XML (ValorLiquidoNfse / vLiq); sem ele, o valor do serviço.
+  const valor = converterValor(nota.valorLiquido || nota.valorServico || '0')
+  const emissaoBR = nota.emissao || new Date().toLocaleDateString('pt-BR')
+  const boletos = boletosDaNFSe(sacadoFields, nota.numero, valor, emissaoBR, nota.descricao)
+  await completarContatoPeloPerfil(boletos)
+  // o próprio PDF segue como anexo de cada parcela (não há XML oficial)
+  boletos.forEach(b => { b._xmlFile = file })
+  return boletos
 }
 
 function parseCTe(xmlDoc) {
@@ -1928,16 +1956,27 @@ async function parsePDFFile(file, profileName, profileCIC) {
     return parseGestaoClickOrcamentoPDF(text, profileName, profileCIC)
   }
 
-  // DANFE de NF-e em PDF (com texto, "desenhado" ou escaneado): lê a CHAVE DE
-  // ACESSO, baixa o XML no Serpro e importa o XML — o restante do PDF é descartado.
   const pdfjsLib = await loadPdfJs()
   const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise
+
+  // DANFSe (NFS-e Padrão Nacional) com texto: dados lidos direto do PDF.
+  // A API nacional só entrega o XML com certificado de uma das partes da nota.
+  const danfses = await extrairDanfses(pdf)
+  if (danfses.length > 0) {
+    console.log(`[PDF] "${file.name}" reconhecido como DANFSe:`, danfses.map(n => `${n.numero} (${n.chave})`))
+    const boletos = []
+    for (const nota of danfses) boletos.push(...await boletosDoDanfse(nota, file))
+    return boletos
+  }
+
+  // DANFE de NF-e em PDF (com texto, "desenhado" ou escaneado): lê a CHAVE DE
+  // ACESSO, baixa o XML no Serpro e importa o XML — o restante do PDF é descartado.
   const { chaves, nfse } = await extrairChavesNFeDoPDF(pdf, text)
   console.log(`[PDF] "${file.name}": chave(s) NF-e encontrada(s):`, chaves, nfse ? '(contém NFS-e)' : '')
 
   if (chaves.length === 0) {
     throw new Error(nfse
-      ? 'PDF de NFS-e: a consulta do Serpro só traz o XML de NF-e (modelo 55). Importe o XML da NFS-e.'
+      ? 'PDF de NFS-e sem texto legível (provavelmente escaneado): não dá para ler os dados. Importe o XML ou o PDF original da NFS-e.'
       : 'Não encontrei a chave de acesso da NF-e neste PDF (nem no texto, nem no código de barras).')
   }
 
