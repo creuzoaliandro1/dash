@@ -163,6 +163,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   // Checkbox "Sacado = emitente da NF" no popup (NF-e com <emit>)
   const [sacadoEmitente, setSacadoEmitente] = useState(false)
   const [sacadoAnterior, setSacadoAnterior] = useState(null) // sacado antes de marcar o checkbox
+  // Checkbox "Emissor da NF" no Avalista: avalista = nome/CIC do emitente da NF
+  const [avalistaEmitente, setAvalistaEmitente] = useState(false)
+  const [avalistaAnterior, setAvalistaAnterior] = useState(null)
   const inputRef = useRef(null)
   const fileInputRefs = useRef({})
 
@@ -365,6 +368,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     const base = item._records[0] // dados do correntista sempre no primeiro
     setSacadoEmitente(!!base._SACADO_EMITENTE)
     setSacadoAnterior(base._SACADO_EMITENTE ? (base._SACADO_ANTERIOR || null) : null)
+    setAvalistaEmitente(!!base._AVALISTA_EMITENTE)
+    setAvalistaAnterior(base._AVALISTA_EMITENTE ? (base._AVALISTA_ANTERIOR || null) : null)
     setDetailEditData({
       SACADO_NOME: base.SACADO_NOME || '',
       SACADO_CIC: base.SACADO_CIC || '',
@@ -410,6 +415,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       AVALISTA_CIC: detailEditData.AVALISTA_CIC,
       _SACADO_EMITENTE: sacadoEmitente,
       _SACADO_ANTERIOR: sacadoEmitente ? sacadoAnterior : null,
+      _AVALISTA_EMITENTE: avalistaEmitente,
+      _AVALISTA_ANTERIOR: avalistaEmitente ? avalistaAnterior : null,
     }))
     // Atualiza campos da parcela específica
     newData[itemIdx]._records[recordIdx] = {
@@ -619,6 +626,23 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     } else if (sacadoAnterior) {
       setDetailEditData(prev => ({ ...prev, ...sacadoAnterior }))
       setSacadoAnterior(null)
+    }
+  }
+
+  // Marcado: avalista = emissor da NF (nome e CIC); desmarcado: volta o avalista anterior
+  const toggleAvalistaEmitente = (marcado) => {
+    if (!emitentePopup) return
+    setAvalistaEmitente(marcado)
+    if (marcado) {
+      setAvalistaAnterior({ AVALISTA_NOME: detailEditData.AVALISTA_NOME || '', AVALISTA_CIC: detailEditData.AVALISTA_CIC || '' })
+      setDetailEditData(prev => ({
+        ...prev,
+        AVALISTA_NOME: emitentePopup.SACADO_NOME || '',
+        AVALISTA_CIC: emitentePopup.SACADO_CIC || '',
+      }))
+    } else if (avalistaAnterior) {
+      setDetailEditData(prev => ({ ...prev, ...avalistaAnterior }))
+      setAvalistaAnterior(null)
     }
   }
 
@@ -871,7 +895,20 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
               {/* Avalista */}
               <div>
-                <p className="text-[10px] text-[#444444] uppercase font-semibold mb-2 border-b border-[#1f1f1f] pb-1">Avalista</p>
+                <div className="flex items-center justify-between mb-2 border-b border-[#1f1f1f] pb-1">
+                  <p className="text-[10px] text-[#444444] uppercase font-semibold">Avalista</p>
+                  {emitentePopup && (
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#a3a3a3]" title={`Usar o emissor da NF como avalista: ${emitentePopup.SACADO_NOME || ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={avalistaEmitente}
+                        onChange={(e) => toggleAvalistaEmitente(e.target.checked)}
+                        className="w-3 h-3 cursor-pointer accent-white"
+                      />
+                      Emissor da NF
+                    </label>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <DetailField label="Nome" field="AVALISTA_NOME" currentValue={detailEditData.AVALISTA_NOME} onSave={saveDetailField} />
                   <DetailField label="CPF/CNPJ" field="AVALISTA_CIC" currentValue={detailEditData.AVALISTA_CIC} onSave={saveDetailField} />
