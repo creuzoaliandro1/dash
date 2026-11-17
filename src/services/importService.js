@@ -1,6 +1,7 @@
 import { createBoleto } from './boletoService'
 import { supabase } from '../lib/supabase'
 import { validarDadosSacado } from '../utils/validarSacado'
+import { extrairChavesNFeDoPDF } from './pdfChaveNF'
 
 /**
  * Parse Excel files (.xlsx, .xls) - SIMPLES e DIRETO
@@ -1927,9 +1928,42 @@ async function parsePDFFile(file, profileName, profileCIC) {
     return parseGestaoClickOrcamentoPDF(text, profileName, profileCIC)
   }
 
-  throw new Error(
-    'Modelo de PDF não reconhecido. No momento só importamos orçamentos no formato GestãoClick — me mande um exemplo desse novo modelo para eu aprender o mapeamento.'
-  )
+  // DANFE de NF-e em PDF (com texto, "desenhado" ou escaneado): lê a CHAVE DE
+  // ACESSO, baixa o XML no Serpro e importa o XML — o restante do PDF é descartado.
+  const pdfjsLib = await loadPdfJs()
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise
+  const { chaves, nfse } = await extrairChavesNFeDoPDF(pdf, text)
+  console.log(`[PDF] "${file.name}": chave(s) NF-e encontrada(s):`, chaves, nfse ? '(contém NFS-e)' : '')
+
+  if (chaves.length === 0) {
+    throw new Error(nfse
+      ? 'PDF de NFS-e: a consulta do Serpro só traz o XML de NF-e (modelo 55). Importe o XML da NFS-e.'
+      : 'Não encontrei a chave de acesso da NF-e neste PDF (nem no texto, nem no código de barras).')
+  }
+
+  const boletos = []
+  const falhas = []
+  for (const chave of chaves) {
+    try {
+      const xmlFile = await baixarXmlNFeSerpro(chave)
+      const doXml = await parseXMLFile(xmlFile)
+      if (doXml.length === 0) throw new Error('XML sem dados de cobrança')
+      boletos.push(...doXml)
+    } catch (err) {
+      falhas.push(`chave ${chave}: ${err?.message || err}`)
+    }
+  }
+  if (boletos.length === 0) throw new Error(`Não foi possível obter a NF-e no Serpro — ${falhas.join('; ')}`)
+  if (falhas.length) console.warn(`[PDF] "${file.name}": falhas parciais:`, falhas)
+  return boletos
+}
+
+// Consulta a NF-e pela chave no Serpro (Edge Function) e devolve o XML como File
+export async function baixarXmlNFeSerpro(chave) {
+  const { data, error } = await supabase.functions.invoke('serpro-consulta-nfe', { body: { chave } })
+  if (error) throw error
+  if (!data?.ok) throw new Error(data?.error || 'Falha ao consultar a NF-e no Serpro.')
+  return new File([data.xml], `NFe_${data.chave}.xml`, { type: 'application/xml' })
 }
 
 /**
