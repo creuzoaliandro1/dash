@@ -180,6 +180,7 @@ function parteMunicipal(its) {
   const bairroCampo = pega('Bairro')
   return {
     SACADO_NOME: pega('Razão Social/Nome', 'Nome/Razão Social', 'Razão Social', 'Nome'),
+    NOME_FANTASIA: pega('Nome Fantasia'),
     SACADO_CIC: pega('CPF/CNPJ', 'CNPJ/CPF', 'CNPJ', 'CPF').replace(/\D/g, ''),
     SACADO_TELEFONE: pega('Telefone', 'Fone'),
     SACADO_EMAIL: pega('e-mail', 'Email'),

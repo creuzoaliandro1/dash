@@ -69,6 +69,18 @@ function dataInexistente(valor) {
   }
 }
 
+// Nome do avalista quando é o emissor da NF: "Nome Fantasia - Razão Social",
+// cortado no tamanho do campo no Firebird (OPEITE.NOME_AVALISTA varchar(25)).
+// Sem fantasia (ou igual/contida na razão social), só a razão social.
+const TAM_NOME_AVALISTA = 25
+function nomeAvalistaEmitente(emit) {
+  const razao = String(emit?.SACADO_NOME || '').replace(/\s+/g, ' ').trim()
+  const fant = String(emit?.NOME_FANTASIA || '').replace(/\s+/g, ' ').trim()
+  const n = (s) => s.toUpperCase()
+  const nome = fant && !n(razao).includes(n(fant)) ? `${fant} - ${razao}` : razao
+  return nome.slice(0, TAM_NOME_AVALISTA).trim()
+}
+
 // Campo editável do popup — salva no blur, máscara automática para datas
 function DetailField({ label, field, isDate, currentValue, onSave, required, invalid }) {
   const [local, setLocal] = useState(currentValue ?? '')
@@ -658,7 +670,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       setAvalistaAnterior({ AVALISTA_NOME: detailEditData.AVALISTA_NOME || '', AVALISTA_CIC: detailEditData.AVALISTA_CIC || '' })
       setDetailEditData(prev => ({
         ...prev,
-        AVALISTA_NOME: emitentePopup.SACADO_NOME || '',
+        AVALISTA_NOME: nomeAvalistaEmitente(emitentePopup),
         AVALISTA_CIC: emitentePopup.SACADO_CIC || '',
       }))
     } else if (avalistaAnterior) {
@@ -907,7 +919,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                 <div className="flex items-center justify-between mb-2 border-b border-[#1f1f1f] pb-1">
                   <p className="text-[10px] text-[#444444] uppercase font-semibold">Avalista</p>
                   {emitentePopup && (
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#a3a3a3]" title={`Usar o emissor da NF como avalista: ${emitentePopup.SACADO_NOME || ''}`}>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#a3a3a3]" title={`Usar o emissor da NF como avalista: ${nomeAvalistaEmitente(emitentePopup)}`}>
                       <input
                         type="checkbox"
                         checked={avalistaEmitente}

@@ -431,6 +431,7 @@ function parseNFe(xmlDoc) {
       const enderEmit = emitElement.getElementsByTagName('enderEmit')[0] || emitElement
       sacadoFields._EMITENTE = {
         SACADO_NOME: getChildElementText(emitElement, 'xNome') || '',
+        NOME_FANTASIA: getChildElementText(emitElement, 'xFant') || '',
         SACADO_CIC: getChildElementText(emitElement, 'CNPJ') || getChildElementText(emitElement, 'CPF') || '',
         SACADO_ENDERECO: getChildElementText(enderEmit, 'xLgr') || '',
         SACADO_NUMERO: getChildElementText(enderEmit, 'nro') || '',
