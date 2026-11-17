@@ -2,7 +2,7 @@ import { createBoleto } from './boletoService'
 import { supabase } from '../lib/supabase'
 import { validarDadosSacado } from '../utils/validarSacado'
 import { extrairChavesNFeDoPDF } from './pdfChaveNF'
-import { extrairDanfses } from './danfseParser'
+import { extrairDanfses, extrairNfseMunicipal } from './danfseParser'
 
 /**
  * Parse Excel files (.xlsx, .xls) - SIMPLES e DIRETO
@@ -1967,6 +1967,13 @@ async function parsePDFFile(file, profileName, profileCIC) {
     const boletos = []
     for (const nota of danfses) boletos.push(...await boletosDoDanfse(nota, file))
     return boletos
+  }
+
+  // NFS-e em layout próprio do município ("Rótulo: valor", ex.: Caucaia)
+  const notaMun = await extrairNfseMunicipal(pdf, text)
+  if (notaMun) {
+    console.log(`[PDF] "${file.name}" reconhecido como NFS-e municipal:`, notaMun.numero, notaMun.chave)
+    return boletosDoDanfse(notaMun, file)
   }
 
   // DANFE de NF-e em PDF (com texto, "desenhado" ou escaneado): lê a CHAVE DE

@@ -114,6 +114,144 @@ function lerPagina(itens) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// NFS-e em layout MUNICIPAL ("Rótulo: valor"), ex.: Caucaia/CE. Blocos
+// "PRESTADOR DE SERVIÇOS" e "TOMADOR DE SERVIÇOS" com linhas como
+//   "CPF/CNPJ: 11.516.329/0001-26   Inscrição Municipal:"
+//   "Endereço: R CONSULMEL 1277 PARQUE POTIRA 61.650-370"
+// ---------------------------------------------------------------------------
+const ROTULOS_MUN = [
+  'CPF/CNPJ', 'CNPJ/CPF', 'CNPJ', 'CPF', 'Inscrição Municipal', 'Inscrição Estadual', 'Razão Social/Nome',
+  'Nome/Razão Social', 'Razão Social', 'Nome Fantasia', 'Nome', 'Endereço', 'Logradouro', 'Número', 'Complemento',
+  'Bairro', 'CEP', 'Município', 'Cidade', 'UF', 'e-mail', 'E-mail', 'Email', 'Telefone', 'Fone',
+]
+const ROTULOS_MUN_N = new Set(ROTULOS_MUN.map(norm))
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+// "CPF/CNPJ:" ou "CPF/CNPJ: 11.516..." (rótulo e valor no mesmo item)
+const RE_ROT_ITEM = new RegExp(`^(${[...ROTULOS_MUN_N].map(escRe).sort((a, b) => b.length - a.length).join('|')})\\s*:\\s*(.*)$`)
+
+// { ROTULO_NORMALIZADO: valor } dos itens (pdf.js) de um bloco. O valor é o que
+// está na mesma faixa horizontal do rótulo (às vezes 1–3pt abaixo), à direita
+// dele e antes do próximo rótulo dessa faixa.
+function camposPorPosicao(its) {
+  const rot = []
+  for (const i of its) {
+    const m = i.n.match(RE_ROT_ITEM)
+    if (m) rot.push({ ...i, rot: m[1], resto: m[2] })
+  }
+  const ehRot = (i) => rot.some(r => r.x === i.x && r.y === i.y)
+  const campos = {}
+  for (const r of rot) {
+    if (campos[r.rot]) continue
+    const prox = rot.filter(o => o !== r && Math.abs(o.y - r.y) <= 4.5 && o.x > r.x).reduce((mn, o) => Math.min(mn, o.x), Infinity)
+    const vals = its
+      .filter(i => Math.abs(i.y - r.y) <= 4.5 && i.x > r.x - 2 && i.x < prox - 1 && !ehRot(i))
+      .sort((a, b) => b.y - a.y || a.x - b.x)
+      .map(i => i.s)
+    const v = limpo([r.resto && its.find(i => i.x === r.x && i.y === r.y).s.split(':').slice(1).join(':').trim(), ...vals].filter(Boolean).join(' '))
+    if (v) campos[r.rot] = v
+  }
+  return campos
+}
+
+const CEP_RE = /(\d{2}\.?\d{3}-?\d{3})\s*$/
+
+// "R CONSULMEL 1277 PARQUE POTIRA 61.650-370" -> logradouro, número, resto (+ CEP no fim)
+function quebrarEndereco(texto) {
+  let s = String(texto || '').trim()
+  let cep = ''
+  const mc = s.match(CEP_RE)
+  if (mc) { cep = mc[1].replace(/\D/g, ''); s = s.slice(0, mc.index).trim() }
+  if (s.includes(',')) {
+    const [lgr = '', nro = '', ...resto] = s.split(',').map(limpo)
+    return { lgr, nro, resto: resto.filter(Boolean).join(', '), cep }
+  }
+  const t = s.split(/\s+/)
+  // número = 1º token (depois do primeiro) só com dígitos ou S/N
+  const k = t.findIndex((tok, i) => i > 0 && /^(\d+[A-Z]?|S\/?N)$/i.test(tok))
+  if (k < 0) return { lgr: s, nro: '', resto: '', cep }
+  return { lgr: t.slice(0, k).join(' '), nro: t[k].toUpperCase(), resto: t.slice(k + 1).join(' '), cep }
+}
+
+function parteMunicipal(its) {
+  const c = camposPorPosicao(its)
+  const pega = (...ks) => { for (const k of ks) if (c[norm(k)]) return c[norm(k)]; return '' }
+  const end = quebrarEndereco(pega('Endereço', 'Logradouro'))
+  const bairroCampo = pega('Bairro')
+  return {
+    SACADO_NOME: pega('Razão Social/Nome', 'Nome/Razão Social', 'Razão Social', 'Nome'),
+    SACADO_CIC: pega('CPF/CNPJ', 'CNPJ/CPF', 'CNPJ', 'CPF').replace(/\D/g, ''),
+    SACADO_TELEFONE: pega('Telefone', 'Fone'),
+    SACADO_EMAIL: pega('e-mail', 'Email'),
+    SACADO_ENDERECO: end.lgr,
+    SACADO_NUMERO: pega('Número') || end.nro,
+    // com campo Bairro próprio, o que sobra do endereço é complemento; sem ele, é o bairro
+    SACADO_COMPLEMENTO: pega('Complemento') || (bairroCampo ? end.resto : ''),
+    SACADO_BAIRRO: bairroCampo || end.resto,
+    SACADO_CIDADE: pega('Município', 'Cidade'),
+    SACADO_UF: (pega('UF').match(/[A-Z]{2}/i) || [''])[0].toUpperCase(),
+    SACADO_CEP: (pega('CEP') || end.cep).replace(/\D/g, ''),
+  }
+}
+
+// Número da NFS-e dentro da chave nacional (50 dígitos):
+// cMun(7) ambGer(1) tpInsc(1) inscFed(14) nNFSe(13) AAMM(4) cód(9) DV(1)
+const numeroDaChave = (chave) => (/^\d{50}$/.test(chave) ? String(Number(chave.slice(23, 36))) : '')
+
+/**
+ * Lê NFS-e em layout municipal ("Rótulo: valor"), 1ª página do PDF.
+ * @param {object} pdf - documento pdf.js
+ * @param {string} texto - texto do PDF em linhas (extractTextFromPDF)
+ * @returns {Promise<object|null>} nota no mesmo formato de extrairDanfses, ou null
+ */
+export async function extrairNfseMunicipal(pdf, texto) {
+  const t = String(texto || '')
+  const T = norm(t)
+  if (!/NFS-?E|NOTA FISCAL (ELETRONICA )?DE SERVICO/.test(T) || !/PRESTADOR/.test(T) || !/TOMADOR/.test(T)) return null
+
+  const { items } = await (await pdf.getPage(1)).getTextContent()
+  const its = items
+    .filter(i => i.str && i.str.trim())
+    .map(i => ({ s: i.str.trim(), n: norm(i.str), x: i.transform[4], y: i.transform[5] }))
+  const cab = (re, abaixoDe = Infinity) => its.filter(i => i.y < abaixoDe && re.test(i.n)).sort((a, b) => b.y - a.y)[0]
+  const hPrest = cab(/^(DADOS DO )?PRESTADOR( DE| DOS)?( SERVICOS?)?$/)
+  const hToma = hPrest && cab(/^(DADOS DO )?TOMADOR( DE| DOS)?( SERVICOS?)?$/, hPrest.y)
+  if (!hPrest || !hToma) return null
+  const hFim = cab(/^(DISCRIMINACAO|INTERMEDIARIO|DESCRICAO|SERVICOS? PRESTADOS?|DETALHAMENTO|TRIBUTOS)/, hToma.y)
+  const entre = (topo, base) => its.filter(i => i.y < topo - 1 && i.y > base)
+  const prestador = parteMunicipal(entre(hPrest.y, hToma.y))
+  const tomador = parteMunicipal(entre(hToma.y, hFim ? hFim.y : -Infinity))
+  if (!tomador.SACADO_NOME && !tomador.SACADO_CIC) return null
+
+  const linhas = t.split('\n')
+  const idx = (re, de = 0) => { for (let i = de; i < linhas.length; i++) if (re.test(norm(linhas[i]))) return i; return -1 }
+
+  // Discriminação: do título até a próxima seção (código de serviço/tributos/valores)
+  let descricao = ''
+  const iDisc = idx(/^DISCRIMINACAO (DE|DOS) SERVICOS?|^DESCRICAO (DE|DOS) SERVICOS?/)
+  if (iDisc >= 0) {
+    const iFimDisc = idx(/^(CODIGO|TRIBUTOS|DETALHAMENTO|VALOR|ITEM DA LISTA|ATIVIDADE)/, iDisc + 1)
+    descricao = linhas.slice(iDisc + 1, iFimDisc < 0 ? iDisc + 15 : iFimDisc).map(l => l.trim()).filter(Boolean).join('\n')
+  }
+
+  const chave = (t.replace(/[ .]/g, '').match(/\d{50}/) || [''])[0]
+  const numNota = (t.match(/N[uú]mero da (?:Nota|NFS-?e)[^\d\n]*\n?[^\d\n]*?(\d{1,15})\b/i) || [])[1] || ''
+  const emissao = (t.match(/Emiss[aã]o[^\d\n]{0,40}(\d{2}\/\d{2}\/\d{4})/i) || [])[1] || ''
+  const vLiq = (t.match(/Valor\s+L[ií]quido[^\d\n]{0,30}([\d.]+,\d{2})/i) || [])[1] || ''
+  const vServ = (t.match(/Valor\s+(?:dos\s+)?Servi[cç]os[^\d\n]{0,30}([\d.]+,\d{2})/i) || [])[1] || ''
+
+  return {
+    chave,
+    numero: numeroDaChave(chave) || numNota,
+    emissao,
+    valorLiquido: vLiq,
+    valorServico: vServ,
+    descricao,
+    prestador,
+    tomador,
+  }
+}
+
 /**
  * Lê os DANFSe (Padrão Nacional) de um PDF já aberto no pdf.js.
  * Cada página com "CHAVE DE ACESSO DA NFS-E" é uma nota.
