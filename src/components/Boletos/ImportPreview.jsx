@@ -3,6 +3,7 @@ import { createBoleto, getAllContas, uploadAnexoBoleto, linhaDigitavelParaBarcod
 import { gerarRelatorioPDFErros, downloadPDFRelatorio } from '../../services/boletoImportService'
 import InstalmentModal from './InstalmentModal'
 import { validarDadosSacado } from '../../utils/validarSacado'
+import { processFilesForPreview } from '../../services/importService'
 
 // Função para formatar valor em padrão brasileiro (55.457,87)
 function formatarValorBrasileiro(valor) {
@@ -69,6 +70,52 @@ function dataInexistente(valor) {
   }
 }
 
+// ---- "Unir NF" -------------------------------------------------------------
+// Valor em centavos (aceita número ou texto "1.425,00" / "1425.5")
+function centavos(v) {
+  if (typeof v === 'number') return Math.round(v * 100)
+  const s = String(v || '').replace(/[^\d.,-]/g, '')
+  const n = s.includes(',') ? Number(s.replace(/\./g, '').replace(',', '.')) : Number(s)
+  return Math.round((isNaN(n) ? 0 : n) * 100)
+}
+// Divide um total (centavos) em k partes; sobra de centavos vai nas primeiras
+function dividirCentavos(total, k) {
+  const base = Math.floor(total / k), resto = total - base * k
+  return Array.from({ length: k }, (_, i) => base + (i < resto ? 1 : 0))
+}
+// Nº da NF de um item (título "6570-1" -> "6570")
+const numeroNF = (item) => String(item?._records?.[0]?.NUM_TITULO || item?.NUM_TITULO || '').split('-')[0] || '?'
+const resumoParcelas = (item) => item._records.map(r => formatarDataBrasileira(r.VENCIMENTO)).join(', ')
+const soDigitos = (s) => String(s || '').replace(/\D/g, '')
+
+// Une a NF "novo" ao item "alvo" (mesmo cliente). As parcelas e vencimentos vêm
+// da NF escolhida ("regra"); o valor da outra NF é somado a elas — parcela a
+// parcela quando as quantidades batem, senão dividido igualmente. Os dados do
+// cliente/avalista (inclusive edições manuais) são os do item já na lista.
+function unirItens(alvo, novo, regra) {
+  const recsA = alvo._records, recsB = novo._records
+  const base = regra === 'novo' ? recsB : recsA
+  const outro = regra === 'novo' ? recsA : recsB
+  const somar = outro.length === base.length
+    ? outro.map(r => centavos(r.VALOR))
+    : dividirCentavos(outro.reduce((s, r) => s + centavos(r.VALOR), 0), base.length)
+  const comum = recsA[0]
+  const arquivos = [...(comum._arquivosUnidos || []), novo._xmlFile, ...(novo._records[0]?._arquivosUnidos || [])].filter(Boolean)
+  const nfs = [...(comum._NFS_UNIDAS || [numeroNF(alvo)]), numeroNF(novo)]
+  const descricao = [comum.DESCRICAO, `NF ${numeroNF(novo)}: ${recsB[0]?.DESCRICAO || ''}`.trim()].filter(Boolean).join('\n')
+  const records = base.map((r, i) => ({
+    ...comum,
+    NUM_TITULO: r.NUM_TITULO,
+    NOSSO_NUMERO: r.NUM_TITULO,
+    VENCIMENTO: r.VENCIMENTO,
+    VALOR: (centavos(r.VALOR) + somar[i]) / 100,
+    DESCRICAO: descricao,
+    _arquivosUnidos: arquivos,
+    _NFS_UNIDAS: nfs,
+  }))
+  return { ...alvo, DESCRICAO: descricao, _records: records }
+}
+
 // Nome do avalista quando é o emissor da NF: "Nome Fantasia - Razão Social",
 // cortado no tamanho do campo no Firebird (OPEITE.NOME_AVALISTA varchar(25)).
 // Sem fantasia (ou igual/contida na razão social), só a razão social.
@@ -125,9 +172,6 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const avalistaNome = _activeConta?.nome_correntista || _loggedUser.name || _loggedUser.nome || ''
   const avalistaCic = String(_activeConta?.cic || _loggedUser.cic || '').replace(/\D/g, '')
 
-  // XMLs de origem (importados ou vindos da Chave NF/Serpro). Ficam anexados a
-  // cada boleto ao importar; aqui o usuário já pode baixá-los antes de confirmar.
-  const xmlsOrigem = [...new Set(previewData.map(item => item._xmlFile).filter(Boolean))]
   const baixarArquivo = (file) => {
     const url = URL.createObjectURL(file)
     const a = document.createElement('a')
@@ -139,8 +183,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  const [dataWithInstalments, setDataWithInstalments] = useState(
-    previewData.map(item => {
+  // Item do preview (cadastro + parcelas em _records) a partir de um registro lido do arquivo
+  const montarItem = (item) => {
       // Relatório BTG: mantém o avalista vindo da coluna AD e NÃO preenche o CIC.
       // Demais origens (OS/digitação): preenche AVALISTA com o perfil logado por padrão.
       const base = item._ORIGEM_BTG
@@ -163,8 +207,13 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
         ...base,
         _records: [base]
       }
-    })
-  )
+  }
+  const [dataWithInstalments, setDataWithInstalments] = useState(() => previewData.map(montarItem))
+  // "Unir NF": lendo a 2ª NF / pergunta de qual NF puxar parcelas e vencimentos
+  const [unindo, setUnindo] = useState(false)
+  const [msgUniao, setMsgUniao] = useState(null) // { tipo: 'ok' | 'erro', texto }
+  const [uniaoPendente, setUniaoPendente] = useState(null) // { alvoIdx, novo }
+  const unirInputRef = useRef(null)
 
   const [selectedRows, setSelectedRows] = useState(
     new Set(
@@ -576,6 +625,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
             //    gerada a partir do arquivo) + anexos manuais selecionados pelo usuário.
             const arquivosParaAnexar = [
               ...(boletoData._xmlFile ? [boletoData._xmlFile] : []),
+              ...(boletoData._arquivosUnidos || []), // NFs unidas ("Unir NF")
               ...(arquivosAnexados[itemIdx] || [])
             ]
             if (arquivosParaAnexar.length > 0 && boletoResult && boletoResult.id) {
@@ -635,6 +685,63 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   }))
   const faltasPopup = detailPopup ? validarDadosSacado(detailEditData).faltando.map(f => f.campo) : []
 
+  // ---- Unir NF ----
+  const aplicarUniao = (alvoIdx, novo, regra) => {
+    const unido = unirItens(dataWithInstalments[alvoIdx], novo, regra)
+    setDataWithInstalments(prev => prev.map((it, i) => (i === alvoIdx ? unido : it)))
+    // seleção das parcelas desse item passa a ser a nova lista de parcelas
+    setSelectedRows(prev => {
+      const s = new Set([...prev].filter(id => !id.startsWith(`${alvoIdx}-`)))
+      unido._records.forEach((_, r) => s.add(`${alvoIdx}-${r}`))
+      return s
+    })
+    const total = unido._records.reduce((s, r) => s + centavos(r.VALOR), 0) / 100
+    setMsgUniao({
+      tipo: 'ok',
+      texto: `NF ${numeroNF(novo)} unida à NF ${numeroNF(dataWithInstalments[alvoIdx])}: ${unido._records.length} parcela(s), total ${formatarValorBrasileiro(total)}.`,
+    })
+    setUniaoPendente(null)
+  }
+
+  const handleUnirArquivo = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setMsgUniao(null)
+    setUnindo(true)
+    try {
+      const r = await processFilesForPreview([file])
+      if (r.errors?.length) throw new Error(r.errors.map(x => x.message).join(' '))
+      if (!r.data?.length) throw new Error('Nenhuma NF encontrada no arquivo.')
+      if (r.data.length > 1) throw new Error(`O arquivo tem ${r.data.length} NFs — para unir, selecione um arquivo com uma NF só.`)
+      const novo = montarItem(r.data[0])
+      const cic = soDigitos(novo._records[0]?.SACADO_CIC)
+      const alvoIdx = cic ? dataWithInstalments.findIndex(it => soDigitos(it._records[0]?.SACADO_CIC) === cic) : -1
+      if (alvoIdx < 0) {
+        throw new Error(`A NF ${numeroNF(novo)} é de outro cliente (${novo._records[0]?.SACADO_NOME || 'sem nome'}${cic ? ` — ${cic}` : ''}) e não foi unida.`)
+      }
+      const alvo = dataWithInstalments[alvoIdx]
+      if (novo._xmlFile && xmlsOrigem.some(f => f.name === novo._xmlFile.name)) {
+        throw new Error(`O arquivo ${novo._xmlFile.name} já está nesta importação.`)
+      }
+      const mesmaRegra = alvo._records.length === novo._records.length &&
+        alvo._records.every((rec, i) => formatarDataBrasileira(rec.VENCIMENTO) === formatarDataBrasileira(novo._records[i].VENCIMENTO))
+      if (mesmaRegra) aplicarUniao(alvoIdx, novo, 'alvo')
+      else setUniaoPendente({ alvoIdx, novo })
+    } catch (err) {
+      setMsgUniao({ tipo: 'erro', texto: err?.message || String(err) })
+    } finally {
+      setUnindo(false)
+    }
+  }
+
+  // Arquivos de origem (XML/PDF importados, Chave NF/Serpro e NFs unidas). Ficam
+  // anexados a cada boleto ao importar; aqui o usuário já pode baixá-los.
+  const xmlsOrigem = [...new Set(dataWithInstalments.flatMap(item => [
+    item._xmlFile,
+    ...item._records.flatMap(r => [r._xmlFile, ...(r._arquivosUnidos || [])]),
+  ]).filter(Boolean))]
+
   // Datas que não existem (ex.: 29/02/2027): a gravação falharia e o registro seria
   // perdido. Pergunta, uma por vez, qual data válida adotar.
   const datasInexistentes = []
@@ -644,7 +751,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       if (sugestao) datasInexistentes.push({ itemIdx, recordIdx, campo, rotulo, valor: record[campo], titulo: record.NUM_TITULO, sacado: record.SACADO_NOME, ...sugestao })
     }
   }))
-  const dataPendente = !checkingDedup && !detailPopup && !instalmentModal ? datasInexistentes[0] : null
+  const dataPendente = !checkingDedup && !detailPopup && !instalmentModal && !uniaoPendente ? datasInexistentes[0] : null
 
   const adotarData = ({ itemIdx, recordIdx, campo }, novaData) => {
     const newData = [...dataWithInstalments]
@@ -691,9 +798,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
               ? 'Consultando código de barras...'
               : `Revise os registros e selecione quais deseja importar (${selectedRows.size} de ${getTotalRecords()} selecionado(s)) — clique em uma linha para editar`}
           </p>
-          {xmlsOrigem.length > 0 && (
+          {(xmlsOrigem.length > 0 || dataWithInstalments.length > 0) && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs">
-              <span className="text-[#666666]">Arquivo{xmlsOrigem.length > 1 ? 's' : ''}:</span>
+              {xmlsOrigem.length > 0 && <span className="text-[#666666]">Arquivo{xmlsOrigem.length > 1 ? 's' : ''}:</span>}
               {xmlsOrigem.map((file, i) => (
                 <button
                   key={`${file.name}-${i}`}
@@ -705,7 +812,24 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
                   📄 {file.name}
                 </button>
               ))}
+              {dataWithInstalments.length > 0 && (
+                <>
+                  <input ref={unirInputRef} type="file" accept=".xml,.pdf" className="hidden" onChange={handleUnirArquivo} />
+                  <button
+                    type="button"
+                    onClick={() => unirInputRef.current?.click()}
+                    disabled={unindo || isImporting || checkingDedup}
+                    className="px-2 py-0.5 border border-[#2a2a2a] rounded text-white hover:bg-[#1a1a1a] transition disabled:opacity-50"
+                    title="Somar outra NF do mesmo cliente a esta importação"
+                  >
+                    {unindo ? 'Lendo NF...' : '+ Unir NF'}
+                  </button>
+                </>
+              )}
             </div>
+          )}
+          {msgUniao && (
+            <p className={`text-xs mt-0.5 ${msgUniao.tipo === 'erro' ? 'text-red-400' : 'text-[#1a7f1a]'}`}>{msgUniao.texto}</p>
           )}
           {!checkingDedup && dedupOcultos > 0 && (
             <p className="text-xs text-[#1a7f1a] mt-0.5">
@@ -965,6 +1089,41 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
           </div>
         </div>
       )}
+
+      {/* Unir NF: parcelas/vencimentos diferentes -> de qual NF puxar a regra */}
+      {uniaoPendente && (() => {
+        const alvo = dataWithInstalments[uniaoPendente.alvoIdx]
+        const novo = uniaoPendente.novo
+        const opcao = (item, regra) => (
+          <button
+            onClick={() => aplicarUniao(uniaoPendente.alvoIdx, novo, regra)}
+            className="w-full text-left px-4 py-3 border border-[#2a2a2a] rounded hover:bg-[#1a1a1a] hover:border-white transition"
+          >
+            <span className="block text-sm font-semibold text-white">NF {numeroNF(item)} — {item._records.length} parcela{item._records.length > 1 ? 's' : ''}</span>
+            <span className="block text-xs text-[#a3a3a3] font-mono mt-0.5">{resumoParcelas(item)}</span>
+          </button>
+        )
+        return (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+            <div className="bg-[#111111] border border-[#2a2a2a] rounded-lg w-full max-w-md shadow-2xl">
+              <div className="px-5 py-3 border-b border-[#2a2a2a]">
+                <h3 className="text-sm font-semibold text-white">Unir NF {numeroNF(novo)} à NF {numeroNF(alvo)}</h3>
+              </div>
+              <div className="p-5 space-y-3 text-sm">
+                <p className="text-[#d4d4d4]">As NFs têm quantidade de parcelas ou vencimentos diferentes. De qual NF puxar a quantidade de parcelas e os vencimentos?</p>
+                {opcao(alvo, 'alvo')}
+                {opcao(novo, 'novo')}
+                <p className="text-[11px] text-[#666666]">O valor da outra NF é somado às parcelas escolhidas (dividido igualmente).</p>
+                <div className="flex justify-end pt-1">
+                  <button onClick={() => setUniaoPendente(null)} className="px-4 py-1.5 text-xs text-white border border-[#2a2a2a] rounded hover:bg-[#1a1a1a] transition">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Data inexistente no calendário: escolher a data válida a adotar */}
       {dataPendente && (
