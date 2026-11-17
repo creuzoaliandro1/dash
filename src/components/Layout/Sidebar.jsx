@@ -144,6 +144,7 @@ export default function Sidebar({ currentPage, setCurrentPage, allContas = [], o
         <div className="flex flex-col flex-1 leading-tight">
           <h1 className="font-semibold text-sm text-white">Capt</h1>
           <p className="text-xs text-[#666666] uppercase tracking-wider">Gestão de Boletos</p>
+          <p className="text-[10px] text-[#555555] text-right mt-0.5" title="Data e hora do build (DDMM.HHMM.AA)">Versão {__APP_VERSION__}</p>
         </div>
       </div>
 
