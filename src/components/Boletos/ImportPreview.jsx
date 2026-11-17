@@ -83,6 +83,9 @@ function dividirCentavos(total, k) {
   const base = Math.floor(total / k), resto = total - base * k
   return Array.from({ length: k }, (_, i) => base + (i < resto ? 1 : 0))
 }
+// Tamanho do nº do documento/título no registro BMP e na remessa CNAB ("seu número").
+// No Firebird (OPEITE.NUMERO varchar(8)) ficam só os últimos 8 caracteres.
+const TAM_NUM_TITULO = 15
 // Nº da NF de um item (título "6570-1" -> "6570")
 const numeroNF = (item) => String(item?._records?.[0]?.NUM_TITULO || item?.NUM_TITULO || '').split('-')[0] || '?'
 const resumoParcelas = (item) => item._records.map(r => formatarDataBrasileira(r.VENCIMENTO)).join(', ')
@@ -103,10 +106,17 @@ function unirItens(alvo, novo, regra) {
   const arquivos = [...(comum._arquivosUnidos || []), novo._xmlFile, ...(novo._records[0]?._arquivosUnidos || [])].filter(Boolean)
   const nfs = [...(comum._NFS_UNIDAS || [numeroNF(alvo)]), numeroNF(novo)]
   const descricao = [comum.DESCRICAO, `NF ${numeroNF(novo)}: ${recsB[0]?.DESCRICAO || ''}`.trim()].filter(Boolean).join('\n')
+  // Título = números das NFs juntos + "-parcela" (NF 8598 + NF 6698 -> 85986698-1),
+  // se couber no nº do documento (15, limite BMP/CNAB); senão, o da NF da regra.
+  const juntos = nfs.join('')
+  const titulo = (r, i) => {
+    const t = `${juntos}-${i + 1}`
+    return t.length <= TAM_NUM_TITULO ? t : r.NUM_TITULO
+  }
   const records = base.map((r, i) => ({
     ...comum,
-    NUM_TITULO: r.NUM_TITULO,
-    NOSSO_NUMERO: r.NUM_TITULO,
+    NUM_TITULO: titulo(r, i),
+    NOSSO_NUMERO: titulo(r, i),
     VENCIMENTO: r.VENCIMENTO,
     VALOR: (centavos(r.VALOR) + somar[i]) / 100,
     DESCRICAO: descricao,
