@@ -20,8 +20,13 @@
 //
 // Cobrança: o Serpro cobra só respostas 200. Erros 400/401/403/404/406/408/500/504
 // não são cobrados — por isso validamos a chave aqui antes de chamar a API.
+//
+// Cache: toda resposta 200 é gravada em public.capt_nfe_xml_cache (chave + XML),
+// mesmo que nenhum boleto seja gerado. Se a chave já foi consultada, o XML salvo
+// é devolvido sem chamar o Serpro (resposta traz cache: true).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -130,6 +135,17 @@ function resumo(xml: string) {
   }
 }
 
+// id do usuário (claim "sub") do JWT já validado pelo gateway (verify_jwt)
+function usuarioDoToken(req: Request): string | null {
+  try {
+    const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "")
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")))
+    return /^[0-9a-f-]{36}$/i.test(payload?.sub ?? "") ? payload.sub : null
+  } catch {
+    return null
+  }
+}
+
 const MENSAGENS: Record<number, string> = {
   400: "Chave de acesso inválida para o Serpro.",
   401: "Falha de autenticação no Serpro.",
@@ -160,6 +176,25 @@ serve(async (req) => {
       return json({ ok: false, error: "Chave NF inválida: informe os 44 dígitos da chave de acesso." }, 200)
     }
 
+    // 1) Já consultada antes? Reaproveita o XML salvo (consulta já paga).
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!)
+    const { data: salvo, error: errCache } = await db
+      .from("capt_nfe_xml_cache")
+      .select("xml, xml_raw, resumo, reaproveitada, created_at")
+      .eq("chave", chave)
+      .maybeSingle()
+    if (errCache) console.error("cache (leitura):", errCache.message)
+    if (salvo) {
+      const xmlSalvo = salvo.xml || montarNfeProc(salvo.xml_raw)
+      await db.from("capt_nfe_xml_cache")
+        .update({ reaproveitada: (salvo.reaproveitada || 0) + 1, ultimo_uso: new Date().toISOString() })
+        .eq("chave", chave)
+      if (xmlSalvo) {
+        return json({ ok: true, chave, xml: xmlSalvo, resumo: salvo.resumo || resumo(xmlSalvo), cache: true, consultadoEm: salvo.created_at })
+      }
+      return json({ ok: false, error: "A consulta desta chave já foi feita, mas a resposta do Serpro não tinha os dados da NF-e." }, 200)
+    }
+
     const consultar = async (token: string) =>
       fetch(`${BASE_URL}/nfe/${chave}`, {
         headers: { Authorization: `Bearer ${token}`, Accept: "application/xml" },
@@ -180,13 +215,25 @@ serve(async (req) => {
       )
     }
 
+    // 2) Resposta 200 = consulta paga: grava sempre (mesmo sem gerar boleto).
     const xml = montarNfeProc(raw)
+    const res2 = xml ? resumo(xml) : null
+    const { error: errGrava } = await db.from("capt_nfe_xml_cache").upsert({
+      chave,
+      xml,
+      xml_raw: raw,
+      resumo: res2,
+      consultado_por: usuarioDoToken(req),
+      ultimo_uso: new Date().toISOString(),
+    })
+    if (errGrava) console.error("cache (gravação):", errGrava.message)
+
     if (!xml) {
       console.error("Resposta do Serpro sem <NFe>:", raw.slice(0, 500))
       return json({ ok: false, error: "Resposta do Serpro sem os dados da NF-e." }, 200)
     }
 
-    return json({ ok: true, chave, xml, resumo: resumo(xml) })
+    return json({ ok: true, chave, xml, resumo: res2, cache: false })
   } catch (err) {
     console.error("serpro-consulta-nfe:", err)
     return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 200)
