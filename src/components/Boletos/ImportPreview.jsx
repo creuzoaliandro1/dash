@@ -82,11 +82,6 @@ function DetailField({ label, field, isDate, currentValue, onSave, required, inv
   )
 }
 
-const CAMPOS_SACADO = [
-  'SACADO_NOME', 'SACADO_CIC', 'SACADO_TELEFONE', 'SACADO_EMAIL', 'SACADO_ENDERECO', 'SACADO_NUMERO',
-  'SACADO_COMPLEMENTO', 'SACADO_BAIRRO', 'SACADO_CEP', 'SACADO_CIDADE', 'SACADO_UF',
-]
-
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   // Avalista padrão = dados do perfil logado (conta ativa, ou usuário do localStorage)
   const _loggedUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -160,9 +155,6 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   // Popup de detalhe/edição
   const [detailPopup, setDetailPopup] = useState(null) // { itemIdx, recordIdx }
   const [detailEditData, setDetailEditData] = useState({})
-  // Checkbox "Sacado = emitente da NF" no popup (NF-e com <emit>)
-  const [sacadoEmitente, setSacadoEmitente] = useState(false)
-  const [sacadoAnterior, setSacadoAnterior] = useState(null) // sacado antes de marcar o checkbox
   // Checkbox "Emissor da NF" no Avalista: avalista = nome/CIC do emitente da NF
   const [avalistaEmitente, setAvalistaEmitente] = useState(false)
   const [avalistaAnterior, setAvalistaAnterior] = useState(null)
@@ -366,8 +358,6 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     const item = dataWithInstalments[itemIdx]
     const record = item._records[recordIdx]
     const base = item._records[0] // dados do correntista sempre no primeiro
-    setSacadoEmitente(!!base._SACADO_EMITENTE)
-    setSacadoAnterior(base._SACADO_EMITENTE ? (base._SACADO_ANTERIOR || null) : null)
     setAvalistaEmitente(!!base._AVALISTA_EMITENTE)
     setAvalistaAnterior(base._AVALISTA_EMITENTE ? (base._AVALISTA_ANTERIOR || null) : null)
     setDetailEditData({
@@ -396,10 +386,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   const saveDetailPopup = () => {
     if (!detailPopup) return
     const { itemIdx, recordIdx } = detailPopup
-    const newData = [...dataWithInstalments]
-    // Atualiza campos do correntista em TODOS os records do grupo
-    newData[itemIdx]._records = newData[itemIdx]._records.map(r => ({
-      ...r,
+    // Dados em comum de todos os registros da mesma NF (sacado, endereço, contato,
+    // avalista, emissão, descrição). Número do título, valor e vencimento são de cada parcela.
+    const comuns = {
       SACADO_NOME: detailEditData.SACADO_NOME,
       SACADO_CIC: detailEditData.SACADO_CIC,
       SACADO_TELEFONE: detailEditData.SACADO_TELEFONE,
@@ -413,19 +402,26 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       SACADO_COMPLEMENTO: detailEditData.SACADO_COMPLEMENTO,
       AVALISTA_NOME: detailEditData.AVALISTA_NOME,
       AVALISTA_CIC: detailEditData.AVALISTA_CIC,
-      _SACADO_EMITENTE: sacadoEmitente,
-      _SACADO_ANTERIOR: sacadoEmitente ? sacadoAnterior : null,
+      EMISSAO: normalizarDataAno4(detailEditData.EMISSAO),
+      DESCRICAO: detailEditData.DESCRICAO,
       _AVALISTA_EMITENTE: avalistaEmitente,
       _AVALISTA_ANTERIOR: avalistaEmitente ? avalistaAnterior : null,
-    }))
-    // Atualiza campos da parcela específica
+    }
+    // Mesma NF = mesmo arquivo XML de origem (XML importado ou chave consultada);
+    // sem XML, o grupo é o próprio item (parcelas do mesmo cadastro).
+    const xmlDaNF = dataWithInstalments[itemIdx]?._xmlFile
+    const mesmaNF = (item, idx) => idx === itemIdx || (xmlDaNF && item._xmlFile === xmlDaNF)
+    const newData = dataWithInstalments.map((item, idx) => (
+      mesmaNF(item, idx)
+        ? { ...item, ...comuns, _records: item._records.map(r => ({ ...r, ...comuns })) }
+        : item
+    ))
+    // Campos próprios da parcela editada
     newData[itemIdx]._records[recordIdx] = {
       ...newData[itemIdx]._records[recordIdx],
-      EMISSAO: normalizarDataAno4(detailEditData.EMISSAO),
       NUM_TITULO: detailEditData.NUM_TITULO,
       VENCIMENTO: normalizarDataAno4(detailEditData.VENCIMENTO),
       VALOR: detailEditData.VALOR,
-      DESCRICAO: detailEditData.DESCRICAO,
     }
     setDataWithInstalments(newData)
     setDetailPopup(null)
@@ -609,25 +605,6 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
   // Emitente da NF (só existe em registros vindos de NF-e: XML ou chave consultada)
   const emitentePopup = detailPopup ? dataWithInstalments[detailPopup.itemIdx]?._records?.[0]?._EMITENTE : null
-
-  // Marcado: o sacado passa a ser o emitente da NF; desmarcado: volta o sacado anterior
-  const toggleSacadoEmitente = (marcado) => {
-    if (!emitentePopup) return
-    setSacadoEmitente(marcado)
-    if (marcado) {
-      const anterior = {}
-      CAMPOS_SACADO.forEach(c => { anterior[c] = detailEditData[c] || '' })
-      setSacadoAnterior(anterior)
-      setDetailEditData(prev => {
-        const novo = { ...prev }
-        CAMPOS_SACADO.forEach(c => { novo[c] = emitentePopup[c] || '' })
-        return novo
-      })
-    } else if (sacadoAnterior) {
-      setDetailEditData(prev => ({ ...prev, ...sacadoAnterior }))
-      setSacadoAnterior(null)
-    }
-  }
 
   // Marcado: avalista = emissor da NF (nome e CIC); desmarcado: volta o avalista anterior
   const toggleAvalistaEmitente = (marcado) => {
@@ -860,20 +837,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
               {/* Dados do Sacado */}
               <div>
-                <div className="flex items-center justify-between mb-2 border-b border-[#1f1f1f] pb-1">
-                  <p className="text-[10px] text-[#444444] uppercase font-semibold">Sacado</p>
-                  {emitentePopup && (
-                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#a3a3a3]" title={`Usar o emitente da NF como sacado: ${emitentePopup.SACADO_NOME || ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={sacadoEmitente}
-                        onChange={(e) => toggleSacadoEmitente(e.target.checked)}
-                        className="w-3 h-3 cursor-pointer accent-white"
-                      />
-                      Sacado = emitente da NF
-                    </label>
-                  )}
-                </div>
+                <p className="text-[10px] text-[#444444] uppercase font-semibold mb-2 border-b border-[#1f1f1f] pb-1">Sacado</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2"><DetailField label="Nome" field="SACADO_NOME" currentValue={detailEditData.SACADO_NOME} onSave={saveDetailField} /></div>
                   <DetailField label="CPF/CNPJ" field="SACADO_CIC" currentValue={detailEditData.SACADO_CIC} onSave={saveDetailField} />
