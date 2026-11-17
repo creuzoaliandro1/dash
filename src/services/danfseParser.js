@@ -8,7 +8,7 @@
 
 const norm = (s) => String(s || '')
   .normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .toUpperCase().replace(/\s+/g, ' ').trim()
+  .toUpperCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/').trim() // "CNPJ / CPF" = "CNPJ/CPF" (varia por município)
 
 // Rótulos do DANFSe (nunca são valores)
 const ROTULOS = new Set([
@@ -66,7 +66,7 @@ function lerPagina(itens) {
   const parte = (bloco) => {
     if (!faixa(bloco)) return null
     const ender = valor('Endereço', bloco)
-    const munUf = valor('Município/Sigla UF', bloco)
+    const munUf = valor('Município/Sigla UF', bloco).replace(/\s*\/\s*/g, '/') // "Mossoró / RN"
     const ibgeCep = valor('Código IBGE/CEP', bloco)
     // "R JOAQUIM BARROSO, 192, ****, AEROLÂNDIA" = logradouro, número, [complemento], bairro
     const p = ender.split(',').map(limpo)
