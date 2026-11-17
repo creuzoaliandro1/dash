@@ -277,7 +277,9 @@ async function resolverMunicipiosIBGE(boletos) {
 // XML sem e-mail ou telefone válido do sacado (ex.: NF-e do GPVendas não traz
 // <email> e manda o fone sem DDD): usa o e-mail/telefone do perfil ativo.
 async function completarContatoPeloPerfil(boletos) {
-  const pendentes = boletos.filter((b) => {
+  // Inclui os dados do emitente (NF-e) — usados se o sacado for trocado pelo emitente
+  const alvos = boletos.flatMap((b) => (b._EMITENTE ? [b, b._EMITENTE] : [b]))
+  const pendentes = alvos.filter((b) => {
     const faltas = validarDadosSacado(b).faltando.map((f) => f.campo)
     return faltas.includes('SACADO_EMAIL') || faltas.includes('SACADO_TELEFONE')
   })
@@ -418,6 +420,26 @@ function parseNFe(xmlDoc) {
       SACADO_EMAIL: destEmail || '',
       DESCRICAO: descricao || '',
       STATUS: 'pendente',
+    }
+
+    // DADOS DO EMITENTE (<emit>/<enderEmit>): disponíveis no "Editar Registro"
+    // do ImportPreview para trocar o sacado pelo emitente da NF (checkbox).
+    const emitElement = xmlDoc.getElementsByTagName('emit')[0]
+    if (emitElement) {
+      const enderEmit = emitElement.getElementsByTagName('enderEmit')[0] || emitElement
+      sacadoFields._EMITENTE = {
+        SACADO_NOME: getChildElementText(emitElement, 'xNome') || '',
+        SACADO_CIC: getChildElementText(emitElement, 'CNPJ') || getChildElementText(emitElement, 'CPF') || '',
+        SACADO_ENDERECO: getChildElementText(enderEmit, 'xLgr') || '',
+        SACADO_NUMERO: getChildElementText(enderEmit, 'nro') || '',
+        SACADO_COMPLEMENTO: getChildElementText(enderEmit, 'xCpl') || '',
+        SACADO_TELEFONE: getChildElementText(enderEmit, 'fone') || '',
+        SACADO_BAIRRO: getChildElementText(enderEmit, 'xBairro') || '',
+        SACADO_CIDADE: getChildElementText(enderEmit, 'xMun') || '',
+        SACADO_UF: getChildElementText(enderEmit, 'UF') || '',
+        SACADO_CEP: getChildElementText(enderEmit, 'CEP') || '',
+        SACADO_EMAIL: getChildElementText(emitElement, 'email') || '',
+      }
     }
 
     // Uma parcela por <dup> dentro de <cobr>:

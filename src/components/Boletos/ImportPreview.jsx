@@ -82,6 +82,11 @@ function DetailField({ label, field, isDate, currentValue, onSave, required, inv
   )
 }
 
+const CAMPOS_SACADO = [
+  'SACADO_NOME', 'SACADO_CIC', 'SACADO_TELEFONE', 'SACADO_EMAIL', 'SACADO_ENDERECO', 'SACADO_NUMERO',
+  'SACADO_COMPLEMENTO', 'SACADO_BAIRRO', 'SACADO_CEP', 'SACADO_CIDADE', 'SACADO_UF',
+]
+
 export default function ImportPreview({ previewData, userId, onImportComplete, onCancel, userType, allContas }) {
   // Avalista padrão = dados do perfil logado (conta ativa, ou usuário do localStorage)
   const _loggedUser = JSON.parse(localStorage.getItem('user') || '{}')
@@ -155,6 +160,9 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
   // Popup de detalhe/edição
   const [detailPopup, setDetailPopup] = useState(null) // { itemIdx, recordIdx }
   const [detailEditData, setDetailEditData] = useState({})
+  // Checkbox "Sacado = emitente da NF" no popup (NF-e com <emit>)
+  const [sacadoEmitente, setSacadoEmitente] = useState(false)
+  const [sacadoAnterior, setSacadoAnterior] = useState(null) // sacado antes de marcar o checkbox
   const inputRef = useRef(null)
   const fileInputRefs = useRef({})
 
@@ -355,6 +363,8 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
     const item = dataWithInstalments[itemIdx]
     const record = item._records[recordIdx]
     const base = item._records[0] // dados do correntista sempre no primeiro
+    setSacadoEmitente(!!base._SACADO_EMITENTE)
+    setSacadoAnterior(base._SACADO_EMITENTE ? (base._SACADO_ANTERIOR || null) : null)
     setDetailEditData({
       SACADO_NOME: base.SACADO_NOME || '',
       SACADO_CIC: base.SACADO_CIC || '',
@@ -366,6 +376,7 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       SACADO_CEP: base.SACADO_CEP || '',
       SACADO_CIDADE: base.SACADO_CIDADE || '',
       SACADO_UF: base.SACADO_UF || '',
+      SACADO_COMPLEMENTO: base.SACADO_COMPLEMENTO || '',
       AVALISTA_NOME: base.AVALISTA_NOME || '',
       AVALISTA_CIC: base.AVALISTA_CIC || '',
       EMISSAO: record.EMISSAO || '',
@@ -394,8 +405,11 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
       SACADO_CEP: detailEditData.SACADO_CEP,
       SACADO_CIDADE: detailEditData.SACADO_CIDADE,
       SACADO_UF: detailEditData.SACADO_UF,
+      SACADO_COMPLEMENTO: detailEditData.SACADO_COMPLEMENTO,
       AVALISTA_NOME: detailEditData.AVALISTA_NOME,
       AVALISTA_CIC: detailEditData.AVALISTA_CIC,
+      _SACADO_EMITENTE: sacadoEmitente,
+      _SACADO_ANTERIOR: sacadoEmitente ? sacadoAnterior : null,
     }))
     // Atualiza campos da parcela específica
     newData[itemIdx]._records[recordIdx] = {
@@ -584,6 +598,28 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
   const saveDetailField = (field, val) => {
     setDetailEditData(prev => ({ ...prev, [field]: val }))
+  }
+
+  // Emitente da NF (só existe em registros vindos de NF-e: XML ou chave consultada)
+  const emitentePopup = detailPopup ? dataWithInstalments[detailPopup.itemIdx]?._records?.[0]?._EMITENTE : null
+
+  // Marcado: o sacado passa a ser o emitente da NF; desmarcado: volta o sacado anterior
+  const toggleSacadoEmitente = (marcado) => {
+    if (!emitentePopup) return
+    setSacadoEmitente(marcado)
+    if (marcado) {
+      const anterior = {}
+      CAMPOS_SACADO.forEach(c => { anterior[c] = detailEditData[c] || '' })
+      setSacadoAnterior(anterior)
+      setDetailEditData(prev => {
+        const novo = { ...prev }
+        CAMPOS_SACADO.forEach(c => { novo[c] = emitentePopup[c] || '' })
+        return novo
+      })
+    } else if (sacadoAnterior) {
+      setDetailEditData(prev => ({ ...prev, ...sacadoAnterior }))
+      setSacadoAnterior(null)
+    }
   }
 
   return (
@@ -800,7 +836,20 @@ export default function ImportPreview({ previewData, userId, onImportComplete, o
 
               {/* Dados do Sacado */}
               <div>
-                <p className="text-[10px] text-[#444444] uppercase font-semibold mb-2 border-b border-[#1f1f1f] pb-1">Sacado</p>
+                <div className="flex items-center justify-between mb-2 border-b border-[#1f1f1f] pb-1">
+                  <p className="text-[10px] text-[#444444] uppercase font-semibold">Sacado</p>
+                  {emitentePopup && (
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#a3a3a3]" title={`Usar o emitente da NF como sacado: ${emitentePopup.SACADO_NOME || ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={sacadoEmitente}
+                        onChange={(e) => toggleSacadoEmitente(e.target.checked)}
+                        className="w-3 h-3 cursor-pointer accent-white"
+                      />
+                      Sacado = emitente da NF
+                    </label>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2"><DetailField label="Nome" field="SACADO_NOME" currentValue={detailEditData.SACADO_NOME} onSave={saveDetailField} /></div>
                   <DetailField label="CPF/CNPJ" field="SACADO_CIC" currentValue={detailEditData.SACADO_CIC} onSave={saveDetailField} />
